@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "core/error_core",
+    "core/format_core",
+    "core/schema_core",
+    "core/path_core",
+    "capability/schemas_embedded",
+    "capability/path_verify",
+    "capability/io_filter",
+    "capability/io_check",
+    "gates/gate_raw_definition_input",
+    "gates/gate_paths_resolved_output",
+    "gates/gate_paths_verified",
+    "gates/gate_paths_verified_input",
+    "gates/gate_guardrails_reduced",
+    "gates/gate_sf_reduced",
+    "gates/gate_criteria_merged",
+    "gates/gate_instructions_reduced",
+    "gates/gate_examples_reduced",
+    "gates/gate_execution_merged",
+    "gates/gate_includes_resolved_output",
+    "gates/gate_includes_resolved_input",
+    "gates/gate_permissions_resolved_output",
+    "gates/gate_permissions_resolved_input",
+    "gates/gate_universal_format_input",
+    "gates/gate_universal_format_output",
+    "cli/check_raw_definition",
+    "cli/check_paths_resolved",
+    "cli/check_paths_verified",
+    "cli/check_includes_resolved",
+    "cli/check_permissions_resolved",
+    "cli/check_universal_format",
+    "core/write_core",
+    "writers/append_qc_report_record",
+    "writers/write_glossary_file",
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+jsonschema = "0.29"
+thiserror = "2.0"
+pyo3 = { version = "0.22", features = ["extension-module"] }

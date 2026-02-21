@@ -1,0 +1,19 @@
+/Users/johnny/.ai/spaces/bragi/tools/nornir/target/debug/deps/schemas_embedded-d895cbc3536f8663.d: capability/schemas_embedded/src/lib.rs /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-raw-definition.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-paths-resolved.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-guardrails-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-sf-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-criteria-merged.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-instructions-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-examples-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-execution-merged.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-includes-resolved.schema.json Cargo.toml
+
+/Users/johnny/.ai/spaces/bragi/tools/nornir/target/debug/deps/libschemas_embedded-d895cbc3536f8663.rmeta: capability/schemas_embedded/src/lib.rs /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-raw-definition.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-paths-resolved.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-guardrails-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-sf-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-criteria-merged.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-instructions-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-examples-reduced.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-execution-merged.schema.json /Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-includes-resolved.schema.json Cargo.toml
+
+capability/schemas_embedded/src/lib.rs:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-raw-definition.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-paths-resolved.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-guardrails-reduced.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-sf-reduced.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-criteria-merged.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-instructions-reduced.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-examples-reduced.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-execution-merged.schema.json:
+/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded/../../../../schemas/agent-includes-resolved.schema.json:
+Cargo.toml:
+
+# env-dep:CARGO_MANIFEST_DIR=/Users/johnny/.ai/spaces/bragi/tools/nornir/capability/schemas_embedded
+# env-dep:CLIPPY_ARGS=
+# env-dep:CLIPPY_CONF_DIR

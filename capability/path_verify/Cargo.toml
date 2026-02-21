@@ -1,0 +1,11 @@
+[package]
+name = "path_verify"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+path_core = { path = "../../core/path_core" }
+error_core = { path = "../../core/error_core" }
