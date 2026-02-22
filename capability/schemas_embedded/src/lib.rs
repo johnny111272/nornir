@@ -86,6 +86,13 @@ static UNIV_FMT_JSON: &str = include_str!(concat!(
 pub static UNIVERSAL_FORMAT: EmbeddedValidator =
     EmbeddedValidator::new(UNIV_FMT_JSON, "universal-format");
 
+static UNIV_REND_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../schemas/agent-universal-render.schema.json"
+));
+pub static UNIVERSAL_RENDER: EmbeddedValidator =
+    EmbeddedValidator::new(UNIV_REND_JSON, "universal-render");
+
 // =============================================================================
 // Agent output schemas (writers)
 // =============================================================================
@@ -165,6 +172,12 @@ mod tests {
     fn test_universal_format_compiles() {
         assert_eq!(UNIVERSAL_FORMAT.schema_name(), "universal-format");
         assert!(!UNIVERSAL_FORMAT.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_universal_render_compiles() {
+        assert_eq!(UNIVERSAL_RENDER.schema_name(), "universal-render");
+        assert!(!UNIVERSAL_RENDER.schema_json().is_empty());
     }
 
     // Agent output schemas

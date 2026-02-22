@@ -175,6 +175,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "check_universal_render"
+version = "0.1.0"
+dependencies = [
+ "error_core",
+ "format_core",
+ "io_check",
+ "path_verify",
+ "schema_core",
+ "schemas_embedded",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -507,6 +519,19 @@ dependencies = [
 
 [[package]]
 name = "gate_universal_format_output"
+version = "0.1.0"
+dependencies = [
+ "error_core",
+ "format_core",
+ "path_verify",
+ "pyo3",
+ "schema_core",
+ "schemas_embedded",
+ "serde_json",
+]
+
+[[package]]
+name = "gate_universal_render_output"
 version = "0.1.0"
 dependencies = [
  "error_core",
@@ -1340,6 +1365,14 @@ checksum = "86f4aa3ad99f2088c990dfa82d367e19cb29268ed67c574d10d0a4bfe71f07e0"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "split_jsonl_batches"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
