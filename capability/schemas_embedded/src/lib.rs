@@ -1,6 +1,6 @@
 //! All schemas embedded via `include_str!()`.
 //!
-//! Pipeline schemas (gates): 11 deployed.
+//! Pipeline schemas (gates): 13 deployed.
 //! Agent output schemas (writers): 2 deployed.
 
 use schema_core::EmbeddedValidator;
@@ -93,6 +93,13 @@ static UNIV_REND_JSON: &str = include_str!(concat!(
 pub static UNIVERSAL_RENDER: EmbeddedValidator =
     EmbeddedValidator::new(UNIV_REND_JSON, "universal-render");
 
+static ANTH_REND_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../schemas/agent-anthropic-render.schema.json"
+));
+pub static ANTHROPIC_RENDER: EmbeddedValidator =
+    EmbeddedValidator::new(ANTH_REND_JSON, "anthropic-render");
+
 // =============================================================================
 // Agent output schemas (writers)
 // =============================================================================
@@ -178,6 +185,12 @@ mod tests {
     fn test_universal_render_compiles() {
         assert_eq!(UNIVERSAL_RENDER.schema_name(), "universal-render");
         assert!(!UNIVERSAL_RENDER.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_anthropic_render_compiles() {
+        assert_eq!(ANTHROPIC_RENDER.schema_name(), "anthropic-render");
+        assert!(!ANTHROPIC_RENDER.schema_json().is_empty());
     }
 
     // Agent output schemas

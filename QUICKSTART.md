@@ -6,14 +6,14 @@ Nornir is the Rust-based validation and enforcement engine for Bragi's agent def
 
 ## What It Is
 
-Nornir enforces JSON Schema validation at every boundary of the agent definition pipeline. The pipeline is a DAG that transforms raw agent definitions through 12 stages (raw_definition through universal_render), and nornir gates ensure data conformity at each step.
+Nornir enforces JSON Schema validation at every boundary of the agent definition pipeline. The pipeline is a DAG that transforms raw agent definitions through 13 stages (raw_definition through anthropic_render), and nornir gates ensure data conformity at each step.
 
 **The core principle is zero trust.** No gate trusts its input. Even if the previous gate just wrote the data, the next gate re-validates from scratch. Data on the filesystem between gates is untrusted. Each gate independently proves validity.
 
 Four artifact types:
 
-- **Gates** (17 PyO3 `.so` modules): Imported from Python, validate data at pipeline boundaries, handle format conversion (TOML/JSON). Deployed to `~/.ai/tools/lib/`.
-- **CLI check tools** (7 binaries): Validate TOML definition files from the command line. Deployed as symlinks in `~/.ai/tools/bin/`.
+- **Gates** (19 PyO3 `.so` modules): Imported from Python, validate data at pipeline boundaries, handle format conversion (TOML/JSON). Deployed to `~/.ai/tools/lib/`.
+- **CLI check tools** (8 binaries): Validate TOML definition files from the command line. Deployed as symlinks in `~/.ai/tools/bin/`.
 - **Writers** (2 binaries): Schema-validate JSON from stdin before writing to disk. Deployed as symlinks in `~/.ai/tools/bin/`.
 - **Dispatchers** (1 binary): Utility for splitting JSONL files into batches. Deployed as symlink in `~/.ai/tools/bin/`.
 
@@ -29,13 +29,13 @@ The pipeline is a DAG with parallel branches, not a linear sequence:
                 ├─ [3] examples ─────┘                 │
                 │                                      ├─ [8] includes ─┐
                 ├─ [4] guardrails ───┐                 │                │
-                │                    ├─ [7] criteria ──┘                ├─ [10] universal ─── [11] render
+                │                    ├─ [7] criteria ──┘                ├─ [10] universal ─── [11] render ─── [12] anthropic
                 ├─ [5] success/fail ─┘                                 │
                 │                                                      │
                 └─ [9] permissions ────────────────────────────────────┘
 ```
 
-Steps 2+3 run in parallel (join at 6). Steps 4+5 run in parallel (join at 7). Steps 6+7 join at 8. Step 9 is independent after 1b. Steps 8+9 converge at 10. Step 11 follows 10.
+Steps 2+3 run in parallel (join at 6). Steps 4+5 run in parallel (join at 7). Steps 6+7 join at 8. Step 9 is independent after 1b. Steps 8+9 converge at 10. Step 11 follows 10. Step 12 follows 11.
 
 At TOML checkpoints, an exit gate writes TOML and the next entry gate re-reads and re-validates it (zero trust).
 
@@ -114,6 +114,7 @@ cat definition.toml | ~/.ai/tools/bin/check_raw_definition
 | `check_permissions_resolved` | permissions-resolved | Yes |
 | `check_universal_format` | universal-format | Yes |
 | `check_universal_render` | universal-render | Yes |
+| `check_anthropic_render` | anthropic-render | Yes |
 
 ---
 
@@ -295,6 +296,7 @@ The 8-level YAML composition hierarchy (field/group/array/supergroup/section/pro
 /Users/johnny/.ai/spaces/bragi/schemas/agent-execution-merged.schema.json
 /Users/johnny/.ai/spaces/bragi/schemas/agent-universal-format.schema.json
 /Users/johnny/.ai/spaces/bragi/schemas/agent-universal-render.schema.json
+/Users/johnny/.ai/spaces/bragi/schemas/agent-anthropic-render.schema.json
 /Users/johnny/.ai/spaces/bragi/schemas/qc-report.schema.json
 /Users/johnny/.ai/spaces/bragi/schemas/glossary.schema.json
 ```
