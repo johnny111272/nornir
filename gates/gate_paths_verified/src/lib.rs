@@ -1,33 +1,20 @@
-#![allow(clippy::useless_conversion)]
 //! Gate: paths_verified
-//! TOML-to-TOML bidirectional gate. Validates against paths-resolved schema.
-//! Converts TOML to JSON for validation and path verification, then back to TOML.
+//! Passthrough gate: reads TOML from disk, validates against paths-resolved
+//! schema, verifies all paths exist on filesystem, writes TOML to disk.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use error_core::NornirError;
-use format_core::{toml_to_json, json_to_toml};
+use gate_io::read_validate_write;
 use schemas_embedded::PATHS_RESOLVED;
 
-fn gate_validate(input: &str) -> Result<String, NornirError> {
-    let json = toml_to_json(input)?;
-    let result = PATHS_RESOLVED.validate(&json)?;
-    if !result.valid {
-        return Err(error_core::SchemaError::ValidationFailed(result.message).into());
-    }
-    path_verify::verify_paths(PATHS_RESOLVED.schema_json(), &json)?;
-    let toml = json_to_toml(&json)?;
-    Ok(toml)
-}
-
 #[pyfunction]
-fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
-    match gate_validate(data) {
-        Ok(output) => {
+fn validate(py: Python<'_>, input_path: &str, output_path: &str) -> PyResult<PyObject> {
+    match read_validate_write(&PATHS_RESOLVED, input_path, output_path) {
+        Ok(()) => {
             let dict = PyDict::new_bound(py);
             dict.set_item("ok", true)?;
-            dict.set_item("data", &output)?;
+            dict.set_item("data", py.None())?;
             dict.set_item("error", py.None())?;
             Ok(dict.into())
         }
@@ -45,8 +32,8 @@ fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
 }
 
 #[pyfunction]
-fn is_valid(_py: Python<'_>, data: &str) -> PyResult<bool> {
-    Ok(gate_validate(data).is_ok())
+fn is_valid(_py: Python<'_>, path: &str) -> PyResult<bool> {
+    Ok(gate_io::read_and_validate(&PATHS_RESOLVED, path, true).is_ok())
 }
 
 #[pyfunction]

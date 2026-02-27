@@ -1,33 +1,19 @@
-#![allow(clippy::useless_conversion)]
-//! Gate: universal_render_output
-//! JSON-to-TOML output gate with path verification.
-//! Validates against universal-render schema and verifies all paths exist
-//! before converting to TOML.
+//! Gate: gate_universal_render_output
+//! Output gate: validates JSON against universal-render schema, writes TOML to disk.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use error_core::NornirError;
-use format_core::json_to_toml;
+use gate_io::validate_and_write;
 use schemas_embedded::UNIVERSAL_RENDER;
 
-fn gate_validate(input: &str) -> Result<String, NornirError> {
-    let result = UNIVERSAL_RENDER.validate(input)?;
-    if !result.valid {
-        return Err(error_core::SchemaError::ValidationFailed(result.message).into());
-    }
-    path_verify::verify_paths(UNIVERSAL_RENDER.schema_json(), input)?;
-    let toml = json_to_toml(input)?;
-    Ok(toml)
-}
-
 #[pyfunction]
-fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
-    match gate_validate(data) {
-        Ok(output) => {
+fn validate(py: Python<'_>, data: &str, path: &str) -> PyResult<PyObject> {
+    match validate_and_write(&UNIVERSAL_RENDER, data, path, true) {
+        Ok(()) => {
             let dict = PyDict::new_bound(py);
             dict.set_item("ok", true)?;
-            dict.set_item("data", &output)?;
+            dict.set_item("data", py.None())?;
             dict.set_item("error", py.None())?;
             Ok(dict.into())
         }
@@ -46,7 +32,7 @@ fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
 
 #[pyfunction]
 fn is_valid(_py: Python<'_>, data: &str) -> PyResult<bool> {
-    Ok(gate_validate(data).is_ok())
+    Ok(UNIVERSAL_RENDER.is_valid(data).unwrap_or(false))
 }
 
 #[pyfunction]

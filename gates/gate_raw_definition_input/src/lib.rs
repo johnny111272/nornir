@@ -1,27 +1,15 @@
-#![allow(clippy::useless_conversion)]
-//! Gate: raw_definition_input
-//! TOML-to-JSON input gate. Validates against raw-definition schema.
-//! No path verification (paths not yet resolved at this stage).
+//! Gate: gate_raw_definition_input
+//! Input gate: reads TOML from disk, validates against raw-definition schema, returns JSON.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use error_core::NornirError;
-use format_core::toml_to_json;
+use gate_io::read_and_validate;
 use schemas_embedded::RAW_DEFINITION;
 
-fn gate_validate(input: &str) -> Result<String, NornirError> {
-    let json = toml_to_json(input)?;
-    let result = RAW_DEFINITION.validate(&json)?;
-    if !result.valid {
-        return Err(error_core::SchemaError::ValidationFailed(result.message).into());
-    }
-    Ok(json)
-}
-
 #[pyfunction]
-fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
-    match gate_validate(data) {
+fn validate(py: Python<'_>, path: &str) -> PyResult<PyObject> {
+    match read_and_validate(&RAW_DEFINITION, path, false) {
         Ok(json) => {
             let dict = PyDict::new_bound(py);
             dict.set_item("ok", true)?;
@@ -43,8 +31,8 @@ fn validate(py: Python<'_>, data: &str) -> PyResult<PyObject> {
 }
 
 #[pyfunction]
-fn is_valid(_py: Python<'_>, data: &str) -> PyResult<bool> {
-    Ok(gate_validate(data).is_ok())
+fn is_valid(_py: Python<'_>, path: &str) -> PyResult<bool> {
+    Ok(read_and_validate(&RAW_DEFINITION, path, false).is_ok())
 }
 
 #[pyfunction]

@@ -83,6 +83,9 @@ pub enum IoError {
     #[error("Cannot read '{path}': {message}")]
     ReadFailed { path: String, message: String },
 
+    #[error("Cannot write '{path}': {message}")]
+    WriteFailed { path: String, message: String },
+
     #[error("Cannot read stdin: {0}")]
     StdinFailed(String),
 }

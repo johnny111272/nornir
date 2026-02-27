@@ -1,0 +1,13 @@
+[package]
+name = "gate_io"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+error_core = { path = "../../core/error_core" }
+format_core = { path = "../../core/format_core" }
+path_verify = { path = "../path_verify" }
+schema_core = { path = "../../core/schema_core" }
