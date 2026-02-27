@@ -517,7 +517,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gate_sf_reduced"
+name = "gate_success_reduced"
 version = "0.1.0"
 dependencies = [
  "error_core",

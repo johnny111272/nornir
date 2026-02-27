@@ -1,20 +1,20 @@
 #![allow(clippy::useless_conversion)]
-//! Gate: sf_reduced
+//! Gate: success_reduced
 //! JSON passthrough gate with path verification.
-//! Validates against sf-reduced schema and verifies all paths exist.
+//! Validates against success-reduced schema and verifies all paths exist.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use error_core::NornirError;
-use schemas_embedded::SF_REDUCED;
+use schemas_embedded::SUCCESS_REDUCED;
 
 fn gate_validate(input: &str) -> Result<String, NornirError> {
-    let result = SF_REDUCED.validate(input)?;
+    let result = SUCCESS_REDUCED.validate(input)?;
     if !result.valid {
         return Err(error_core::SchemaError::ValidationFailed(result.message).into());
     }
-    path_verify::verify_paths(SF_REDUCED.schema_json(), input)?;
+    path_verify::verify_paths(SUCCESS_REDUCED.schema_json(), input)?;
     Ok(input.to_string())
 }
 
@@ -48,11 +48,11 @@ fn is_valid(_py: Python<'_>, data: &str) -> PyResult<bool> {
 
 #[pyfunction]
 fn schema_name() -> &'static str {
-    SF_REDUCED.schema_name()
+    SUCCESS_REDUCED.schema_name()
 }
 
 #[pymodule]
-fn gate_sf_reduced(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn gate_success_reduced(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate, m)?)?;
     m.add_function(wrap_pyfunction!(is_valid, m)?)?;
     m.add_function(wrap_pyfunction!(schema_name, m)?)?;

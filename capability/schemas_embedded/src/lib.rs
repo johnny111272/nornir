@@ -30,12 +30,12 @@ static GUARD_RED_JSON: &str = include_str!(concat!(
 pub static GUARDRAILS_REDUCED: EmbeddedValidator =
     EmbeddedValidator::new(GUARD_RED_JSON, "guardrails-reduced");
 
-static SF_RED_JSON: &str = include_str!(concat!(
+static SUCCESS_RED_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../../schemas/agent-sf-reduced.schema.json"
+    "/../../../../schemas/agent-success-reduced.schema.json"
 ));
-pub static SF_REDUCED: EmbeddedValidator =
-    EmbeddedValidator::new(SF_RED_JSON, "sf-reduced");
+pub static SUCCESS_REDUCED: EmbeddedValidator =
+    EmbeddedValidator::new(SUCCESS_RED_JSON, "success-reduced");
 
 static CRIT_MERG_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -140,8 +140,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sf_reduced_compiles() {
-        assert_eq!(SF_REDUCED.schema_name(), "sf-reduced");
+    fn test_success_reduced_compiles() {
+        assert_eq!(SUCCESS_REDUCED.schema_name(), "success-reduced");
     }
 
     #[test]

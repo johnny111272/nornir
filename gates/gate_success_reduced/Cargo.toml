@@ -1,10 +1,10 @@
 [package]
-name = "gate_sf_reduced"
+name = "gate_success_reduced"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "gate_sf_reduced"
+name = "gate_success_reduced"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

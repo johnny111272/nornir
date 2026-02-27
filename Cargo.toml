@@ -13,7 +13,7 @@ members = [
     "gates/gate_paths_verified",
     "gates/gate_paths_verified_input",
     "gates/gate_guardrails_reduced",
-    "gates/gate_sf_reduced",
+    "gates/gate_success_reduced",
     "gates/gate_criteria_merged",
     "gates/gate_instructions_reduced",
     "gates/gate_examples_reduced",
