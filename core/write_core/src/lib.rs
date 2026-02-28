@@ -6,6 +6,7 @@
 //! - Atomic writes with fsync
 //! - Educational error messages for LLM consumers
 //! - `--help` output showing all hardcoded configuration
+//! - `--dump-schema` to print embedded JSON Schema for inspection
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -62,6 +63,8 @@ pub struct WriterConfig {
     pub name: &'static str,
     /// Embedded schema validator.
     pub schema: &'static EmbeddedValidator,
+    /// Absolute path to the .schema.json source file (for --help display).
+    pub schema_source_path: &'static str,
     /// Output format (jsonl or json).
     pub format: OutputFormat,
     /// Write frequency (record or batch).
@@ -253,12 +256,13 @@ fn print_help(config: &WriterConfig) {
 
     println!("{name} — Validated enforcement output tool\n", name = config.name);
     println!("HARDCODED CONFIGURATION:");
-    println!("  Schema:    {} (embedded)", config.schema.schema_name());
-    println!("  Format:    {}", format_str);
-    println!("  Output:    {}", output_str);
-    println!("  Frequency: {}", freq_str);
+    println!("  Schema:      {} (embedded)", config.schema.schema_name());
+    println!("  Schema path: {}", config.schema_source_path);
+    println!("  Format:      {}", format_str);
+    println!("  Output:      {}", output_str);
+    println!("  Frequency:   {}", freq_str);
     if let Some(max) = config.batch_size {
-        println!("  Max batch: {} records", max);
+        println!("  Max batch:   {} records", max);
     }
 
     println!();
@@ -269,6 +273,10 @@ fn print_help(config: &WriterConfig) {
     println!("  cat <<'RECORD' | {}{}", config.name, arg_str);
     println!("  {{\"uid\":\"...\",\"assessment\":\"...\"}}");
     println!("  RECORD");
+
+    println!();
+    println!("INSPECT:");
+    println!("  {} --dump-schema    Print embedded JSON Schema to stdout", config.name);
 
     println!();
     println!("OUTPUT:");
@@ -355,6 +363,12 @@ pub fn run(config: &WriterConfig) -> ! {
     // --help
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help(config);
+        process::exit(0);
+    }
+
+    // --dump-schema: print embedded schema JSON to stdout
+    if args.iter().any(|a| a == "--dump-schema") {
+        println!("{}", config.schema.schema_json());
         process::exit(0);
     }
 
@@ -651,6 +665,7 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
+            schema_source_path: "test",
             format: OutputFormat::Jsonl,
             frequency: WriteFrequency::Record,
             output: OutputPath::FixedFile("/tmp/test.jsonl"),
@@ -665,6 +680,7 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
+            schema_source_path: "test",
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {
@@ -682,6 +698,7 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
+            schema_source_path: "test",
             format: OutputFormat::Jsonl,
             frequency: WriteFrequency::Batch,
             output: OutputPath::DirectoryPrefix {
@@ -702,6 +719,7 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
+            schema_source_path: "test",
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {
@@ -720,6 +738,7 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
+            schema_source_path: "test",
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {

@@ -26,7 +26,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "append_qc_report_record"
+name = "append_embedding_normalize_batch_20"
+version = "0.1.0"
+dependencies = [
+ "schemas_embedded",
+ "write_core",
+]
+
+[[package]]
+name = "append_interview_summaries_record"
+version = "0.1.0"
+dependencies = [
+ "schemas_embedded",
+ "write_core",
+]
+
+[[package]]
+name = "append_truth_qc_report_record"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
@@ -115,7 +131,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "check_includes_resolved"
+name = "check_includes_merged"
 version = "0.1.0"
 dependencies = [
  "error_core",
@@ -335,250 +351,310 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate_anthropic_render_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
 name = "gate_anthropic_render_output"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
-name = "gate_criteria_merged"
+name = "gate_criteria_merged_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_criteria_merged_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_examples_reduced_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_examples_reduced_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_execution_merged_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_execution_merged_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_guardrails_reduced_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_guardrails_reduced_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_example_entries_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_example_group_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_execution_instructions_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_failure_criteria_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_guardrails_anti_patterns_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_guardrails_constraints_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_include_success_criteria_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_includes_merged_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_includes_merged_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_instructions_reduced_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_instructions_reduced_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_io"
 version = "0.1.0"
 dependencies = [
  "error_core",
  "format_core",
  "path_verify",
- "pyo3",
  "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_examples_reduced"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_execution_merged"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_guardrails_reduced"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_includes_resolved_input"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_includes_resolved_output"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
-]
-
-[[package]]
-name = "gate_instructions_reduced"
-version = "0.1.0"
-dependencies = [
- "error_core",
- "format_core",
- "path_verify",
- "pyo3",
- "schema_core",
- "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_paths_resolved_output"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_paths_verified"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_paths_verified_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_permissions_resolved_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_permissions_resolved_output"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_raw_definition_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
-name = "gate_success_reduced"
+name = "gate_success_reduced_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
+]
+
+[[package]]
+name = "gate_success_reduced_output"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
 ]
 
 [[package]]
 name = "gate_universal_format_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_universal_format_output"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_universal_render_input"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
 name = "gate_universal_render_output"
 version = "0.1.0"
 dependencies = [
- "error_core",
- "format_core",
- "path_verify",
+ "gate_io",
  "pyo3",
- "schema_core",
  "schemas_embedded",
- "serde_json",
 ]
 
 [[package]]
@@ -1880,7 +1956,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "write_glossary_file"
+name = "write_truth_glossary_record"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",

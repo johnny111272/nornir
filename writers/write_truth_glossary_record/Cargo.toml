@@ -1,0 +1,12 @@
+[package]
+name = "write_truth_glossary_record"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "write_truth_glossary_record"
+path = "src/main.rs"
+
+[dependencies]
+write_core = { path = "../../core/write_core" }
+schemas_embedded = { path = "../../capability/schemas_embedded" }

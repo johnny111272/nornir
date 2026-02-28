@@ -1,335 +1,273 @@
 # Nornir Quickstart
 
-Nornir is the Rust-based validation and enforcement engine for Bragi's agent definition pipeline. It externalizes trust to compiled, immutable validators so that LLM compliance is proven by gates, not self-reported.
+## What Nornir Does
+
+Nornir is a Rust workspace that validates TOML agent definitions against JSON Schema at every stage of the Bragi composition pipeline. It produces:
+
+- **8 CLI check binaries** -- validate TOML files from the command line
+- **32 PyO3 gate modules** -- Python-importable Rust validation for pipeline boundaries
+- **2 writer binaries** -- schema-validated output for QC reports and glossary files
+- **1 dispatcher binary** -- splits JSONL files into batches for parallel agent dispatch
+
+The schemas are embedded at compile time. Errors are educational (what/where/found/expected/fix).
 
 ---
 
-## What It Is
+## Building
 
-Nornir enforces JSON Schema validation at every boundary of the agent definition pipeline. The pipeline is a DAG that transforms raw agent definitions through 13 stages (raw_definition through anthropic_render), and nornir gates ensure data conformity at each step.
+```bash
+cd /Users/johnny/.ai/spaces/bragi/tools/nornir
+cargo build --release
+```
 
-**The core principle is zero trust.** No gate trusts its input. Even if the previous gate just wrote the data, the next gate re-validates from scratch. Data on the filesystem between gates is untrusted. Each gate independently proves validity.
+This produces all binaries in `target/release/`.
 
-Four artifact types:
+For full deployment:
 
-- **Gates** (19 PyO3 `.so` modules): Imported from Python, validate data at pipeline boundaries, handle format conversion (TOML/JSON). Deployed to `~/.ai/tools/lib/`.
-- **CLI check tools** (8 binaries): Validate TOML definition files from the command line. Deployed as symlinks in `~/.ai/tools/bin/`.
-- **Writers** (2 binaries): Schema-validate JSON from stdin before writing to disk. Deployed as symlinks in `~/.ai/tools/bin/`.
-- **Dispatchers** (1 binary): Utility for splitting JSONL files into batches. Deployed as symlink in `~/.ai/tools/bin/`.
+```bash
+# Gates + CLI checkers (after schema changes)
+./tools/nornir/deploy_gates.py
+
+# Writer tools (after adding/modifying writers)
+./tools/nornir/deploy_writers.py
+```
+
+`deploy_gates.py` builds CLI binaries with cargo, builds gate modules with maturin, extracts `.so` files from wheels, creates symlinks in `~/.ai/tools/bin/`, and verifies everything works. `deploy_writers.py` builds writer binaries, symlinks, and verifies.
 
 ---
 
-## The Pipeline DAG
+## Architecture
 
-The pipeline is a DAG with parallel branches, not a linear sequence:
+Rust workspace with 53 member crates organized into layers:
 
 ```
-                ┌─ [2] instructions ─┐
-   [1] ─ [1b] ─┤                    ├─ [6] execution ─┐
-                ├─ [3] examples ─────┘                 │
-                │                                      ├─ [8] includes ─┐
-                ├─ [4] guardrails ───┐                 │                │
-                │                    ├─ [7] criteria ──┘                ├─ [10] universal ─── [11] render ─── [12] anthropic
-                ├─ [5] success/fail ─┘                                 │
-                │                                                      │
-                └─ [9] permissions ────────────────────────────────────┘
+core/           5 foundation libraries (error types, format conversion, schema engine,
+                path extraction, write engine)
+capability/     5 feature crates (embedded schemas, IO contracts, path verification,
+                gate IO operations)
+gates/          32 PyO3 gate modules (cdylib crate-type, importable from Python)
+cli/            8 standalone check binaries
+writers/        2 enforcement output binaries
+dispatchers/    1 batch splitting binary
 ```
 
-Steps 2+3 run in parallel (join at 6). Steps 4+5 run in parallel (join at 7). Steps 6+7 join at 8. Step 9 is independent after 1b. Steps 8+9 converge at 10. Step 11 follows 10. Step 12 follows 11.
-
-At TOML checkpoints, an exit gate writes TOML and the next entry gate re-reads and re-validates it (zero trust).
+**Dependency flow**: core -> capability -> gates/cli/writers/dispatchers
 
 ---
 
-## How to Build and Deploy
+## CLI Check Tools
 
-### Full rebuild of validators (gates + CLI tools)
+Each binary validates a TOML file against its schema and optionally verifies filesystem paths.
 
-```bash
-/Users/johnny/.ai/spaces/bragi/tools/deploy_nornir_validators.py
-```
-
-This runs `cargo build --release` for CLI tools and `uvx maturin build --release` for each PyO3 gate module, then symlinks binaries to `~/.ai/tools/bin/` and extracts `.so` files to `~/.ai/tools/lib/`.
-
-### Full rebuild of writers
-
-```bash
-/Users/johnny/.ai/spaces/bragi/tools/deploy_nornir_writers.py
-```
-
-### Manual cargo build (development)
-
-```bash
-cargo build --release -p check_raw_definition -p gate_raw_definition_input
-```
-
-Run from `/Users/johnny/.ai/spaces/bragi/tools/nornir/`.
-
----
-
-## How to Use: CLI Check Tools
-
-All CLI tools accept a file path or stdin, and support `--json` for structured output.
-
-### Validate a raw TOML definition
-
-```bash
-~/.ai/tools/bin/check_raw_definition /path/to/definition.toml
-```
-
-### Validate with path verification
-
-```bash
-~/.ai/tools/bin/check_paths_verified /path/to/definition.toml
-```
-
-### Pipe from stdin
-
-```bash
-cat definition.toml | ~/.ai/tools/bin/check_raw_definition
-```
-
-### Get structured JSON output
-
-```bash
-~/.ai/tools/bin/check_raw_definition definition.toml --json
-```
-
-### Exit codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Valid |
-| 1 | Invalid (schema validation errors) |
-| 2 | Operational error (file not found, parse error) |
-
-### Available check tools
-
-| Tool | Schema | Path Verification |
-|------|--------|-------------------|
+| Binary | Schema | Verifies Paths |
+|---|---|---|
 | `check_raw_definition` | raw-definition | No |
 | `check_paths_resolved` | paths-resolved | No |
-| `check_paths_verified` | paths-resolved | Yes (same schema + filesystem check) |
-| `check_includes_resolved` | includes-resolved | Yes |
+| `check_paths_verified` | paths-resolved | Yes |
+| `check_includes_merged` | includes-merged | Yes |
 | `check_permissions_resolved` | permissions-resolved | Yes |
 | `check_universal_format` | universal-format | Yes |
 | `check_universal_render` | universal-render | Yes |
 | `check_anthropic_render` | anthropic-render | Yes |
 
+Usage:
+```bash
+# File argument
+check_raw_definition my-agent.toml
+
+# Stdin
+cat my-agent.toml | check_paths_verified
+
+# JSON output
+check_universal_format my-agent.toml --json
+```
+
+Exit codes: 0 = valid, 1 = invalid (validation errors), 2 = operational error.
+
 ---
 
-## How to Use: PyO3 Gates (from Python)
+## PyO3 Gates
 
-Gates are `.so` modules installed to `~/.ai/tools/lib/`. Add that directory to `sys.path` before importing.
-
-### Import and validate
+Gates are Python-importable Rust modules that validate data at pipeline boundaries. Each exposes three functions:
 
 ```python
-import sys
-sys.path.insert(0, "/Users/johnny/.ai/tools/lib")
-
 import gate_raw_definition_input
 
-# Full validation
-result = gate_raw_definition_input.validate(toml_string)
-if result["ok"]:
-    json_output = result["data"]
-else:
-    error_msg = result["error"]["message"]
+# Full validation with educational errors
+result = gate_raw_definition_input.validate("/path/to/agent.toml")
+# Returns: {"ok": True, "data": "<json string>", "error": None}
+# Or:      {"ok": False, "data": None, "error": {"type": "...", "message": "..."}}
 
-# Quick check
-is_valid = gate_raw_definition_input.is_valid(toml_string)
+# Quick boolean check
+valid = gate_raw_definition_input.is_valid("/path/to/agent.toml")
 
 # Schema name
-name = gate_raw_definition_input.schema_name()  # "raw-definition"
+name = gate_raw_definition_input.schema_name()
+# Returns: "raw-definition"
 ```
 
-### Return format
+Three gate categories:
 
+**Input gates** (19 gates, `gate_*_input`): Accept a file path. Read TOML from disk, validate against schema, return JSON.
 ```python
-# Success:
-{"ok": True, "data": "<validated output string>", "error": None}
-
-# Failure:
-{"ok": False, "data": None, "error": {"type": "validation_error", "message": "<educational error>"}}
+result = gate_raw_definition_input.validate("/path/to/agent.toml")
+# result["data"] contains the validated JSON string
 ```
 
-### Gate format behavior
-
-| Gate suffix | Input format | Output format | Example |
-|-------------|-------------|---------------|---------|
-| `_input` | TOML | JSON | `gate_paths_verified_input` |
-| `_output` | JSON | TOML | `gate_paths_resolved_output` |
-| (no suffix, passthrough) | JSON | JSON | `gate_guardrails_reduced` |
-| `gate_paths_verified` (special) | TOML | TOML | Only this gate |
-
-### Gate verification rules
-
-- `gate_raw_definition_input` and `gate_paths_resolved_output` do NOT verify filesystem paths (paths not yet resolved).
-- All other gates (from `gate_paths_verified` onward) verify `path_exists_absolute` fields against the filesystem.
-
----
-
-## How to Use: Writers
-
-Writers read JSON from stdin, validate against an embedded schema, and write to a hardcoded output path. They implement the "constrained tool pattern" -- the LLM provides JSON content, the tool handles everything else.
-
-### Append a QC report record
-
-```bash
-echo '{"uid":"abc123","assessment":"pass","details":"..."}' | ~/.ai/tools/bin/append_qc_report_record
+**Output gates** (12 gates, `gate_*_output`): Accept JSON data string and output file path. Validate JSON, convert to TOML, write to disk.
+```python
+result = gate_paths_resolved_output.validate(json_string, "/path/to/output.toml")
+# Writes validated TOML to the output path
 ```
 
-Output path: `/Users/johnny/.ai/spaces/bragi/truth/qc_semantic_report.jsonl`
-The file must already exist.
-
-### Write a glossary entry
-
-```bash
-echo '{"term":"nornir","definition":"Validation engine"}' | ~/.ai/tools/bin/write_glossary_file entry-name
-```
-
-Output path: `/Users/johnny/.ai/spaces/bragi/truth/quarantine/entry-name.json`
-The file must NOT already exist (refuses to overwrite).
-
-### For data with quotes or apostrophes, use heredoc
-
-```bash
-cat <<'RECORD' | ~/.ai/tools/bin/append_qc_report_record
-{"uid":"abc123","assessment":"pass","details":"value with 'quotes'"}
-RECORD
-```
-
-### Writer output protocol
-
-```
-OK           # Success (record mode)
-OK:<count>   # Success (batch mode)
-FAIL:<reason>  # Failure with educational guidance
+**Passthrough gate** (1 gate, `gate_paths_verified`): Accept input path and output path. Read TOML, validate, verify all referenced paths exist on disk, write TOML.
+```python
+result = gate_paths_verified.validate("/path/to/input.toml", "/path/to/output.toml")
 ```
 
 ---
 
-## How to Use: Dispatchers
-
-### Split JSONL into batches
+## Writers
 
 ```bash
-~/.ai/tools/bin/split_jsonl_batches \
-    --input /path/to/records.jsonl \
-    --directory batch_run_id \
-    --min-batch 35 \
-    --max-batch 50
+# Append a QC report record (schema-validated, fsync'd)
+echo '{"uid":"abc","assessment":"..."}' | append_qc_report_record
+
+# Write a glossary file (refuses overwrite, atomic write)
+echo '{"term":"...","definition":"..."}' | write_glossary_file my-glossary
 ```
 
-Creates `/tmp/batch_run_id/batch_001.jsonl`, `batch_002.jsonl`, etc.
-Outputs JSONL manifest to stdout:
+Both validate input against their embedded schema before writing. Output is `OK` on success or `FAIL:<reason>` on failure.
 
-```json
-{"batch":1,"file":"/tmp/batch_run_id/batch_001.jsonl","records":48}
-{"batch":2,"file":"/tmp/batch_run_id/batch_002.jsonl","records":48}
+---
+
+## Dispatcher
+
+```bash
+split_jsonl_batches \
+  --input /path/to/data.jsonl \
+  --directory batch-run-123 \
+  --min-batch 35 \
+  --max-batch 50
 ```
+
+Creates `/tmp/batch-run-123/batch_001.jsonl`, etc. Outputs JSONL manifest to stdout.
+
+---
+
+## Pipeline Stage Progression
+
+The schemas represent a composition pipeline where agent definitions progress through stages:
+
+```
+raw-definition           (authored TOML)
+  -> paths-resolved      (relative paths resolved to absolute)
+    -> guardrails-reduced, success-reduced, criteria-merged,
+       instructions-reduced, examples-reduced, execution-merged
+                         (sections reduced/merged into canonical form)
+      -> includes-merged   (file includes resolved to inline content)
+        -> permissions-resolved  (permission declarations resolved)
+          -> universal-format    (provider-agnostic format)
+            -> universal-render  (provider-agnostic render-ready)
+              -> anthropic-render  (Anthropic-specific render)
+```
+
+Additionally, 7 include fragment schemas validate individual include files before merging:
+include-success-criteria, include-failure-criteria, include-execution-instructions, include-example-entries, include-example-group, include-guardrails-constraints, include-guardrails-anti-patterns.
+
+---
+
+## Where Things Live
+
+| Resource | Path |
+|---|---|
+| Nornir workspace | `/Users/johnny/.ai/spaces/bragi/tools/nornir/` |
+| Schema source files | `/Users/johnny/.ai/spaces/bragi/schemas/agent-*.schema.json` |
+| Include fragment schemas | `/Users/johnny/.ai/spaces/bragi/schemas/include-*.schema.json` |
+| Writer schemas | `/Users/johnny/.ai/spaces/bragi/schemas/{qc-report,glossary}.schema.json` |
+| Agent definitions | `/Users/johnny/.ai/spaces/bragi/definitions/agents/` |
+| Deploy gates | `tools/nornir/deploy_gates.py` |
+| Deploy writers | `tools/nornir/deploy_writers.py` |
+| Built binaries | `tools/nornir/target/release/` |
+| Deployed CLI symlinks | `~/.ai/tools/bin/check_*` |
+| Deployed gate modules | `~/.ai/tools/lib/gate_*.so` |
+
+---
+
+## Crate Structure for Development
+
+### Core crates (pure libraries, `rlib`)
+
+| Crate | Purpose | Depends on |
+|---|---|---|
+| `error_core` | Error types, ValidationIssue, educational formatting | serde, serde_json, jsonschema, thiserror |
+| `format_core` | TOML<->JSON conversion | error_core, toml |
+| `schema_core` | EmbeddedValidator with OnceLock | error_core, jsonschema |
+| `path_core` | Extract `path_exists_absolute` fields from schema+data | error_core, serde_json |
+| `write_core` | Write engine (config, path safety, atomic writes) | error_core, schema_core |
+
+### Capability crates (feature libraries, `rlib`)
+
+| Crate | Purpose | Depends on |
+|---|---|---|
+| `schemas_embedded` | All schemas via `include_str!()` as `EmbeddedValidator` statics | schema_core |
+| `path_verify` | Filesystem path existence checks (the only impure capability) | path_core, error_core |
+| `io_filter` | stdin->validate->stdout/stderr filter contract | error_core |
+| `io_check` | File-arg diagnostic output contract for CLI tools | error_core, serde, serde_json |
+| `gate_io` | Shared gate IO: read_and_validate, validate_and_write, read_validate_write | format_core, path_verify, schema_core, error_core |
+
+### Gate crates (`cdylib` + `rlib`, PyO3)
+
+All gates follow the same pattern: thin wrappers around `gate_io` functions using a specific `schemas_embedded` validator. Each gate depends on `pyo3`, `schemas_embedded`, and `gate_io`.
+
+### CLI crates (binary)
+
+All CLI tools follow the same pattern: define a `check()` function using `format_core::toml_to_json()` + schema validation + optional path verification, then call `io_check::run_check(check)`. Each depends on `schemas_embedded`, `format_core`, `schema_core`, `path_verify`, `io_check`, `error_core`.
+
+### Writer crates (binary)
+
+Each writer defines a `WriterConfig` and calls `write_core::run()`. Depends on `write_core` + `schemas_embedded`.
 
 ---
 
 ## What NOT to Do
 
-### Do not load schemas at runtime
+1. **Do not modify schema files without rebuilding nornir.** Schemas are embedded at compile time via `include_str!()`. If you change a `.schema.json` file, the binaries still contain the old version until you run `cargo build --release`.
 
-Schemas are baked into binaries at compile time via `include_str!()`. If you modify a schema in `/Users/johnny/.ai/spaces/bragi/schemas/`, you must recompile nornir. The binaries will NOT pick up schema changes without rebuilding.
+2. **Do not edit `schemas_embedded/src/lib.rs` to add schemas without also creating the schema file.** The `include_str!()` paths are resolved at compile time and will cause a build failure if the target file does not exist.
 
-### Do not call gates as CLI commands
+3. **Do not skip path verification steps.** The `check_paths_resolved` binary validates schema structure only. Use `check_paths_verified` to also verify that referenced files exist on disk.
 
-Gates are PyO3 Python modules (`.so` files), not executables. Import them from Python. For CLI validation, use the `check_*` tools.
+4. **Do not use `build_validators.py`.** That is a legacy script for the old `rust/formats/dag_step_validate_*` architecture. Use `deploy_gates.py` and `deploy_writers.py` inside `tools/nornir/` for the current nornir system.
 
-### Do not try/except around gate validate()
+5. **Do not hand-write validation logic in Python.** The gates exist precisely to avoid ad-hoc validation. Import the gate module and call `validate()`.
 
-The `validate()` function returns a dict with `ok: True/False`. It does not raise Python exceptions for validation failures. Check `result["ok"]` instead.
+6. **Do not bypass the gate API.** Every gate returns `{"ok": bool, "data": ..., "error": ...}`. Check `ok` before using `data`. The error dict contains educational messages.
 
-### Do not write custom validation logic in Python
-
-The workspace has a strict rule: all validation uses JSON Schema files in `schemas/` validated through `jsonschema.validate()` or nornir's embedded validators. Writing inline field-checking code in Python is a session-terminating violation per workspace standards (STANDARD_OPERATING_PROCEDURES.md).
-
-### Do not bypass writers for validated output
-
-If a writer exists for a data type (QC reports, glossary entries), use the writer binary. It enforces schema validation, path traversal protection, and atomic writes. Do not write directly to the output files.
-
-### Do not pass path components with traversal characters
-
-Writer filename arguments are validated against path traversal: no `..`, no `/` or `\`, no null bytes, no leading `.`, no empty strings. These will be rejected with a `FAIL:path traversal blocked` error.
-
-### Do not forget to deploy after changes
-
-Any change to nornir source code or schemas requires redeployment:
-- Schema changes: run both `deploy_nornir_validators.py` and `deploy_nornir_writers.py`
-- Gate/CLI changes: run `deploy_nornir_validators.py`
-- Writer changes: run `deploy_nornir_writers.py`
-
-### Do not treat the pipeline as linear
-
-The pipeline is a DAG with parallel branches. Steps 2+3 run in parallel, steps 4+5 run in parallel, step 9 is independent. Do not assume sequential ordering of all steps.
-
-### Do not trust gate input even if the previous gate validated it
-
-This is the zero-trust principle. Data on the filesystem between gates is untrusted. Each gate re-validates independently. This is by design, not a redundancy to optimize away.
-
-### Do not flatten the hierarchy or simplify the composition model
-
-The 8-level YAML composition hierarchy (field/group/array/supergroup/section/profile/composed/definition) is intentional. Each level adds capability. See REFRESH.md critical decisions.
+7. **Do not assume gate input/output formats.** Input gates accept a file path and return JSON. Output gates accept JSON data + output path and write TOML. The passthrough gate accepts input path + output path. Check the gate name suffix (`_input`, `_output`, or no suffix for passthrough).
 
 ---
 
-## Where to Get Context
+## Adding a New Pipeline Stage
 
-### Schemas (the source of truth for data shape)
+To add a new gate for a new schema:
 
-```
-/Users/johnny/.ai/spaces/bragi/schemas/agent-raw-definition.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-paths-resolved.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-includes-resolved.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-permissions-resolved.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-guardrails-reduced.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-sf-reduced.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-criteria-merged.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-instructions-reduced.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-examples-reduced.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-execution-merged.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-universal-format.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-universal-render.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/agent-anthropic-render.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/qc-report.schema.json
-/Users/johnny/.ai/spaces/bragi/schemas/glossary.schema.json
-```
+1. Create the schema at `/Users/johnny/.ai/spaces/bragi/schemas/agent-<name>.schema.json`
+2. Add an `EmbeddedValidator` entry in `capability/schemas_embedded/src/lib.rs`
+3. Create the gate crate(s) under `gates/gate_<name>_{input,output}/` with `Cargo.toml` and `src/lib.rs`
+4. Add the gate crate(s) to workspace members in the root `Cargo.toml`
+5. Add the crate name(s) to `GATE_CRATES` in `tools/nornir/deploy_gates.py`
+6. Optionally create a CLI check binary under `cli/check_<name>/`
+7. Run `cargo build --release` and `deploy_gates.py`
 
-### Design documentation (read before modifying nornir)
+---
 
-```
-/Users/johnny/.ai/spaces/bragi/documentation/pipeline/NORNIR_TOOL_DESIGN.md       # Complete design spec: gate matrix, topology, architecture
-/Users/johnny/.ai/spaces/bragi/documentation/pipeline/SECURITY_RESOLUTION.md       # Permission resolution algorithm (Phase A-F)
-/Users/johnny/.ai/spaces/bragi/documentation/pipeline/TRANSFORMER_LOGIC.md         # Full resolver pipeline DAG, universal format spec
-/Users/johnny/.ai/spaces/bragi/documentation/toolcompose/TOOL_COMPOSE_REASONING.md # Three-layer constraints, constrained tool pattern
-/Users/johnny/.ai/spaces/bragi/documentation/behavioral/REFRESH.md                 # Document map, critical decisions not to violate
-/Users/johnny/.ai/spaces/bragi/documentation/pipeline/CRITICAL_DECISIONS.md        # Design decisions D1-D10, build state
-```
+## Key Design Principles
 
-### Deploy scripts
-
-```
-/Users/johnny/.ai/spaces/bragi/tools/deploy_nornir_validators.py
-/Users/johnny/.ai/spaces/bragi/tools/deploy_nornir_writers.py
-```
-
-### Context file (full system description)
-
-```
-/Users/johnny/.ai/spaces/bragi/context/nornir.md
-```
-
-### Related systems
-
-```
-/Users/johnny/.ai/spaces/bragi/tools/draupnir/               # Schema generator (upstream of nornir)
-/Users/johnny/.ai/spaces/bragi/tools/transform_to_universal/  # 11-step DAG pipeline (consumes nornir gates)
-/Users/johnny/.ai/spaces/bragi/schemas/                       # JSON Schema files (embedded by nornir)
-/Users/johnny/.ai/spaces/bragi/truth/                         # Output location for writers
-```
+- **Schemas are the single source of truth** -- never duplicate validation rules in code
+- **Educational errors** -- every validation failure tells the consumer what/where/found/expected/fix
+- **Compile-time embedding** -- schemas baked into binaries, no runtime file dependencies
+- **Strict purity boundaries** -- core crates have no IO; only path_verify and gate_io touch the filesystem
+- **Path verification via schema annotations** -- `format: path_exists_absolute` in the schema declares which fields are paths
+- **Security** -- path traversal protection on all LLM-provided filename components
+- **Atomic writes** -- temp file + fsync + rename for durability

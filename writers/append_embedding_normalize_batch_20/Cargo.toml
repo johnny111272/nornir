@@ -1,0 +1,12 @@
+[package]
+name = "append_embedding_normalize_batch_20"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "append_embedding_normalize_batch_20"
+path = "src/main.rs"
+
+[dependencies]
+write_core = { path = "../../core/write_core" }
+schemas_embedded = { path = "../../capability/schemas_embedded" }
