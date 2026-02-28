@@ -278,12 +278,14 @@ fn extract_range(msg: &str) -> String {
     msg.to_string()
 }
 
-/// Truncate a value string for display.
-pub fn truncate_value(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+/// Truncate a value string for display (UTF-8 safe).
+pub fn truncate_value(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }
 
@@ -361,6 +363,14 @@ mod tests {
     fn test_truncate_value_long() {
         let result = truncate_value("a very long string that exceeds the limit", 10);
         assert_eq!(result, "a very lon...");
+    }
+
+    #[test]
+    fn test_truncate_value_multibyte_utf8() {
+        let s = "MUST produce exactly one sentence per exchange — no more, no less";
+        let result = truncate_value(s, 50);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= s.len());
     }
 
     #[test]
