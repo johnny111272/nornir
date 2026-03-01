@@ -177,11 +177,18 @@ fn categorize_error(error: &ValidationError) -> (String, String, String) {
         return (rule, expected, fix);
     }
 
-    // Pattern mismatch
+    // Pattern mismatch — extract the actual pattern from the message
+    // jsonschema format: "value" does not match "^pattern$"
     if msg.contains("does not match") {
         let rule = "pattern_mismatch".to_string();
-        let expected = "Value must match the pattern".to_string();
-        let fix = "Adjust the value to match the required pattern".to_string();
+        let pattern = extract_pattern(&msg);
+        let expected = format!("Value must match pattern: {}", pattern);
+        let fix = format!(
+            "The value does not match the required format.\n\
+             Pattern: {}\n\
+             Review the schema definition for this field to see valid examples.",
+            pattern
+        );
         return (rule, expected, fix);
     }
 
@@ -219,6 +226,30 @@ fn categorize_error(error: &ValidationError) -> (String, String, String) {
         let rule = "format_invalid".to_string();
         let expected = "Value must match the specified format".to_string();
         let fix = "Ensure the value matches the required format".to_string();
+        return (rule, expected, fix);
+    }
+
+    // oneOf / anyOf — value doesn't match any variant
+    if msg.contains("not valid under any of the schemas listed in the") {
+        let keyword = if msg.contains("'oneOf'") {
+            "oneOf"
+        } else {
+            "anyOf"
+        };
+        let rule = format!("{}_mismatch", keyword);
+        let schema_path = format_schema_path(error);
+        let expected = format!(
+            "Value must match one of the allowed variants ({})",
+            keyword
+        );
+        let fix = format!(
+            "The value doesn't match any of the allowed forms for this field.\n\
+             Schema location: {}\n\
+             Check the schema to see what variants are accepted.\n\
+             Common causes: wrong string format, missing required fields in an object, \
+             or using an include reference where inline content is expected (or vice versa).",
+            schema_path
+        );
         return (rule, expected, fix);
     }
 
@@ -276,6 +307,25 @@ fn extract_enum_values(msg: &str) -> String {
 
 fn extract_range(msg: &str) -> String {
     msg.to_string()
+}
+
+/// Extract the pattern regex from a "does not match" error message.
+/// Format: `"value" does not match "^pattern$"`
+fn extract_pattern(msg: &str) -> String {
+    // The pattern is in the last quoted string in the message
+    if let Some(idx) = msg.rfind('"') {
+        let before = &msg[..idx];
+        if let Some(start) = before.rfind('"') {
+            return msg[start + 1..idx].to_string();
+        }
+    }
+    "unknown pattern".to_string()
+}
+
+/// Format the schema path from a validation error for diagnostic context.
+fn format_schema_path(error: &ValidationError) -> String {
+    let path = error.schema_path.to_string();
+    if path.is_empty() { "/".to_string() } else { path }
 }
 
 /// Truncate a value string for display (UTF-8 safe).
