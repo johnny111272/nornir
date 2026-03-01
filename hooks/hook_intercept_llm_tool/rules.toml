@@ -1,0 +1,86 @@
+# Hook Intercept LLM Tool — Pattern Rules
+#
+# This file declares all patterns used by hook_intercept_llm_tool.
+# Embedded into the binary at compile time via include_str!().
+# Lock with: sudo chflags schg rules.toml
+# Unlock to edit: sudo chflags noschg rules.toml
+#
+# After editing: cargo build --release (recompile to embed changes)
+#
+# Layers (evaluated in order):
+#   1. floor    — always block, no CLI flag needed, no env override
+#   2. probing  — severity from --probing flag (warn|block)
+#   3. gaming   — severity from --gaming flag (warn|block)
+#   4. allow    — everything else passes
+#
+# HOOK_LLM_ALLOW_PATHS env var exempts paths from probing/gaming checks (not floor).
+
+# ─── Floor: always block, never overridable ─────────────────────────
+
+[[floor]]
+pattern = "/.ssh/"
+description = "SSH keys and configuration"
+
+[[floor]]
+pattern = "/.aws/"
+description = "AWS credentials and configuration"
+
+[[floor]]
+pattern = "/.gnupg/"
+description = "GPG keys and keyrings"
+
+[[floor]]
+pattern = "/.kube/config"
+description = "Kubernetes credentials"
+
+[[floor]]
+pattern = "/.docker/config.json"
+description = "Docker registry credentials"
+
+[[floor]]
+pattern = "/.netrc"
+description = "Network authentication credentials"
+
+# ─── Probing: attempts to read security infrastructure ──────────────
+
+[[probing]]
+pattern = "/.claude/hooks/"
+description = "Hook scripts that constrain LLM behavior"
+
+[[probing]]
+pattern = "/.gleipnir/"
+description = "Gleipnir constraint configuration"
+
+[[probing]]
+pattern = "/gleipnir/src/"
+description = "Gleipnir source code internals"
+
+[[probing]]
+pattern = "/guardrails"
+description = "Guardrail configuration files"
+
+[[probing]]
+pattern = "/test_guardrails"
+description = "Guardrail test files"
+
+[[probing]]
+pattern = "/.claude/settings"
+description = "Claude Code settings (permission model)"
+
+[[probing]]
+pattern = "/hook_intercept_"
+description = "Hook intercept binary source code"
+
+# ─── Gaming: attempts to manipulate or circumvent constraints ───────
+
+[[gaming]]
+pattern = "/rules.toml"
+description = "Hook rules files (self-referential access)"
+
+[[gaming]]
+pattern = "/.claude/plans/"
+description = "Plan files used for session control"
+
+[[gaming]]
+pattern = "/CLAUDE.md"
+description = "Constraint instructions (reading to find loopholes)"

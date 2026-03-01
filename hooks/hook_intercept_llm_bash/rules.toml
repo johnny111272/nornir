@@ -1,0 +1,98 @@
+# Hook Intercept LLM Bash — Pattern Rules
+#
+# This file declares all patterns used by hook_intercept_llm_bash.
+# Embedded into the binary at compile time via include_str!().
+# Lock with: sudo chflags schg rules.toml
+# Unlock to edit: sudo chflags noschg rules.toml
+#
+# After editing: cargo build --release (recompile to embed changes)
+#
+# Categories (severity from CLI flags):
+#   --subversion warn|block  — lock file manipulation
+#   --truncation warn|block  — partial reading of constraint files
+#   --evasion    warn|block  — other adversarial shortcuts
+#
+# HOOK_LLM_ALLOW_BASH env var: colon-separated pattern names to relax.
+
+# ─── Subversion: lock file and constraint manipulation ──────────────
+
+[[subversion]]
+pattern = "rm.*\\.lock"
+description = "Deleting lock files"
+
+[[subversion]]
+pattern = "flock.*--unlock"
+description = "Unlocking file locks"
+
+[[subversion]]
+pattern = "chflags.*noschg"
+description = "Removing system immutable flag"
+
+[[subversion]]
+pattern = "chmod.*rules\\.toml"
+description = "Changing permissions on rules files"
+
+[[subversion]]
+pattern = "xattr.*-d.*rules\\.toml"
+description = "Removing extended attributes from rules files"
+
+[[subversion]]
+pattern = "export.*HOOK_LLM"
+description = "Attempting to set hook override env vars"
+
+[[subversion]]
+pattern = "env.*HOOK_LLM"
+description = "Attempting to run commands with hook override env vars"
+
+# ─── Truncation: partial reading of constraint/guardrail files ──────
+
+[[truncation]]
+pattern = "guardrails.*\\|\\s*tail"
+description = "Tailing guardrail files (skipping early constraints)"
+
+[[truncation]]
+pattern = "head.*CLAUDE\\.md"
+description = "Reading only the beginning of CLAUDE.md"
+
+[[truncation]]
+pattern = "tail.*CLAUDE\\.md"
+description = "Reading only the end of CLAUDE.md"
+
+[[truncation]]
+pattern = "head.*guardrails"
+description = "Partial reading of guardrail files"
+
+[[truncation]]
+pattern = "sed.*CLAUDE\\.md"
+description = "Selectively extracting from CLAUDE.md"
+
+[[truncation]]
+pattern = "awk.*CLAUDE\\.md"
+description = "Selectively extracting from CLAUDE.md"
+
+[[truncation]]
+pattern = "grep.*CLAUDE\\.md"
+description = "Pattern-searching CLAUDE.md (use Read tool instead)"
+
+# ─── Evasion: adversarial shortcuts and circumvention ───────────────
+
+[[evasion]]
+pattern = "git.*checkout.*CLAUDE\\.md"
+description = "Reverting CLAUDE.md to a previous version"
+
+[[evasion]]
+pattern = "git.*restore.*CLAUDE\\.md"
+description = "Restoring CLAUDE.md to a previous version"
+
+[[evasion]]
+pattern = "mv.*CLAUDE\\.md"
+description = "Moving/renaming CLAUDE.md"
+
+[[evasion]]
+pattern = "cp.*CLAUDE\\.md"
+description = "Copying CLAUDE.md (possible replacement attack)"
+
+[[evasion]]
+pattern = "git.*config.*hooks"
+description = "Modifying git hook configuration"
+

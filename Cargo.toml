@@ -56,6 +56,11 @@ members = [
     "writers/append_embedding_normalize_batch_20",
     "writers/append_interview_summaries_record",
     "dispatchers/split_jsonl_batches",
+    "capability/hook_io",
+    "hooks/hook_intercept_subagent_tool",
+    "hooks/hook_intercept_subagent_bash",
+    "hooks/hook_intercept_llm_tool",
+    "hooks/hook_intercept_llm_bash",
 ]
 resolver = "2"
 
@@ -66,3 +71,4 @@ toml = "0.8"
 jsonschema = "0.29"
 thiserror = "2.0"
 pyo3 = { version = "0.22", features = ["extension-module"] }
+regex = "1.11"
