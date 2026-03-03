@@ -11,67 +11,67 @@ use schema_core::EmbeddedValidator;
 // =============================================================================
 
 static RAW_DEF_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-raw-definition.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-raw-definition.schema.json");
 pub static RAW_DEFINITION: EmbeddedValidator =
     EmbeddedValidator::new(RAW_DEF_JSON, "raw-definition");
 
 static PATHS_RES_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-paths-resolved.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-paths-resolved.schema.json");
 pub static PATHS_RESOLVED: EmbeddedValidator =
     EmbeddedValidator::new(PATHS_RES_JSON, "paths-resolved");
 
 static GUARD_RED_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-guardrails-reduced.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-guardrails-reduced.schema.json");
 pub static GUARDRAILS_REDUCED: EmbeddedValidator =
     EmbeddedValidator::new(GUARD_RED_JSON, "guardrails-reduced");
 
 static SUCCESS_RED_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-success-reduced.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-success-reduced.schema.json");
 pub static SUCCESS_REDUCED: EmbeddedValidator =
     EmbeddedValidator::new(SUCCESS_RED_JSON, "success-reduced");
 
 static CRIT_MERG_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-criteria-merged.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-criteria-merged.schema.json");
 pub static CRITERIA_MERGED: EmbeddedValidator =
     EmbeddedValidator::new(CRIT_MERG_JSON, "criteria-merged");
 
 static INST_RED_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-instructions-reduced.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-instructions-reduced.schema.json");
 pub static INSTRUCTIONS_REDUCED: EmbeddedValidator =
     EmbeddedValidator::new(INST_RED_JSON, "instructions-reduced");
 
 static EXAM_RED_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-examples-reduced.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-examples-reduced.schema.json");
 pub static EXAMPLES_REDUCED: EmbeddedValidator =
     EmbeddedValidator::new(EXAM_RED_JSON, "examples-reduced");
 
 static EXEC_MERG_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-execution-merged.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-execution-merged.schema.json");
 pub static EXECUTION_MERGED: EmbeddedValidator =
     EmbeddedValidator::new(EXEC_MERG_JSON, "execution-merged");
 
 static INCL_MERG_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-includes-merged.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-includes-merged.schema.json");
 pub static INCLUDES_MERGED: EmbeddedValidator =
     EmbeddedValidator::new(INCL_MERG_JSON, "includes-merged");
 
 static PERM_RES_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-permissions-resolved.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-permissions-resolved.schema.json");
 pub static PERMISSIONS_RESOLVED: EmbeddedValidator =
     EmbeddedValidator::new(PERM_RES_JSON, "permissions-resolved");
 
 static UNIV_FMT_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-universal-format.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-universal-format.schema.json");
 pub static UNIVERSAL_FORMAT: EmbeddedValidator =
     EmbeddedValidator::new(UNIV_FMT_JSON, "universal-format");
 
 static UNIV_REND_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-universal-render.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-universal-render.schema.json");
 pub static UNIVERSAL_RENDER: EmbeddedValidator =
     EmbeddedValidator::new(UNIV_REND_JSON, "universal-render");
 
 static ANTH_REND_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/agent-anthropic-render.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/agent-anthropic-render.schema.json");
 pub static ANTHROPIC_RENDER: EmbeddedValidator =
     EmbeddedValidator::new(ANTH_REND_JSON, "anthropic-render");
 
@@ -80,37 +80,37 @@ pub static ANTHROPIC_RENDER: EmbeddedValidator =
 // =============================================================================
 
 static INCL_SUCCESS_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-success-criteria.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-success-criteria.schema.json");
 pub static INCLUDE_SUCCESS_CRITERIA: EmbeddedValidator =
     EmbeddedValidator::new(INCL_SUCCESS_JSON, "include-success-criteria");
 
 static INCL_FAILURE_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-failure-criteria.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-failure-criteria.schema.json");
 pub static INCLUDE_FAILURE_CRITERIA: EmbeddedValidator =
     EmbeddedValidator::new(INCL_FAILURE_JSON, "include-failure-criteria");
 
 static INCL_EXEC_INST_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-execution-instructions.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-execution-instructions.schema.json");
 pub static INCLUDE_EXECUTION_INSTRUCTIONS: EmbeddedValidator =
     EmbeddedValidator::new(INCL_EXEC_INST_JSON, "include-execution-instructions");
 
 static INCL_EXAMPLE_ENTRIES_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-example-entries.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-example-entries.schema.json");
 pub static INCLUDE_EXAMPLE_ENTRIES: EmbeddedValidator =
     EmbeddedValidator::new(INCL_EXAMPLE_ENTRIES_JSON, "include-example-entries");
 
 static INCL_EXAMPLE_GROUP_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-example-group.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-example-group.schema.json");
 pub static INCLUDE_EXAMPLE_GROUP: EmbeddedValidator =
     EmbeddedValidator::new(INCL_EXAMPLE_GROUP_JSON, "include-example-group");
 
 static INCL_GUARD_CONSTR_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-guardrails-constraints.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-guardrails-constraints.schema.json");
 pub static INCLUDE_GUARDRAILS_CONSTRAINTS: EmbeddedValidator =
     EmbeddedValidator::new(INCL_GUARD_CONSTR_JSON, "include-guardrails-constraints");
 
 static INCL_GUARD_ANTI_JSON: &str =
-    include_str!("/Users/johnny/.ai/spaces/bragi/schemas/include-guardrails-anti-patterns.schema.json");
+    include_str!("/Users/johnny/.ai/spaces/bragi/tools/verdandi/agent-builder/output/include-guardrails-anti-patterns.schema.json");
 pub static INCLUDE_GUARDRAILS_ANTI_PATTERNS: EmbeddedValidator =
     EmbeddedValidator::new(INCL_GUARD_ANTI_JSON, "include-guardrails-anti-patterns");
 
