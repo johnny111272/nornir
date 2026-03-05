@@ -56,10 +56,6 @@ pattern = "/gleipnir/src/"
 description = "Gleipnir source code internals"
 
 [[probing]]
-pattern = "/guardrails"
-description = "Guardrail configuration files"
-
-[[probing]]
 pattern = "/test_guardrails"
 description = "Guardrail test files"
 
@@ -67,20 +63,7 @@ description = "Guardrail test files"
 pattern = "/.claude/settings"
 description = "Claude Code settings (permission model)"
 
-[[probing]]
-pattern = "/hook_intercept_"
-description = "Hook intercept binary source code"
-
-# ─── Gaming: attempts to manipulate or circumvent constraints ───────
-
-[[gaming]]
-pattern = "/rules.toml"
-description = "Hook rules files (self-referential access)"
-
-[[gaming]]
-pattern = "/.claude/plans/"
-description = "Plan files used for session control"
-
-[[gaming]]
-pattern = "/CLAUDE.md"
-description = "Constraint instructions (reading to find loopholes)"
+# Removed: /hook_intercept_ — fires during hook development, source != deployed binary
+# Removed: /rules.toml — too broad, needed during development
+# Removed: /.claude/plans/ — normal plan-mode workflow
+# Removed: /CLAUDE.md — already in system prompt, zero additional signal

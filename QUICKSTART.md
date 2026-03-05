@@ -15,24 +15,22 @@ The schemas are embedded at compile time. Errors are educational (what/where/fou
 
 ## Building
 
+After any schema change (draupnir regeneration), deploy gates and CLI checkers:
+
 ```bash
 cd /Users/johnny/.ai/spaces/bragi/tools/nornir
-cargo build --release
+./deploy_gates.py
 ```
 
-This produces all binaries in `target/release/`.
+`deploy_gates.py` builds CLI binaries with cargo, builds gate modules with maturin, extracts `.so` files from wheels, creates symlinks in `~/.ai/tools/bin/`, and verifies everything works. This is the standard rebuild command — do NOT use bare `cargo build`.
 
-For full deployment:
+For writer tools (after adding/modifying writers):
 
 ```bash
-# Gates + CLI checkers (after schema changes)
-./tools/nornir/deploy_gates.py
-
-# Writer tools (after adding/modifying writers)
-./tools/nornir/deploy_writers.py
+./deploy_writers.py
 ```
 
-`deploy_gates.py` builds CLI binaries with cargo, builds gate modules with maturin, extracts `.so` files from wheels, creates symlinks in `~/.ai/tools/bin/`, and verifies everything works. `deploy_writers.py` builds writer binaries, symlinks, and verifies.
+`deploy_writers.py` builds writer binaries, symlinks, and verifies.
 
 ---
 
@@ -232,7 +230,7 @@ Each writer defines a `WriterConfig` and calls `write_core::run()`. Depends on `
 
 ## What NOT to Do
 
-1. **Do not modify schema files without rebuilding nornir.** Schemas are embedded at compile time via `include_str!()`. If you change a `.schema.json` file, the binaries still contain the old version until you run `cargo build --release`.
+1. **Do not modify schema files without redeploying nornir.** Schemas are embedded at compile time via `include_str!()`. If you change a `.schema.json` file, the binaries still contain the old version until you run `./deploy_gates.py`.
 
 2. **Do not edit `schemas_embedded/src/lib.rs` to add schemas without also creating the schema file.** The `include_str!()` paths are resolved at compile time and will cause a build failure if the target file does not exist.
 

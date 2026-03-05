@@ -57,18 +57,26 @@ members = [
     "writers/append_interview_summaries_record",
     "dispatchers/split_jsonl_batches",
     "capability/hook_io",
+    "capability/socket_emit",
     "hooks/hook_intercept_subagent_tool",
     "hooks/hook_intercept_subagent_bash",
     "hooks/hook_intercept_llm_tool",
     "hooks/hook_intercept_llm_bash",
+    "core/saga_core",
+    "cli/saga",
+    "cli/syn",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 toml = "0.8"
+toon-format = "0.4"
 jsonschema = "0.29"
 thiserror = "2.0"
 pyo3 = { version = "0.22", features = ["extension-module"] }
 regex = "1.11"
+jaq-interpret = { version = "1.5", features = ["serde_json"] }
+jaq-parse = "1.0"

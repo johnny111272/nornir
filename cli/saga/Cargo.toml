@@ -1,12 +1,13 @@
 [package]
-name = "hook_io"
+name = "saga_cli"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-crate-type = ["rlib"]
+[[bin]]
+name = "saga"
+path = "src/main.rs"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-socket_emit = { path = "../socket_emit" }
+saga_core = { path = "../../core/saga_core" }

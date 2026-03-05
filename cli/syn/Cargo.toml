@@ -1,0 +1,19 @@
+[package]
+name = "syn_cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "syn"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+jaq-interpret = { workspace = true }
+jaq-parse = { workspace = true }
+saga_core = { path = "../../core/saga_core" }
+format_core = { path = "../../core/format_core" }
+error_core = { path = "../../core/error_core" }
+socket_emit = { path = "../../capability/socket_emit" }

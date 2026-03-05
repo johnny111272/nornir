@@ -35,7 +35,7 @@ pub enum NornirError {
 // Specific error types
 // =============================================================================
 
-/// TOML parse, JSON parse, or conversion errors.
+/// Format parse, serialize, or conversion errors.
 #[derive(Debug, Error)]
 pub enum FormatError {
     #[error("TOML parse error: {0}")]
@@ -44,8 +44,20 @@ pub enum FormatError {
     #[error("JSON parse error: {0}")]
     JsonParse(String),
 
+    #[error("YAML parse error: {0}")]
+    YamlParse(String),
+
+    #[error("TOON parse error: {0}")]
+    ToonParse(String),
+
+    #[error("TOMLX parse error: {0}")]
+    TomlxParse(String),
+
     #[error("Conversion error: {0}")]
     Conversion(String),
+
+    #[error("{message}")]
+    Educational { message: String },
 }
 
 /// Schema validation errors — invalid input or schema compilation failures.

@@ -1,0 +1,12 @@
+[package]
+name = "qa_report"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "qa-report"
+path = "src/main.rs"
+
+[dependencies]
+qa_core = { path = "../../core/qa_core" }
+serde_json = { workspace = true }

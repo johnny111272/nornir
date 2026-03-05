@@ -1,12 +1,11 @@
 //! Shared IO contract for Claude Code PreToolUse hook binaries.
 //!
 //! Reads hook JSON from stdin, calls a decision function, outputs the
-//! appropriate JSON response to stdout and ANSI banner directly to /dev/tty.
+//! appropriate JSON response to stdout.
 //! Always exits 0 — Claude Code requires this.
 //!
-//! Banner goes to /dev/tty (not stderr) because Claude Code captures both
-//! stdout and stderr via pipes. /dev/tty writes directly to the controlling
-//! terminal, bypassing all redirections.
+//! Warn and Deny decisions are also emitted to Hlidskjalf (watchtower)
+//! via Unix stream socket — fire-and-forget, never blocks.
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -64,6 +63,11 @@ where
         }
     };
 
+    let tool = hook_input
+        .tool_name
+        .as_deref()
+        .unwrap_or("unknown");
+
     match decide_fn(&hook_input) {
         HookDecision::Allow => print_allow(),
         HookDecision::Warn {
@@ -74,6 +78,7 @@ where
         } => {
             print_banner_warn(&category, &event, &user_reason);
             print_warn(&user_reason, &llm_context);
+            emit_to_watchtower("warn", &category, &event, tool, &user_reason, &llm_context);
         }
         HookDecision::Deny {
             category,
@@ -82,6 +87,7 @@ where
         } => {
             print_banner_deny(&category, &event, &reason);
             print_deny(&reason);
+            emit_to_watchtower("deny", &category, &event, tool, &reason, "");
         }
     }
 
@@ -205,5 +211,31 @@ fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str, sp
 fn log_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     std::path::PathBuf::from(home).join(".claude").join("intercept.log")
+}
+
+// ── Watchtower emission ───────────────────────────────────────────
+
+fn emit_to_watchtower(
+    decision: &str,
+    category: &str,
+    event: &str,
+    tool: &str,
+    detail: &str,
+    context: &str,
+) {
+    let watchtower_event = socket_emit::WatchtowerEvent {
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0),
+        category: category.to_string(),
+        decision: decision.to_string(),
+        event_name: format!("{}:{}", tool, event),
+        workspace: socket_emit::workspace_name(),
+        detail: detail.to_string(),
+        context_injected: context.to_string(),
+        payload: None,
+    };
+    socket_emit::emit(&watchtower_event);
 }
 
