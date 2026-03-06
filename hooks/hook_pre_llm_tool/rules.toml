@@ -1,6 +1,6 @@
-# Hook Intercept LLM Tool — Pattern Rules
+# Hook Pre LLM Tool — Pattern Rules
 #
-# This file declares all patterns used by hook_intercept_llm_tool.
+# This file declares all patterns used by hook_pre_llm_tool.
 # Embedded into the binary at compile time via include_str!().
 # Lock with: sudo chflags schg rules.toml
 # Unlock to edit: sudo chflags noschg rules.toml
@@ -63,7 +63,7 @@ description = "Guardrail test files"
 pattern = "/.claude/settings"
 description = "Claude Code settings (permission model)"
 
-# Removed: /hook_intercept_ — fires during hook development, source != deployed binary
+# Removed: /hook_pre_ — fires during hook development, source != deployed binary
 # Removed: /rules.toml — too broad, needed during development
 # Removed: /.claude/plans/ — normal plan-mode workflow
 # Removed: /CLAUDE.md — already in system prompt, zero additional signal

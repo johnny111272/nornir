@@ -1,0 +1,12 @@
+[package]
+name = "hook_pre_subagent_tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hook_pre_subagent_tool"
+path = "src/main.rs"
+
+[dependencies]
+hook_io = { path = "../../capability/hook_io" }
+serde_json = { workspace = true }

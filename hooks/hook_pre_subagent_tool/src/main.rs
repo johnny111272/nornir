@@ -1,7 +1,7 @@
 //! PreToolUse hook: validate file tool paths against per-tool allowed prefixes.
 //!
 //! Usage (in agent frontmatter):
-//!     hook_intercept_subagent_tool Read=/schemas/,/docs/ Grep=/schemas/ Write=/output/
+//!     hook_pre_subagent_tool Read=/schemas/,/docs/ Grep=/schemas/ Write=/output/
 //!
 //! Each CLI arg is Tool=path1,path2 — the tool name and its allowed path prefixes.
 //! Reads tool_name from stdin JSON, looks up its allowed prefixes, validates

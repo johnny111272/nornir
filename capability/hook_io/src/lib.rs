@@ -1,11 +1,16 @@
-//! Shared IO contract for Claude Code PreToolUse hook binaries.
+//! Shared IO contracts for Claude Code hook binaries.
 //!
-//! Reads hook JSON from stdin, calls a decision function, outputs the
-//! appropriate JSON response to stdout.
+//! Two layers:
+//!   response module — type-safe response builders for all hook events
+//!   run_pre_hook / run_post_hook — entry points that handle stdin/stdout IO
+//!
 //! Always exits 0 — Claude Code requires this.
 //!
-//! Warn and Deny decisions are also emitted to Hlidskjalf (watchtower)
+//! PreToolUse warn/deny decisions are emitted to Hlidskjalf (watchtower)
 //! via Unix stream socket — fire-and-forget, never blocks.
+//! PostToolUse assessment emission is handled by syn (not hook_io).
+
+pub mod response;
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -39,11 +44,11 @@ pub enum HookDecision {
     },
 }
 
-/// Run a hook: read stdin, parse, decide, output.
+/// Run a PreToolUse hook: read stdin, parse, decide, output.
 ///
 /// The `decide_fn` receives parsed hook input and returns a decision.
 /// This function handles all IO and JSON serialization.
-pub fn run_hook<F>(decide_fn: F) -> ExitCode
+pub fn run_pre_hook<F>(decide_fn: F) -> ExitCode
 where
     F: FnOnce(&HookInput) -> HookDecision,
 {
@@ -97,36 +102,21 @@ where
 // ── JSON output to stdout ──────────────────────────────────────────
 
 fn print_allow() {
-    let out = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow"
-        }
-    });
-    print!("{}", out);
+    use response::{HookOutput, PreToolUseResponse};
+    print!("{}", PreToolUseResponse::allow().to_json());
 }
 
 fn print_warn(user_reason: &str, llm_context: &str) {
-    let out = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": user_reason,
-            "additionalContext": llm_context
-        }
-    });
-    print!("{}", out);
+    use response::{HookOutput, PreToolUseResponse};
+    let resp = PreToolUseResponse::allow()
+        .with_reason(user_reason)
+        .with_context(llm_context);
+    print!("{}", resp.to_json());
 }
 
 fn print_deny(reason: &str) {
-    let out = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason
-        }
-    });
-    print!("{}", out);
+    use response::{HookOutput, PreToolUseResponse};
+    print!("{}", PreToolUseResponse::deny(reason).to_json());
 }
 
 // ── User notification ───────────────────────────────────────────────
@@ -219,6 +209,14 @@ fn build_speech(decision: &str, category: &str) -> String {
 
 // ── Watchtower emission ───────────────────────────────────────────
 
+/// Backward-compatible alias.
+pub fn run_hook<F>(decide_fn: F) -> ExitCode
+where
+    F: FnOnce(&HookInput) -> HookDecision,
+{
+    run_pre_hook(decide_fn)
+}
+
 fn emit_to_watchtower(
     decision: &str,
     category: &str,
@@ -228,20 +226,79 @@ fn emit_to_watchtower(
     context: &str,
 ) {
     let speech = build_speech(decision, category);
-    let watchtower_event = socket_emit::WatchtowerEvent {
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0),
-        category: category.to_string(),
-        decision: decision.to_string(),
-        event_name: format!("{}:{}", tool, event),
+
+    let source = std::env::args()
+        .next()
+        .and_then(|p| {
+            std::path::Path::new(&p)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "hook".to_string());
+
+    let datagram = socket_emit::Datagram {
+        timestamp: socket_emit::now(),
+        source,
+        datagram_type: "alert".to_string(),
+        priority: match decision {
+            "deny" => "high",
+            "warn" => "normal",
+            _ => "low",
+        }.to_string(),
         workspace: socket_emit::workspace_name(),
-        detail: detail.to_string(),
-        context_injected: context.to_string(),
+        detail: Some(detail.to_string()),
         speech: if speech.is_empty() { None } else { Some(speech) },
-        payload: None,
+        payload: Some(serde_json::json!({
+            "category": category,
+            "decision": decision,
+            "tool": tool,
+            "event": event,
+            "context_injected": context,
+        })),
     };
-    socket_emit::emit(&watchtower_event);
+    socket_emit::emit_datagram(&datagram);
 }
 
+// ── PostToolUse contract ─────────────────────────────────────────
+
+/// Hook input from Claude Code PostToolUse payload.
+#[derive(Debug, Deserialize)]
+pub struct PostHookInput {
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_input: serde_json::Value,
+    #[serde(default)]
+    pub tool_result: Option<serde_json::Value>,
+}
+
+/// Run a PostToolUse hook: read stdin, parse, assess, output.
+///
+/// The `assess_fn` receives parsed hook input and returns an optional
+/// context string. Some(msg) injects into LLM context via additionalContext.
+/// None produces no injection (silence).
+pub fn run_post_hook<F>(assess_fn: F) -> ExitCode
+where
+    F: FnOnce(&PostHookInput) -> Option<String>,
+{
+    use response::{HookOutput, PostToolUseResponse};
+
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return ExitCode::SUCCESS;
+    }
+
+    let hook_input: PostHookInput = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(_) => return ExitCode::SUCCESS,
+    };
+
+    if let Some(msg) = assess_fn(&hook_input) {
+        let resp = PostToolUseResponse::allow().with_context(msg);
+        let json = resp.to_json();
+        if !json.is_empty() {
+            print!("{}", json);
+        }
+    }
+
+    ExitCode::SUCCESS
+}

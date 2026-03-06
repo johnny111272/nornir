@@ -1,14 +1,12 @@
 [package]
-name = "hook_intercept_llm_bash"
+name = "hook_post_llm_tool"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "hook_intercept_llm_bash"
+name = "hook_post_llm_tool"
 path = "src/main.rs"
 
 [dependencies]
 hook_io = { path = "../../capability/hook_io" }
 serde_json = { workspace = true }
-regex = { workspace = true }
-toml = { workspace = true }

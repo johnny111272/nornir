@@ -1,0 +1,32 @@
+# Saga Global Ruff Configuration
+#
+# This is THE standard for code sanity reports.
+# All projects are measured against these rules.
+# Per-project configs are ignored when running Saga.
+
+line-length = 100
+target-version = "py312"
+
+[lint]
+# Full guardrail suite - same as Gleipnir
+select = [
+    "E",    # Errors (PEP 8 style)
+    "F",    # PyFlakes (undefined names, unused imports)
+    "W",    # Warnings (PEP 8 style warnings)
+    "UP",   # PyUpgrade (modernize Python syntax)
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear (likely bugs and design problems)
+    "S",    # flake8-bandit (security issues)
+    "C90",  # McCabe complexity
+]
+
+# No ignores - Saga reports everything
+# Projects can have their own ignores for dev workflows
+ignore = []
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.isort]
+known-first-party = []
+force-single-line = false

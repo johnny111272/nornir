@@ -61,15 +61,34 @@ pub struct SanityReport {
 }
 
 // =============================================================================
-// Config paths
+// Embedded configs — compiled into the binary, written to tmp at runtime
 // =============================================================================
+
+static RUFF_TOML: &str = include_str!("../ruff.toml");
+static PYRIGHTCONFIG_JSON: &str = include_str!("../pyrightconfig.json");
+
+fn saga_tmp() -> PathBuf {
+    std::env::temp_dir().join("saga")
+}
+
+fn ensure_embedded_config(filename: &str, content: &str) -> PathBuf {
+    let dir = saga_tmp();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(filename);
+    let _ = std::fs::write(&path, content);
+    path
+}
+
+fn ruff_config() -> PathBuf {
+    ensure_embedded_config("ruff.toml", RUFF_TOML)
+}
+
+fn pyright_config() -> PathBuf {
+    ensure_embedded_config("pyrightconfig.json", PYRIGHTCONFIG_JSON)
+}
 
 fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
-}
-
-fn saga_root() -> PathBuf {
-    home_dir().join(".ai/phoenix/quality/saga")
 }
 
 fn gleipnir_python() -> PathBuf {
@@ -126,17 +145,14 @@ pub fn run_gleipnir(file_path: &Path) -> Vec<Issue> {
         .collect()
 }
 
-/// Run ruff linter on a file using Saga's global config.
+/// Run ruff linter on a file using Saga's embedded config.
 pub fn run_ruff(file_path: &Path) -> Vec<Issue> {
-    let config = saga_root().join("ruff.toml");
+    let config = ruff_config();
     let mut cmd = Command::new("ruff");
     cmd.arg("check")
         .arg("--output-format=json")
+        .arg("--config").arg(config.as_os_str())
         .arg(file_path.as_os_str());
-
-    if config.exists() {
-        cmd.arg("--config").arg(config.as_os_str());
-    }
 
     let output = match cmd.output() {
         Ok(out) => out,
@@ -174,16 +190,13 @@ pub fn run_ruff(file_path: &Path) -> Vec<Issue> {
         .collect()
 }
 
-/// Run basedpyright type checker on a file using Saga's global config.
+/// Run basedpyright type checker on a file using Saga's embedded config.
 pub fn run_basedpyright(file_path: &Path) -> Vec<Issue> {
-    let config = saga_root().join("pyrightconfig.json");
+    let config = pyright_config();
     let mut cmd = Command::new("basedpyright");
     cmd.arg("--outputjson")
+        .arg("--project").arg(config.as_os_str())
         .arg(file_path.as_os_str());
-
-    if config.exists() {
-        cmd.arg("--project").arg(config.as_os_str());
-    }
 
     let output = match cmd.output() {
         Ok(out) => out,
@@ -292,7 +305,7 @@ pub fn generate_report_from_content(
     content: &str,
     project_root: Option<&Path>,
 ) -> SanityReport {
-    let tmp_dir = std::env::temp_dir().join("saga");
+    let tmp_dir = saga_tmp();
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let file_name = file_path

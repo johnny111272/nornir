@@ -22,10 +22,11 @@ NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
 HOOK_CRATES = [
-    "hook_intercept_subagent_tool",
-    "hook_intercept_subagent_bash",
-    "hook_intercept_llm_tool",
-    "hook_intercept_llm_bash",
+    "hook_pre_subagent_tool",
+    "hook_pre_subagent_bash",
+    "hook_pre_llm_tool",
+    "hook_pre_llm_bash",
+    "hook_post_llm_tool",
 ]
 
 

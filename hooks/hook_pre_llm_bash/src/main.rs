@@ -5,7 +5,7 @@
 //! LLM sessions.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_intercept_llm_bash --subversion block --truncation warn --evasion warn
+//!     hook_pre_llm_bash --subversion block --truncation warn --evasion warn
 //!
 //! Env var:
 //!     HOOK_LLM_ALLOW_BASH=pattern_name1:pattern_name2  — exempt specific patterns

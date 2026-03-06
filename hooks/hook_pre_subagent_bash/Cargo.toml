@@ -1,10 +1,10 @@
 [package]
-name = "hook_intercept_subagent_bash"
+name = "hook_pre_subagent_bash"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "hook_intercept_subagent_bash"
+name = "hook_pre_subagent_bash"
 path = "src/main.rs"
 
 [dependencies]

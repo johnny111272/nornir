@@ -2,10 +2,10 @@
 //!
 //! Detects probing (reading security infrastructure) and gaming (circumventing
 //! constraints) in interactive LLM sessions. Not for subagents — those use
-//! hook_intercept_subagent_tool.
+//! hook_pre_subagent_tool.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_intercept_llm_tool --gaming warn --probing block
+//!     hook_pre_llm_tool --gaming warn --probing block
 //!
 //! Env var:
 //!     HOOK_LLM_ALLOW_PATHS=/path1:/path2  — exempt paths from probing/gaming checks

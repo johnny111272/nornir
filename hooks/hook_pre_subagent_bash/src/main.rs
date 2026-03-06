@@ -3,7 +3,7 @@
 //! Replaces validate_bash.py with new invocation patterns for nornir writers.
 //!
 //! Usage (in agent frontmatter):
-//!     hook_intercept_subagent_bash --writer tool1 tool2 --inspect cmd1=/path/ cmd2=/path/
+//!     hook_pre_subagent_bash --writer tool1 tool2 --inspect cmd1=/path/ cmd2=/path/
 //!
 //! Categories:
 //!     --writer: nornir writer binaries. Validates heredoc-pipe pattern,

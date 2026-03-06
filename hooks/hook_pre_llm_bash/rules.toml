@@ -1,6 +1,6 @@
-# Hook Intercept LLM Bash — Pattern Rules
+# Hook Pre LLM Bash — Pattern Rules
 #
-# This file declares all patterns used by hook_intercept_llm_bash.
+# This file declares all patterns used by hook_pre_llm_bash.
 # Embedded into the binary at compile time via include_str!().
 # Lock with: sudo chflags schg rules.toml
 # Unlock to edit: sudo chflags noschg rules.toml

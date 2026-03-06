@@ -58,13 +58,19 @@ members = [
     "dispatchers/split_jsonl_batches",
     "capability/hook_io",
     "capability/socket_emit",
-    "hooks/hook_intercept_subagent_tool",
-    "hooks/hook_intercept_subagent_bash",
-    "hooks/hook_intercept_llm_tool",
-    "hooks/hook_intercept_llm_bash",
+    "hooks/hook_pre_subagent_tool",
+    "hooks/hook_pre_subagent_bash",
+    "hooks/hook_pre_llm_tool",
+    "hooks/hook_pre_llm_bash",
+    "hooks/hook_post_llm_tool",
     "core/saga_core",
     "cli/saga",
     "cli/syn",
+    "senders/send_heartbeat",
+    "senders/send_notification",
+    "senders/send_warning",
+    "senders/send_alert",
+    "senders/send_datagram",
 ]
 resolver = "2"
 
