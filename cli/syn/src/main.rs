@@ -366,24 +366,18 @@ fn find_qa_files(path: &Path, target: Target) -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    // Directory walk with target scope
+    // Directory walk — target excludes the opposite branch
     let mut results = Vec::new();
-    let search_dir = match target {
-        Target::Src => {
-            let src = path.join("src");
-            if src.is_dir() { src } else { path.to_path_buf() }
-        }
-        Target::Tests => {
-            let tests = path.join("tests");
-            if tests.is_dir() { tests } else { path.to_path_buf() }
-        }
-        Target::All => path.to_path_buf(),
+    let skip = match target {
+        Target::Src => Some("tests"),
+        Target::Tests => Some("src"),
+        Target::All => None,
     };
-    walk_qa_files(&search_dir, &mut results);
+    walk_qa_files(path, skip, &mut results);
     results
 }
 
-fn walk_qa_files(dir: &Path, results: &mut Vec<PathBuf>) {
+fn walk_qa_files(dir: &Path, skip: Option<&str>, results: &mut Vec<PathBuf>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
@@ -397,7 +391,10 @@ fn walk_qa_files(dir: &Path, results: &mut Vec<PathBuf>) {
             if name.starts_with('.') || name == "__pycache__" || name == "node_modules" || name == ".venv" {
                 continue;
             }
-            walk_qa_files(&path, results);
+            if skip.is_some_and(|s| name == s) {
+                continue;
+            }
+            walk_qa_files(&path, skip, results);
         } else if name.ends_with(".qa") && name.starts_with('.') {
             results.push(path);
         }
@@ -847,6 +844,7 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
             total_issues(groups), deny_count, decision
         ),
         context_injected: String::new(),
+        speech: None,
         payload: Some(payload),
     });
 }

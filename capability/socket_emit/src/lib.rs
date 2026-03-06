@@ -26,6 +26,8 @@ pub struct WatchtowerEvent {
     pub detail: String,
     pub context_injected: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speech: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
 }
 
@@ -46,6 +48,7 @@ impl WatchtowerEvent {
             workspace: workspace.to_string(),
             detail: detail.to_string(),
             context_injected: String::new(),
+            speech: None,
             payload: None,
         }
     }

@@ -135,39 +135,15 @@ fn print_deny(reason: &str) {
 // macOS notifications + log file are the reliable user-facing channels.
 
 fn print_banner_warn(category: &str, event: &str, explanation: &str) {
-    let phrase = category_phrase(category);
-    let speech = format!("WARNING: Claude is {} -- Correction provided.", phrase);
-    notify_and_log('\u{26A0}', category, event, explanation, &speech);
+    notify_and_log('\u{26A0}', category, event, explanation);
 }
 
 fn print_banner_deny(category: &str, event: &str, explanation: &str) {
-    let phrase = category_phrase(category);
-    let prefix = if category == "floor" || category == "subversion" || category == "chaining" {
-        "DANGER"
-    } else {
-        "WARNING"
-    };
-    let speech = format!("{}: Claude is trying to {} -- BLOCKED.", prefix, phrase);
-    notify_and_log('\u{2716}', category, event, explanation, &speech);
+    notify_and_log('\u{2716}', category, event, explanation);
 }
 
-/// One clear spoken phrase per category. Details go to log and notification.
-fn category_phrase(category: &str) -> &'static str {
-    match category {
-        "floor" => "access sensitive credentials",
-        "probing" => "probing the guardrail settings",
-        "gaming" => "gaming the guardrails",
-        "subversion" => "subvert the safety controls",
-        "truncation" => "reading constraint files selectively",
-        "evasion" => "evade the safety controls",
-        "chaining" => "chain shell commands to escape the sandbox",
-        "path" => "access a restricted path",
-        "bash" => "run a restricted command",
-        _ => "do something unexpected",
-    }
-}
 
-fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str, speech: &str) {
+fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str) {
     let short = explanation.lines().next().unwrap_or(explanation);
     let workspace = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
     let workspace_name = std::path::Path::new(&workspace)
@@ -183,12 +159,7 @@ fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str, sp
         .stderr(std::process::Stdio::null())
         .spawn();
 
-    // Audible callout
-    let _ = std::process::Command::new("say")
-        .args(["-v", "Fiona", speech])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    // Voice alerts handled by Hlidskjalf (receives events via socket_emit)
 
     // Append to log file
     if let Ok(mut log) = std::fs::OpenOptions::new()
@@ -213,6 +184,39 @@ fn log_path() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".claude").join("intercept.log")
 }
 
+// ── Speech text ──────────────────────────────────────────────────
+
+/// One clear spoken phrase per category.
+fn category_phrase(category: &str) -> &'static str {
+    match category {
+        "floor" => "access sensitive credentials",
+        "probing" => "probing the guardrail settings",
+        "gaming" => "gaming the guardrails",
+        "subversion" => "subvert the safety controls",
+        "truncation" => "reading constraint files selectively",
+        "evasion" => "evade the safety controls",
+        "chaining" => "chain shell commands to escape the sandbox",
+        "path" => "access a restricted path",
+        "bash" => "run a restricted command",
+        _ => "do something unexpected",
+    }
+}
+
+fn build_speech(decision: &str, category: &str) -> String {
+    let phrase = category_phrase(category);
+    match decision {
+        "deny" => {
+            let prefix = match category {
+                "floor" | "subversion" | "chaining" => "DANGER",
+                _ => "WARNING",
+            };
+            format!("{}: Claude is trying to {} -- BLOCKED.", prefix, phrase)
+        }
+        "warn" => format!("WARNING: Claude is {} -- Correction provided.", phrase),
+        _ => String::new(),
+    }
+}
+
 // ── Watchtower emission ───────────────────────────────────────────
 
 fn emit_to_watchtower(
@@ -223,6 +227,7 @@ fn emit_to_watchtower(
     detail: &str,
     context: &str,
 ) {
+    let speech = build_speech(decision, category);
     let watchtower_event = socket_emit::WatchtowerEvent {
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -234,6 +239,7 @@ fn emit_to_watchtower(
         workspace: socket_emit::workspace_name(),
         detail: detail.to_string(),
         context_injected: context.to_string(),
+        speech: if speech.is_empty() { None } else { Some(speech) },
         payload: None,
     };
     socket_emit::emit(&watchtower_event);
