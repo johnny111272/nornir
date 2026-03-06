@@ -92,7 +92,7 @@ fn home_dir() -> PathBuf {
 }
 
 fn gleipnir_python() -> PathBuf {
-    home_dir().join(".ai/gleipnir/.venv/bin/python")
+    home_dir().join(".ai/smidja/gleipnir/.venv/bin/python")
 }
 
 // =============================================================================
