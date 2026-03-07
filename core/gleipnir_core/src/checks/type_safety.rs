@@ -291,6 +291,14 @@ mod tests {
         assert!(violations.is_empty());
     }
 
+    #[test]
+    fn any_in_type_alias_caught() {
+        let parsed = parse("type JsonNode = dict[str, Any]\n");
+        let violations = check_no_any_types(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("Any"));
+    }
+
     // -- no_bare_collections --
 
     #[test]

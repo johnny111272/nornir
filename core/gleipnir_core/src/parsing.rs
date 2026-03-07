@@ -98,6 +98,7 @@ fn collect_by_type<'a>(
 /// - Function parameters (type field of typed_parameter, typed_default_parameter)
 /// - Return types (return_type field of function_definition)
 /// - Variable annotations (type field of assignment with type)
+/// - PEP 695 type alias values (type X = ...)
 pub fn find_type_annotations<'a>(root: Node<'a>, source: &[u8]) -> Vec<Node<'a>> {
     let mut annotations = Vec::new();
     collect_type_annotations(root, source, &mut annotations);
@@ -123,6 +124,18 @@ fn collect_type_annotations<'a>(
         "assignment" => {
             if let Some(type_node) = node.child_by_field_name("type") {
                 results.push(type_node);
+            }
+        }
+        "type_alias_statement" => {
+            // PEP 695: type X = value
+            // The value is the last named "type" child (after keyword and name)
+            let mut cursor = node.walk();
+            let type_children: Vec<_> = node
+                .named_children(&mut cursor)
+                .filter(|c| c.kind() == "type")
+                .collect();
+            if let Some(&value_node) = type_children.last() {
+                results.push(value_node);
             }
         }
         _ => {}
@@ -172,7 +185,9 @@ fn collect_bare_names<'a>(
         let name = node_text(node, source);
         if target_names.contains(&name) {
             let parent = node.parent();
-            let is_subscripted = parent.is_some_and(|p| p.kind() == "generic_type");
+            let is_subscripted = parent.is_some_and(|p| {
+                p.kind() == "generic_type" || p.kind() == "subscript"
+            });
             if !is_subscripted {
                 results.push((node_line(node), name));
             }

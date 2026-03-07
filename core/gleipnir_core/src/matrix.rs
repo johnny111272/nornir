@@ -51,11 +51,10 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("init_files_empty", prohibited::check_init_files_empty),
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
-    // ARCHITECTURE
+    // ARCHITECTURE (no hardcoded_config — scripts are self-contained)
     error("no_methods_in_classes", architecture::check_no_methods_in_classes),
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
-    error("hardcoded_config", architecture::check_hardcoded_config),
     // STYLE
     warning("function_length", style::check_function_length),
     warning("param_count", style::check_param_count),
