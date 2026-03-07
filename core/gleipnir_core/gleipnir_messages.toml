@@ -1,0 +1,258 @@
+# Gleipnir check messages — embedded at compile time.
+#
+# Each section maps to a check name. Four fields per check:
+#   detail    — what to fix
+#   signal    — why this matters
+#   direction — how to fix it
+#   canary    — what LLM behavior this catches
+#
+# FUZZY RETURNS POLICY: Messages MUST NOT reveal thresholds, counts,
+# or exact limits. The LLM must not reverse-engineer passing criteria.
+
+# =========================================================================
+# TYPE SAFETY
+# =========================================================================
+
+[no_any_types]
+detail = "Any erases type safety. Use a concrete type or a constrained generic."
+signal = "Any disables the type checker for everything it touches, creating invisible error propagation paths."
+direction = "Replace Any with the actual type, a Protocol, or a TypeVar with constraints."
+canary = "LLM uses Any to silence type errors rather than understanding the actual data shape."
+
+[no_object]
+detail = "object is Python's universal base class — meaningless in a type annotation."
+signal = "object in annotations provides zero type information and defeats static analysis."
+direction = "Replace with the actual expected type. If truly any type, that signals a design problem."
+canary = "LLM uses object as a type-safe-looking substitute for Any."
+
+[no_json_value]
+detail = "JsonValue is a mega-union with no type safety."
+signal = "JsonValue (int|float|str|bool|None|list|dict) erases all structure from the data."
+direction = "Define a Pydantic model that describes the actual expected shape."
+canary = "LLM uses JsonValue to avoid modeling the actual data structure."
+
+[no_bare_collections]
+detail = "Bare collections lose element type information."
+signal = "Unparameterized dict/list/set/tuple tell the type checker nothing about contents."
+direction = "Add type parameters: dict[str, int], list[str], tuple[int, ...], etc."
+canary = "LLM uses bare collection types out of laziness or unfamiliarity with generic syntax."
+
+[union_member_count]
+detail = "Union has too many members. Simplify the type."
+signal = "Large unions indicate a type trying to be everything, defeating the purpose of typing."
+direction = "Factor common members into a base type, or use a discriminated union pattern."
+canary = "LLM builds sprawling union types rather than designing proper type hierarchies."
+
+[no_implicit_type_aliases]
+detail = "Use the type keyword for explicit type aliases."
+signal = "Implicit aliases (X = Literal[...]) look like assignments, hiding type-level definitions."
+direction = "Use: type X = Literal[...] (PEP 695 syntax)."
+canary = "LLM uses old-style implicit type aliases instead of the explicit type statement."
+
+# =========================================================================
+# IMPORTS
+# =========================================================================
+
+[no_unsafe_imports]
+detail = "Importing from the quarantine zone without permission."
+signal = "Pure code must not reach into quarantine zones; the boundary is the contract."
+direction = "Move the import target to a pure module or add the file to unsafe_files in exceptions.toml."
+canary = "LLM pulls in unsafe/impure helpers directly to shortcut implementation."
+
+[impure_module_quarantine]
+detail = "Pure code must not depend on impure code."
+signal = "Pure/impure separation ensures deterministic, testable code without side effects."
+direction = "Extract the needed logic into a pure function or move this file to functions/impure/."
+canary = "LLM ignores zone boundaries to grab convenient I/O helpers from impure modules."
+
+[no_type_checking_imports]
+detail = "TYPE_CHECKING blocks hide circular imports."
+signal = "Circular dependencies indicate broken module boundaries; hiding them preserves the rot."
+direction = "Refactor to eliminate the cycle — extract shared types or invert the dependency."
+canary = "LLM adds TYPE_CHECKING blocks to silence import errors instead of fixing architecture."
+
+[no_parent_imports]
+detail = "Imports must target explicit pure/impure submodules."
+signal = "Imports must target explicit pure/impure submodules to maintain zone discipline."
+direction = "Use the qualified path: from X.pure import Y or from X.impure import Y."
+canary = "LLM imports from the parent package to avoid thinking about which zone code belongs in."
+
+# =========================================================================
+# PROHIBITED
+# =========================================================================
+
+[no_cast]
+detail = "typing.cast breaks the type system contract."
+signal = "cast tells the type checker to trust the programmer, bypassing actual validation."
+direction = "Use isinstance checks, Pydantic validation, or redesign the type flow."
+canary = "LLM uses cast to force types to match rather than fixing the underlying type mismatch."
+
+[no_overload]
+detail = "@overload adds complexity without runtime benefit."
+signal = "Overload signatures create maintenance burden and confuse rather than clarify."
+direction = "Use Union return types or separate functions with clear names."
+canary = "LLM adds @overload to make function signatures look sophisticated."
+
+[no_bare_except]
+detail = "Bare except catches everything including KeyboardInterrupt and SystemExit."
+signal = "Bare except clauses catch system-level signals, making programs impossible to stop cleanly."
+direction = "Catch specific exceptions: except ValueError, except OSError, etc."
+canary = "LLM writes bare except to make code 'safe' without understanding what it catches."
+
+[no_broad_exceptions]
+detail = "except Exception is too broad — catch specific errors."
+signal = "Broad exception handlers hide bugs by silently swallowing unexpected errors."
+direction = "Catch the specific exception types that can actually occur."
+canary = "LLM uses except Exception as a safety blanket rather than analyzing failure modes."
+
+[no_print]
+detail = "Use structured logging, not console output."
+signal = "Print statements are debug artifacts that pollute stdout in production."
+direction = "Remove the print statement or replace with proper logging."
+canary = "LLM adds print statements for debugging and forgets to remove them."
+
+[no_model_dump]
+detail = ".model_dump() and .dict() shed type safety."
+signal = "Serializing typed models to dicts discards the type guarantees Pydantic provides."
+direction = "Pass the model object directly instead of dumping to dict."
+canary = "LLM calls .model_dump() to convert between types instead of using proper typed interfaces."
+
+[no_future_annotations]
+detail = "from __future__ import annotations is deprecated."
+signal = "PEP 563 annotations are superseded by PEP 695. They break runtime type access."
+direction = "Remove the import. Use modern syntax (PEP 695 type statements, X | Y unions)."
+canary = "LLM adds future annotations from training data patterns that predate Python 3.10+."
+
+[init_files_empty]
+detail = "__init__.py files must be empty."
+signal = "Non-empty __init__.py files create hidden import side effects and implicit re-exports."
+direction = "Move all code out of __init__.py into explicit modules."
+canary = "LLM puts code in __init__.py to make imports shorter."
+
+[no_dunder_all]
+detail = "__all__ obfuscates the real import graph."
+signal = "__all__ lists create a second source of truth about what a module exports."
+direction = "Remove __all__. Let the module's actual definitions speak for themselves."
+canary = "LLM adds __all__ to control imports instead of organizing modules properly."
+
+[no_suppression_comments]
+detail = "Suppression comments bypass type/lint checking."
+signal = "Each suppressed warning is a known defect being intentionally ignored."
+direction = "Fix the underlying issue instead of suppressing the warning."
+canary = "LLM adds # type: ignore and # noqa to make warnings disappear."
+
+# =========================================================================
+# ARCHITECTURE
+# =========================================================================
+
+[no_methods_in_classes]
+detail = "Classes are pure data structures. Move behavior to module-level functions."
+signal = "Classes with methods mix data and behavior, violating pure data structure principle."
+direction = "Extract methods to module-level functions that take the data as a parameter."
+canary = "LLM defaults to OOP patterns, adding methods to classes instead of standalone functions."
+
+[pydantic_only]
+detail = "Use Pydantic BaseModel for all data structures."
+signal = "Non-Pydantic data structures bypass frozen model guarantees and validation."
+direction = "Replace with a Pydantic BaseModel with frozen=True and explicit field types."
+canary = "LLM reaches for familiar stdlib types (dataclass, TypedDict, NamedTuple) instead of project-standard Pydantic."
+
+[god_classes]
+detail = "Class has behavior methods that should be standalone functions."
+signal = "God classes accumulate behavior that belongs in pure functions, creating untestable monoliths."
+direction = "Move public behavior methods to module-level functions in functions/pure/ or functions/impure/."
+canary = "LLM gravitates toward large classes with many methods as the natural way to organize code."
+
+[no_reexport_shims]
+detail = "Re-export shim detected. Fix imports at dependent code."
+signal = "Re-export shims create phantom modules that mask the real import graph."
+direction = "Delete the shim file and update all imports to point at the actual source module."
+canary = "LLM creates compatibility shims to avoid updating imports, accumulating dead indirection layers."
+
+[hardcoded_config]
+detail = "Hard-coded config belongs in a .toml config file or Pydantic model."
+signal = "Hard-coded config values scatter tuning knobs across source files."
+direction = "Define the value in a config file or as a typed field in a Pydantic model."
+canary = "LLM inlines magic constants and lookup dicts rather than using the project config system."
+
+[structures_no_functions]
+detail = "Functions do not belong in structures/ files."
+signal = "Functions in structures/ violate the data-only contract of the structures zone."
+direction = "Move the function to functions/pure/ (if no IO) or functions/impure/ (if IO)."
+canary = "LLM adds helper functions next to the data models they operate on instead of respecting zone boundaries."
+
+[structures_import_boundary]
+detail = "Structures are inert data. Functions depend on structures, not the reverse."
+signal = "If a structure imports from functions/ or elsewhere, the dependency direction is wrong."
+direction = "Structures import only from structures/ (and pydantic_validators.py for validation logic)."
+canary = "LLM adds behavior imports to data models instead of keeping structures inert."
+
+[classes_only_in_structures]
+detail = "Class definitions belong in structures/."
+signal = "Classes outside structures/ break the architectural rule that data definitions live in one place."
+direction = "Move the class definition to the appropriate file in structures/."
+canary = "LLM defines ad-hoc classes inline wherever needed instead of centralizing data models."
+
+[max_functions_outside_zones]
+detail = "Too many functions outside architectural zones."
+signal = "Functions outside designated zones indicate logic leaking into runner or config files."
+direction = "Move functions into functions/pure/ or functions/impure/ to respect zone boundaries."
+canary = "LLM dumps utility functions wherever it is working instead of placing them in the correct zone."
+
+# =========================================================================
+# STYLE
+# =========================================================================
+
+[function_length]
+detail = "Function too long. Break it down."
+signal = "Long functions accumulate responsibilities and become difficult to reason about."
+direction = "Extract the functional primitive — the one thing this function does — and separate the rest."
+canary = "LLM generates long functions because training data rewards completeness over decomposition."
+
+[param_count]
+detail = "Too many parameters. Simplify the interface."
+signal = "Functions with many parameters have complex call sites and are hard to test."
+direction = "Group related parameters into a Pydantic model or split the function."
+canary = "LLM passes every piece of state as a separate parameter instead of designing data structures."
+
+[nesting_depth]
+detail = "Excessive nesting. Flatten the logic."
+signal = "Deep nesting makes control flow hard to follow and indicates tangled logic."
+direction = "Use early returns, extract helper functions, or restructure the conditions."
+canary = "LLM nests conditionals and loops rather than using guard clauses and early returns."
+
+[no_underscore_prefix]
+detail = "Underscore-prefixed names are not used in this codebase."
+signal = "Underscore prefix convention is a Python convention for 'private' that this codebase does not use."
+direction = "Remove the underscore prefix. Use module structure for encapsulation, not naming conventions."
+canary = "LLM adds underscore prefixes from general Python training data patterns."
+
+[no_none_returns]
+detail = "Functions should return meaningful values, not None."
+signal = "None returns hide side effects and make functions impossible to compose."
+direction = "Return a result value, a status enum, or restructure to avoid the function entirely."
+canary = "LLM writes void-like functions that mutate state and return None."
+
+[no_throwaway_assignment]
+detail = "Assigning to _ discards a return value."
+signal = "Throwaway assignments hide ignored return values that may indicate bugs."
+direction = "Use the return value or restructure to avoid calling the function for side effects."
+canary = "LLM assigns to _ to silence unused-variable warnings instead of using the value."
+
+[no_single_letter_names]
+detail = "Single-letter variable names lack meaning."
+signal = "Single-letter names force readers to hold context in their head rather than reading it from code."
+direction = "Use descriptive names that communicate the variable's purpose."
+canary = "LLM uses short variable names from mathematical notation or terse coding style."
+
+[no_numbered_suffixes]
+detail = "Numbered suffixes indicate copy-paste rather than design."
+signal = "Names like result1, result2 suggest the function is doing too many things."
+direction = "Give each variable a name that describes what makes it distinct."
+canary = "LLM creates numbered variants when it needs multiple similar variables."
+
+[short_param_names]
+detail = "Parameter name too short to be meaningful."
+signal = "Abbreviated parameter names force callers to look up what each argument means."
+direction = "Use full descriptive names for parameters."
+canary = "LLM abbreviates parameter names for brevity rather than clarity."

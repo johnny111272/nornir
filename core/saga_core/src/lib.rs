@@ -87,60 +87,39 @@ fn pyright_config() -> PathBuf {
     ensure_embedded_config("pyrightconfig.json", PYRIGHTCONFIG_JSON)
 }
 
-fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
-}
-
-fn gleipnir_python() -> PathBuf {
-    home_dir().join(".ai/smidja/gleipnir/.venv/bin/python")
-}
-
 // =============================================================================
-// Runners — shell out to external tools, parse JSON output
+// Runners — gleipnir (native library), ruff + basedpyright (subprocess)
 // =============================================================================
 
-/// Run gleipnir guardrail checks on a file.
+/// Run gleipnir guardrail checks on a file (native — no subprocess).
 pub fn run_gleipnir(file_path: &Path) -> Vec<Issue> {
-    let python = gleipnir_python();
-    if !python.exists() {
-        return Vec::new();
-    }
-
-    let output = Command::new(python.as_os_str())
-        .args(["-m", "gleipnir.runners.file_gleipnir"])
-        .arg(file_path.as_os_str())
-        .arg("--json")
-        .output();
-
-    let output = match output {
-        Ok(out) => out,
+    let source = match std::fs::read(file_path) {
+        Ok(bytes) => bytes,
         Err(_) => return Vec::new(),
     };
+    let file_path_str = file_path.to_string_lossy();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.is_empty() {
-        return Vec::new();
-    }
+    let violations = gleipnir_core::run_checks(&file_path_str, &source, None);
 
-    let items: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
-        Ok(val) => val,
-        Err(_) => return Vec::new(),
-    };
-
-    items
-        .iter()
-        .map(|item| Issue {
+    violations
+        .into_iter()
+        .map(|v| Issue {
             tool: "gleipnir".into(),
-            code: item["check_name"].as_str().unwrap_or("guardrail").into(),
-            severity: item["severity"].as_str().unwrap_or("warning").into(),
-            line: item["line"].as_u64().unwrap_or(1) as usize,
+            code: v.check_name,
+            severity: match v.severity {
+                gleipnir_core::Severity::Blocked => "blocked",
+                gleipnir_core::Severity::Error => "error",
+                gleipnir_core::Severity::Warning => "warning",
+            }
+            .into(),
+            line: v.line,
             column: None,
-            message: item["message"].as_str().unwrap_or("").into(),
+            message: v.message,
             category: "structure".into(),
             fixable: false,
-            signal: item["signal"].as_str().unwrap_or("").into(),
-            direction: item["direction"].as_str().unwrap_or("").into(),
-            canary: item["canary"].as_str().unwrap_or("").into(),
+            signal: v.signal,
+            direction: v.direction,
+            canary: v.canary,
         })
         .collect()
 }
