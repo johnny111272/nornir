@@ -11,6 +11,7 @@
 //! PostToolUse assessment emission is handled by syn (not hook_io).
 
 pub mod response;
+pub mod rules;
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -239,12 +240,12 @@ fn emit_to_watchtower(
     let datagram = socket_emit::Datagram {
         timestamp: socket_emit::now(),
         source,
-        datagram_type: "alert".to_string(),
+        kind: socket_emit::DatagramKind::Alert,
         priority: match decision {
-            "deny" => "high",
-            "warn" => "normal",
-            _ => "low",
-        }.to_string(),
+            "deny" => socket_emit::Priority::High,
+            "warn" => socket_emit::Priority::Normal,
+            _ => socket_emit::Priority::Low,
+        },
         workspace: socket_emit::workspace_name(),
         detail: Some(detail.to_string()),
         speech: if speech.is_empty() { None } else { Some(speech) },

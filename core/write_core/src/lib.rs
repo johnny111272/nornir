@@ -92,6 +92,8 @@ enum WriteError {
     IoFailed(String),
     BatchTooLarge { got: usize, max: usize },
     MissingArg(String),
+    /// Pre-formatted batch line error (preserves exact original output format).
+    BatchLine(String),
 }
 
 impl WriteError {
@@ -163,6 +165,7 @@ impl WriteError {
                 what = what,
                 name = config.name,
             ),
+            WriteError::BatchLine(msg) => msg.clone(),
         }
     }
 }
@@ -356,8 +359,12 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), WriteError> {
 
 /// Main entry point for all writer binaries.
 ///
-/// Reads config, parses args, reads stdin, validates, writes. Exits process.
-pub fn run(config: &WriterConfig) -> ! {
+/// Reads config, parses args, reads stdin, validates, writes.
+/// Returns `Ok(message)` on success or `Err(message)` on failure.
+/// The caller is responsible for printing and calling `process::exit`.
+///
+/// Note: `--help` and `--dump-schema` print directly and call `process::exit(0)`.
+pub fn run(config: &WriterConfig) -> Result<String, String> {
     let args: Vec<String> = std::env::args().collect();
 
     // --help
@@ -376,62 +383,39 @@ pub fn run(config: &WriterConfig) -> ! {
     let cli_arg = args.get(1).map(|s| s.as_str());
 
     // Resolve output path (includes traversal validation)
-    let output_path = match resolve_output_path(config, cli_arg) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{}", e.format(config));
-            process::exit(1);
-        }
-    };
+    let output_path = resolve_output_path(config, cli_arg)
+        .map_err(|e| e.format(config))?;
 
     // Read stdin
     let mut input = String::new();
-    if let Err(e) = io::stdin().read_to_string(&mut input) {
-        eprintln!(
-            "{}",
-            WriteError::IoFailed(format!("reading stdin: {}", e)).format(config)
-        );
-        process::exit(1);
-    }
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| WriteError::IoFailed(format!("reading stdin: {}", e)).format(config))?;
     let input = input.trim();
 
     if input.is_empty() {
-        eprintln!("{}", WriteError::StdinEmpty.format(config));
-        process::exit(1);
+        return Err(WriteError::StdinEmpty.format(config));
     }
 
     // Parse and validate based on frequency
-    match config.frequency {
-        WriteFrequency::Record => {
-            run_record(config, &output_path, input);
-        }
-        WriteFrequency::Batch => {
-            run_batch(config, &output_path, input);
-        }
-    }
+    let result = match config.frequency {
+        WriteFrequency::Record => run_record(config, &output_path, input),
+        WriteFrequency::Batch => run_batch(config, &output_path, input),
+    };
+
+    result.map_err(|e| e.format(config))
 }
 
 /// Handle single-record writes.
-fn run_record(config: &WriterConfig, output_path: &Path, input: &str) -> ! {
+fn run_record(config: &WriterConfig, output_path: &Path, input: &str) -> Result<String, WriteError> {
     // Validate JSON + schema
-    let result = config.schema.validate(input);
-    let result = match result {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!(
-                "{}",
-                WriteError::InvalidJson(e.to_string()).format(config)
-            );
-            process::exit(1);
-        }
-    };
+    let result = config
+        .schema
+        .validate(input)
+        .map_err(|e| WriteError::InvalidJson(e.to_string()))?;
 
     if !result.valid {
-        eprintln!(
-            "{}",
-            WriteError::SchemaValidation(result.message).format(config)
-        );
-        process::exit(1);
+        return Err(WriteError::SchemaValidation(result.message));
     }
 
     // Re-serialize to compact JSON (normalized)
@@ -443,96 +427,71 @@ fn run_record(config: &WriterConfig, output_path: &Path, input: &str) -> ! {
         OutputFormat::Jsonl => {
             // File must exist
             if !output_path.exists() {
-                eprintln!(
-                    "{}",
-                    WriteError::FileNotFound(output_path.display().to_string()).format(config)
-                );
-                process::exit(1);
+                return Err(WriteError::FileNotFound(
+                    output_path.display().to_string(),
+                ));
             }
-            if let Err(e) = append_line(output_path, &compact) {
-                eprintln!("{}", e.format(config));
-                process::exit(1);
-            }
+            append_line(output_path, &compact)?;
         }
         OutputFormat::Json => {
             // File must NOT exist
             if output_path.exists() {
-                eprintln!(
-                    "{}",
-                    WriteError::FileExists(output_path.display().to_string()).format(config)
-                );
-                process::exit(1);
+                return Err(WriteError::FileExists(
+                    output_path.display().to_string(),
+                ));
             }
             // Parent directory must exist
             if let Some(parent) = output_path.parent() {
                 if !parent.exists() {
-                    eprintln!(
-                        "{}",
-                        WriteError::DirectoryNotFound(parent.display().to_string()).format(config)
-                    );
-                    process::exit(1);
+                    return Err(WriteError::DirectoryNotFound(
+                        parent.display().to_string(),
+                    ));
                 }
             }
             // Pretty-print for json files
             let pretty = serde_json::to_string_pretty(&data).unwrap();
-            if let Err(e) = write_atomic(output_path, &pretty) {
-                eprintln!("{}", e.format(config));
-                process::exit(1);
-            }
+            write_atomic(output_path, &pretty)?;
         }
     }
 
-    println!("OK");
-    process::exit(0);
+    Ok("OK".to_string())
 }
 
 /// Handle batch writes (multiple JSONL lines, all-or-nothing).
-fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> ! {
+fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> Result<String, WriteError> {
     let lines: Vec<&str> = input.lines().filter(|l| !l.trim().is_empty()).collect();
 
     if lines.is_empty() {
-        eprintln!("{}", WriteError::StdinEmpty.format(config));
-        process::exit(1);
+        return Err(WriteError::StdinEmpty);
     }
 
     // Check batch size limit
     if let Some(max) = config.batch_size {
         if lines.len() > max {
-            eprintln!(
-                "{}",
-                WriteError::BatchTooLarge {
-                    got: lines.len(),
-                    max,
-                }
-                .format(config)
-            );
-            process::exit(1);
+            return Err(WriteError::BatchTooLarge {
+                got: lines.len(),
+                max,
+            });
         }
     }
 
     // Validate ALL records before writing ANY
     let mut validated: Vec<String> = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
-        let result = config.schema.validate(line);
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!(
-                    "FAIL:line {} — {}",
-                    i + 1,
-                    WriteError::InvalidJson(e.to_string()).format(config)
-                );
-                process::exit(1);
-            }
-        };
+        let result = config.schema.validate(line).map_err(|e| {
+            WriteError::BatchLine(format!(
+                "FAIL:line {} — {}",
+                i + 1,
+                WriteError::InvalidJson(e.to_string()).format(config)
+            ))
+        })?;
 
         if !result.valid {
-            eprintln!(
+            return Err(WriteError::BatchLine(format!(
                 "FAIL:line {} — schema validation — {}",
                 i + 1,
                 result.message
-            );
-            process::exit(1);
+            )));
         }
 
         let data = result.data.unwrap();
@@ -543,61 +502,42 @@ fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> ! {
     match config.format {
         OutputFormat::Jsonl => {
             if !output_path.exists() {
-                eprintln!(
-                    "{}",
-                    WriteError::FileNotFound(output_path.display().to_string()).format(config)
-                );
-                process::exit(1);
+                return Err(WriteError::FileNotFound(
+                    output_path.display().to_string(),
+                ));
             }
 
             // Append all validated records
-            let mut file = match OpenOptions::new().append(true).open(output_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!(
-                        "{}",
-                        WriteError::IoFailed(format!("{}: {}", output_path.display(), e))
-                            .format(config)
-                    );
-                    process::exit(1);
-                }
-            };
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(output_path)
+                .map_err(|e| {
+                    WriteError::IoFailed(format!("{}: {}", output_path.display(), e))
+                })?;
 
             for line in &validated {
-                if let Err(e) = writeln!(file, "{}", line) {
-                    eprintln!(
-                        "{}",
-                        WriteError::IoFailed(format!("write: {}", e)).format(config)
-                    );
-                    process::exit(1);
-                }
+                writeln!(file, "{}", line).map_err(|e| {
+                    WriteError::IoFailed(format!("write: {}", e))
+                })?;
             }
 
-            if let Err(e) = file.sync_all() {
-                eprintln!(
-                    "{}",
-                    WriteError::IoFailed(format!("fsync: {}", e)).format(config)
-                );
-                process::exit(1);
-            }
+            file.sync_all().map_err(|e| {
+                WriteError::IoFailed(format!("fsync: {}", e))
+            })?;
         }
         OutputFormat::Json => {
             // Batch mode with Json format is unusual but handle it:
             // write a JSON array
             if output_path.exists() {
-                eprintln!(
-                    "{}",
-                    WriteError::FileExists(output_path.display().to_string()).format(config)
-                );
-                process::exit(1);
+                return Err(WriteError::FileExists(
+                    output_path.display().to_string(),
+                ));
             }
             if let Some(parent) = output_path.parent() {
                 if !parent.exists() {
-                    eprintln!(
-                        "{}",
-                        WriteError::DirectoryNotFound(parent.display().to_string()).format(config)
-                    );
-                    process::exit(1);
+                    return Err(WriteError::DirectoryNotFound(
+                        parent.display().to_string(),
+                    ));
                 }
             }
             let values: Vec<serde_json::Value> = validated
@@ -605,15 +545,11 @@ fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> ! {
                 .map(|s| serde_json::from_str(s).unwrap())
                 .collect();
             let pretty = serde_json::to_string_pretty(&values).unwrap();
-            if let Err(e) = write_atomic(output_path, &pretty) {
-                eprintln!("{}", e.format(config));
-                process::exit(1);
-            }
+            write_atomic(output_path, &pretty)?;
         }
     }
 
-    println!("OK:{}", validated.len());
-    process::exit(0);
+    Ok(format!("OK:{}", validated.len()))
 }
 
 // =============================================================================

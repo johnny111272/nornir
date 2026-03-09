@@ -27,6 +27,7 @@ WRITER_CRATES = [
     "write_truth_glossary_record",
     "append_embedding_normalize_batch_20",
     "append_interview_summaries_record",
+    "append_raw_jsonl",
 ]
 
 

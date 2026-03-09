@@ -20,16 +20,22 @@ direction = "Replace Any with the actual type, a Protocol, or a TypeVar with con
 canary = "LLM uses Any to silence type errors rather than understanding the actual data shape."
 
 [no_object]
-detail = "object is Python's universal base class — meaningless in a type annotation."
-signal = "object in annotations provides zero type information and defeats static analysis."
-direction = "Replace with the actual expected type. If truly any type, that signals a design problem."
-canary = "LLM uses object as a type-safe-looking substitute for Any."
+detail = "object is type-erasure camouflage. Use Any if you genuinely don't know the type — it clusters visibly so we can see where architecture is failing."
+signal = "object looks type-safe but means nothing. It scatters the 'unknown type' signal that Any honestly exposes."
+direction = "If you know the type, use it. If you don't, use Any — honest Any clusters are architectural signals we track. object hides the problem."
+canary = "LLM uses object as a type-safe-looking substitute for Any, scattering the signal across the codebase."
 
 [no_json_value]
-detail = "JsonValue is a mega-union with no type safety."
-signal = "JsonValue (int|float|str|bool|None|list|dict) erases all structure from the data."
-direction = "Define a Pydantic model that describes the actual expected shape."
-canary = "LLM uses JsonValue to avoid modeling the actual data structure."
+detail = "JsonValue is type-erasure camouflage. It looks structured but is just int|float|str|bool|None|list|dict — worse than Any because it pretends to mean something."
+signal = "JsonValue scatters the 'unknown type' signal that honest Any would cluster visibly."
+direction = "Define a Pydantic model for the actual shape. If you genuinely don't know the shape, use Any — it clusters honestly so we can see where modeling is incomplete."
+canary = "LLM uses JsonValue to avoid modeling actual data structure, hiding type holes behind a structured-looking name."
+
+[no_any_type_aliases]
+detail = "Type alias launders Any behind a clean name. This is circumvention — it scatters the type hole signal that honest Any would cluster."
+signal = "Any is honest. Clustering Any shows where architecture is failing. Type aliases hide that signal behind names that look typed."
+direction = "Delete the alias. Use Any directly at each site so the holes cluster visibly and you can see the architectural pattern."
+canary = "LLM creates type aliases like JsonNode = dict[str, Any] to make code look clean while hiding type holes across the codebase."
 
 [no_bare_collections]
 detail = "Bare collections lose element type information."
@@ -38,16 +44,16 @@ direction = "Add type parameters: dict[str, int], list[str], tuple[int, ...], et
 canary = "LLM uses bare collection types out of laziness or unfamiliarity with generic syntax."
 
 [union_member_count]
-detail = "Union has too many members. Simplify the type."
-signal = "Large unions indicate a type trying to be everything, defeating the purpose of typing."
-direction = "Factor common members into a base type, or use a discriminated union pattern."
-canary = "LLM builds sprawling union types rather than designing proper type hierarchies."
+detail = "Union has too many members. This is type-erasure through complexity — worse than honest Any because it pretends to be precise."
+signal = "Large unions scatter the 'unknown type' signal across many members instead of clustering it honestly with Any."
+direction = "Factor common members into a base type or discriminated union. If the type genuinely varies this much, that is an architectural signal — use Any honestly so it clusters visibly."
+canary = "LLM builds sprawling union types rather than designing proper type hierarchies, creating camouflaged type erasure."
 
 [no_implicit_type_aliases]
-detail = "Use the type keyword for explicit type aliases."
-signal = "Implicit aliases (X = Literal[...]) look like assignments, hiding type-level definitions."
-direction = "Use: type X = Literal[...] (PEP 695 syntax)."
-canary = "LLM uses old-style implicit type aliases instead of the explicit type statement."
+detail = "Use the type keyword for explicit type aliases. Do not alias Any or types containing Any — that is circumvention."
+signal = "Implicit aliases hide type-level definitions. Type aliases containing Any (like type JsonNode = dict[str, Any]) launder type holes behind clean names, scattering the signal that honest Any would cluster."
+direction = "Use PEP 695 syntax (type X = ...) for legitimate aliases. Never alias away Any — if the type is unknown, let Any be visible at each usage site so the holes cluster."
+canary = "LLM creates type aliases to hide Any behind clean names, dispersing type holes across the codebase."
 
 # =========================================================================
 # IMPORTS

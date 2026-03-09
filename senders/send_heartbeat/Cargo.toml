@@ -1,0 +1,11 @@
+[package]
+name = "send_heartbeat"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "send_heartbeat"
+path = "src/main.rs"
+
+[dependencies]
+socket_emit = { path = "../../capability/socket_emit" }

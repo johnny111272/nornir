@@ -14,6 +14,5 @@ toml = { workspace = true }
 jaq-interpret = { workspace = true }
 jaq-parse = { workspace = true }
 saga_core = { path = "../../core/saga_core" }
-format_core = { path = "../../core/format_core" }
-error_core = { path = "../../core/error_core" }
+report_render = { path = "../../core/report_render" }
 socket_emit = { path = "../../capability/socket_emit" }

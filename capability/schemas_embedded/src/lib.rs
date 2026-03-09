@@ -146,6 +146,11 @@ static SUMMARIES_JSON: &str =
 pub static SUMMARIES: EmbeddedValidator =
     EmbeddedValidator::new(SUMMARIES_JSON, "summaries");
 
+static RAW_JSONL_JSON: &str =
+    include_str!("../../../schemas/tools/raw-jsonl.schema.json");
+pub static RAW_JSONL_RECORD: EmbeddedValidator =
+    EmbeddedValidator::new(RAW_JSONL_JSON, "raw-jsonl");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +302,11 @@ mod tests {
     fn test_summaries_compiles() {
         assert_eq!(SUMMARIES.schema_name(), "summaries");
         assert!(!SUMMARIES.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_raw_jsonl_record_compiles() {
+        assert_eq!(RAW_JSONL_RECORD.schema_name(), "raw-jsonl");
+        assert!(!RAW_JSONL_RECORD.schema_json().is_empty());
     }
 }

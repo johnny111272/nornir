@@ -12,6 +12,7 @@
 
 use std::process::ExitCode;
 
+use hook_io::rules::{parse_rule_array, parse_severity, parse_toml_table, RawRule, Severity};
 use hook_io::{HookDecision, HookInput};
 use regex::Regex;
 
@@ -24,57 +25,48 @@ fn main() -> ExitCode {
 // ── Rules ──────────────────────────────────────────────────────────
 
 #[derive(Debug)]
-struct Rule {
+struct CompiledRule {
     pattern: String,
     description: String,
     compiled: Regex,
 }
 
-#[derive(Debug)]
-struct Rules {
-    subversion: Vec<Rule>,
-    truncation: Vec<Rule>,
-    evasion: Vec<Rule>,
-}
-
-fn parse_rules(toml_str: &str) -> Rules {
-    let table: toml::Table = toml_str.parse().expect("embedded rules.toml is invalid");
-
-    let parse_array = |key: &str| -> Vec<Rule> {
-        table
-            .get(key)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        let t = item.as_table()?;
-                        let pattern = t.get("pattern")?.as_str()?.to_string();
-                        let compiled = Regex::new(&pattern).ok()?;
-                        Some(Rule {
-                            pattern,
-                            description: t.get("description")?.as_str()?.to_string(),
-                            compiled,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-
-    Rules {
-        subversion: parse_array("subversion"),
-        truncation: parse_array("truncation"),
-        evasion: parse_array("evasion"),
+impl CompiledRule {
+    /// Compile a RawRule's pattern as a regex. Returns None if invalid.
+    fn from_raw(raw: RawRule) -> Option<Self> {
+        let compiled = Regex::new(&raw.pattern).ok()?;
+        Some(Self {
+            pattern: raw.pattern,
+            description: raw.description,
+            compiled,
+        })
     }
 }
 
-// ── Config ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Severity {
-    Warn,
-    Block,
+struct Rules {
+    subversion: Vec<CompiledRule>,
+    truncation: Vec<CompiledRule>,
+    evasion: Vec<CompiledRule>,
 }
+
+fn parse_rules(toml_str: &str) -> Result<Rules, String> {
+    let table = parse_toml_table(toml_str)?;
+
+    let compile_array = |key: &str| -> Vec<CompiledRule> {
+        parse_rule_array(&table, key)
+            .into_iter()
+            .filter_map(CompiledRule::from_raw)
+            .collect()
+    };
+
+    Ok(Rules {
+        subversion: compile_array("subversion"),
+        truncation: compile_array("truncation"),
+        evasion: compile_array("evasion"),
+    })
+}
+
+// ── Config ─────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 struct Config {
@@ -124,19 +116,20 @@ fn parse_config() -> Config {
     }
 }
 
-fn parse_severity(s: &str) -> Option<Severity> {
-    match s {
-        "warn" => Some(Severity::Warn),
-        "block" => Some(Severity::Block),
-        _ => None,
-    }
-}
-
 // ── Decision logic ─────────────────────────────────────────────────
 
 fn decide(input: &HookInput) -> HookDecision {
     let config = parse_config();
-    let rules = parse_rules(RULES_TOML);
+    let rules = match parse_rules(RULES_TOML) {
+        Ok(r) => r,
+        Err(e) => {
+            return HookDecision::Deny {
+                category: "config".into(),
+                event: "rules parse failure".into(),
+                reason: format!("Cannot load rules \u{2014} {e}"),
+            };
+        }
+    };
 
     let command = input
         .tool_input
@@ -178,7 +171,7 @@ fn decide(input: &HookInput) -> HookDecision {
 
 fn check_category(
     command: &str,
-    rules: &[Rule],
+    rules: &[CompiledRule],
     severity: Severity,
     category: &str,
     allow_patterns: &[String],
@@ -211,7 +204,7 @@ fn make_decision(
     match severity {
         Severity::Block => HookDecision::Deny {
             category: category.into(),
-            event: format!("{} — {}", description.to_lowercase(), short_cmd),
+            event: format!("{} \u{2014} {}", description.to_lowercase(), short_cmd),
             reason: format!(
                 "Command blocked ({}: {}).\n{}",
                 category, description, short_cmd
@@ -219,7 +212,7 @@ fn make_decision(
         },
         Severity::Warn => HookDecision::Warn {
             category: category.into(),
-            event: format!("{} — {}", description.to_lowercase(), short_cmd),
+            event: format!("{} \u{2014} {}", description.to_lowercase(), short_cmd),
             user_reason: format!(
                 "LLM ran '{}' ({}: {}). Behavior flagged.",
                 short_cmd, category, description

@@ -351,6 +351,39 @@ pub fn qa_path(file_path: &Path) -> PathBuf {
     file_path.parent().unwrap_or(Path::new(".")).join(format!(".{}.qa", name))
 }
 
+/// Reverse of qa_path: given `.foo.py.qa`, returns `foo.py` path in the same directory.
+/// Returns None if the filename doesn't match the sidecar pattern (.*.qa).
+pub fn source_path_from_qa(qa_path: &Path) -> Option<PathBuf> {
+    let name = qa_path.file_name()?.to_string_lossy();
+    // Pattern: .{source_name}.qa — minimum length is 5 (e.g. ".x.qa")
+    if name.len() < 5 || !name.starts_with('.') || !name.ends_with(".qa") {
+        return None;
+    }
+    // Strip leading '.' and trailing '.qa'
+    let source_name = &name[1..name.len() - 3];
+    if source_name.is_empty() {
+        return None;
+    }
+    Some(qa_path.parent().unwrap_or(Path::new(".")).join(source_name))
+}
+
+/// Remove .qa sidecars whose source files no longer exist.
+/// Returns list of removed sidecar paths.
+pub fn remove_orphaned_sidecars(dir: &Path) -> Vec<PathBuf> {
+    let qa_files = find_files(dir, &[], &|name| name.ends_with(".qa") && name.starts_with('.'));
+    let mut removed = Vec::new();
+    for qa_file in qa_files {
+        if let Some(source) = source_path_from_qa(&qa_file) {
+            if !source.exists() {
+                if std::fs::remove_file(&qa_file).is_ok() {
+                    removed.push(qa_file);
+                }
+            }
+        }
+    }
+    removed
+}
+
 /// Write a SanityReport to its .qa sidecar.
 pub fn save_sidecar(report: &SanityReport) -> std::io::Result<PathBuf> {
     let path = qa_path(Path::new(&report.file));
@@ -370,6 +403,58 @@ pub fn load_sidecar(file_path: &Path) -> Option<SanityReport> {
 pub fn load_qa_file(qa_file: &Path) -> Option<SanityReport> {
     let content = std::fs::read_to_string(qa_file).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+// =============================================================================
+// Directory walking
+// =============================================================================
+
+/// Directories always skipped during recursive file discovery.
+const SKIP_DIRS: &[&str] = &[
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+];
+
+/// Recursively collect files matching a predicate, skipping junk directories.
+///
+/// `extra_skip` allows callers to skip additional directory names.
+pub fn walk_files(
+    dir: &Path,
+    extra_skip: &[&str],
+    predicate: &dyn Fn(&str) -> bool,
+    results: &mut Vec<PathBuf>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if path.is_dir() {
+            if name.starts_with('.')
+                || SKIP_DIRS.contains(&name.as_str())
+                || extra_skip.contains(&name.as_str())
+            {
+                continue;
+            }
+            walk_files(&path, extra_skip, predicate, results);
+        } else if predicate(&name) {
+            results.push(path);
+        }
+    }
+}
+
+/// Collect files matching a predicate under `dir`, sorted.
+pub fn find_files(dir: &Path, extra_skip: &[&str], predicate: &dyn Fn(&str) -> bool) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    walk_files(dir, extra_skip, predicate, &mut files);
+    files.sort();
+    files
 }
 
 // =============================================================================
@@ -475,5 +560,32 @@ fn categorize_ruff(code: &str) -> &'static str {
         }
     }
     "lint"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_path_roundtrip() {
+        let source = Path::new("/some/dir/foo.py");
+        let qa = qa_path(source);
+        let recovered = source_path_from_qa(&qa).unwrap();
+        assert_eq!(recovered, source);
+    }
+
+    #[test]
+    fn source_path_rejects_non_sidecar() {
+        assert!(source_path_from_qa(Path::new("foo.py")).is_none());
+        assert!(source_path_from_qa(Path::new(".qa")).is_none());
+        assert!(source_path_from_qa(Path::new("regular.txt")).is_none());
+    }
+
+    #[test]
+    fn source_path_from_hidden_qa() {
+        let qa = Path::new("/dir/.foo.py.qa");
+        let source = source_path_from_qa(qa).unwrap();
+        assert_eq!(source, Path::new("/dir/foo.py"));
+    }
 }
 

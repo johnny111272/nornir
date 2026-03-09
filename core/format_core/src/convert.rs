@@ -105,6 +105,37 @@ pub fn toon_to_toml(content: &str) -> Result<String, FormatError> {
 }
 
 // =============================================================================
+// Null stripping
+// =============================================================================
+
+/// Recursively remove null values from a JSON Value.
+///
+/// - Object keys with null values are removed
+/// - Null elements in arrays are removed
+/// - All other values pass through unchanged
+pub fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let cleaned: serde_json::Map<String, serde_json::Value> = map
+                .into_iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (k, strip_nulls(v)))
+                .collect();
+            serde_json::Value::Object(cleaned)
+        }
+        serde_json::Value::Array(arr) => {
+            let cleaned: Vec<serde_json::Value> = arr
+                .into_iter()
+                .filter(|v| !v.is_null())
+                .map(strip_nulls)
+                .collect();
+            serde_json::Value::Array(cleaned)
+        }
+        other => other,
+    }
+}
+
+// =============================================================================
 // Educational TOML conversion
 // =============================================================================
 
@@ -296,6 +327,34 @@ active = true
         let orig_val: serde_json::Value = serde_json::from_str(original).unwrap();
         let back_val: serde_json::Value = serde_json::from_str(&back).unwrap();
         assert_eq!(orig_val, back_val);
+    }
+
+    #[test]
+    fn test_strip_nulls_object() {
+        let value = serde_json::json!({"name": "test", "email": null, "age": 30});
+        let stripped = strip_nulls(value);
+        assert_eq!(stripped, serde_json::json!({"name": "test", "age": 30}));
+    }
+
+    #[test]
+    fn test_strip_nulls_nested() {
+        let value = serde_json::json!({"a": {"b": null, "c": 1}, "d": null});
+        let stripped = strip_nulls(value);
+        assert_eq!(stripped, serde_json::json!({"a": {"c": 1}}));
+    }
+
+    #[test]
+    fn test_strip_nulls_array() {
+        let value = serde_json::json!({"items": [1, null, 3]});
+        let stripped = strip_nulls(value);
+        assert_eq!(stripped, serde_json::json!({"items": [1, 3]}));
+    }
+
+    #[test]
+    fn test_strip_nulls_clean_passthrough() {
+        let value = serde_json::json!({"name": "test", "count": 42});
+        let stripped = strip_nulls(value.clone());
+        assert_eq!(stripped, value);
     }
 
     #[test]

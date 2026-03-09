@@ -12,6 +12,7 @@
 
 use std::process::ExitCode;
 
+use hook_io::rules::{parse_rule_array, parse_severity, parse_toml_table, RawRule, Severity};
 use hook_io::{HookDecision, HookInput};
 
 static RULES_TOML: &str = include_str!("../rules.toml");
@@ -22,54 +23,22 @@ fn main() -> ExitCode {
 
 // ── Rules ──────────────────────────────────────────────────────────
 
-#[derive(Debug)]
-struct Rule {
-    pattern: String,
-    description: String,
-}
-
-#[derive(Debug)]
 struct Rules {
-    floor: Vec<Rule>,
-    probing: Vec<Rule>,
-    gaming: Vec<Rule>,
+    floor: Vec<RawRule>,
+    probing: Vec<RawRule>,
+    gaming: Vec<RawRule>,
 }
 
-fn parse_rules(toml_str: &str) -> Rules {
-    let table: toml::Table = toml_str.parse().expect("embedded rules.toml is invalid");
-
-    let parse_array = |key: &str| -> Vec<Rule> {
-        table
-            .get(key)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        let t = item.as_table()?;
-                        Some(Rule {
-                            pattern: t.get("pattern")?.as_str()?.to_string(),
-                            description: t.get("description")?.as_str()?.to_string(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-
-    Rules {
-        floor: parse_array("floor"),
-        probing: parse_array("probing"),
-        gaming: parse_array("gaming"),
-    }
+fn parse_rules(toml_str: &str) -> Result<Rules, String> {
+    let table = parse_toml_table(toml_str)?;
+    Ok(Rules {
+        floor: parse_rule_array(&table, "floor"),
+        probing: parse_rule_array(&table, "probing"),
+        gaming: parse_rule_array(&table, "gaming"),
+    })
 }
 
 // ── Config ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Severity {
-    Warn,
-    Block,
-}
 
 #[derive(Debug)]
 struct Config {
@@ -112,19 +81,20 @@ fn parse_config() -> Config {
     }
 }
 
-fn parse_severity(s: &str) -> Option<Severity> {
-    match s {
-        "warn" => Some(Severity::Warn),
-        "block" => Some(Severity::Block),
-        _ => None,
-    }
-}
-
 // ── Decision logic ─────────────────────────────────────────────────
 
 fn decide(input: &HookInput) -> HookDecision {
     let config = parse_config();
-    let rules = parse_rules(RULES_TOML);
+    let rules = match parse_rules(RULES_TOML) {
+        Ok(r) => r,
+        Err(e) => {
+            return HookDecision::Deny {
+                category: "config".into(),
+                event: "rules parse failure".into(),
+                reason: format!("Cannot load rules \u{2014} {e}"),
+            };
+        }
+    };
 
     let tool_input = &input.tool_input;
 
@@ -203,7 +173,7 @@ fn make_decision(
     match severity {
         Severity::Block => HookDecision::Deny {
             category: category.into(),
-            event: format!("{} — {}", description.to_lowercase(), target),
+            event: format!("{} \u{2014} {}", description.to_lowercase(), target),
             reason: format!(
                 "Access to '{}' blocked ({}: {}).",
                 target, category, description
@@ -211,7 +181,7 @@ fn make_decision(
         },
         Severity::Warn => HookDecision::Warn {
             category: category.into(),
-            event: format!("{} — {}", description.to_lowercase(), target),
+            event: format!("{} \u{2014} {}", description.to_lowercase(), target),
             user_reason: format!(
                 "LLM accessed '{}' ({}: {}). Behavior flagged.",
                 target, category, description

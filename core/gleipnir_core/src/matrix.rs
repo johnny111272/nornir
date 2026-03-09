@@ -31,6 +31,7 @@ const fn warning(name: &'static str, f: CheckFn) -> MatrixEntry {
 static SCRIPT_CHECKS: &[MatrixEntry] = &[
     // TYPE SAFETY
     error("no_any_types", type_safety::check_no_any_types),
+    error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
     error("no_json_value", type_safety::check_no_json_value),
     error("no_bare_collections", type_safety::check_no_bare_collections),
@@ -85,6 +86,7 @@ static TEST_CHECKS: &[MatrixEntry] = &[
 static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     // TYPE SAFETY
     error("no_any_types", type_safety::check_no_any_types),
+    error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
     error("no_json_value", type_safety::check_no_json_value),
     error("no_bare_collections", type_safety::check_no_bare_collections),
@@ -191,6 +193,7 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
 static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // TYPE SAFETY
     error("no_any_types", type_safety::check_no_any_types),
+    error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
     error("no_json_value", type_safety::check_no_json_value),
     error("no_bare_collections", type_safety::check_no_bare_collections),
@@ -232,6 +235,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
 static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // TYPE SAFETY
     error("no_any_types", type_safety::check_no_any_types),
+    error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
     error("no_json_value", type_safety::check_no_json_value),
     error("no_bare_collections", type_safety::check_no_bare_collections),
@@ -274,6 +278,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
 static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     // TYPE SAFETY (lazy — excusable via exceptions.toml)
     error("no_any_types", type_safety::check_no_any_types),
+    error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
     error("no_json_value", type_safety::check_no_json_value),
     error("no_bare_collections", type_safety::check_no_bare_collections),

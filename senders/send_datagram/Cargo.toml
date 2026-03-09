@@ -1,0 +1,14 @@
+[package]
+name = "send_datagram"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "send_datagram"
+path = "src/main.rs"
+
+[dependencies]
+socket_emit = { path = "../../capability/socket_emit" }
+schemas_embedded = { path = "../../capability/schemas_embedded" }
+schema_core = { path = "../../core/schema_core" }
+serde_json = { workspace = true }

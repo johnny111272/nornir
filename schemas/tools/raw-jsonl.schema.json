@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Raw JSONL Record",
+  "description": "Any JSON object — structural validation only, no field constraints",
+  "type": "object"
+}

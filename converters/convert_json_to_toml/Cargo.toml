@@ -1,12 +1,12 @@
 [package]
-name = "qa_report"
+name = "convert_json_to_toml"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "qa-report"
+name = "convert_json_to_toml"
 path = "src/main.rs"
 
 [dependencies]
-qa_core = { path = "../../core/qa_core" }
+format_core = { path = "../../core/format_core" }
 serde_json = { workspace = true }

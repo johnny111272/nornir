@@ -2,7 +2,7 @@ use schemas_embedded::SUMMARIES;
 use write_core::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
 
 fn main() {
-    write_core::run(&WriterConfig {
+    match write_core::run(&WriterConfig {
         name: "append_interview_summaries_record",
         schema: &SUMMARIES,
         schema_source_path: "/Users/johnny/.ai/spaces/bragi/schemas/summaries.schema.json",
@@ -13,5 +13,11 @@ fn main() {
             suffix: ".summaries.jsonl",
         },
         batch_size: None,
-    });
+    }) {
+        Ok(msg) => println!("{msg}"),
+        Err(msg) => {
+            eprintln!("{msg}");
+            std::process::exit(1);
+        }
+    }
 }

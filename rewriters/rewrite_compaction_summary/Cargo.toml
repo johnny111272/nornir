@@ -1,0 +1,11 @@
+[package]
+name = "rewrite_compaction_summary"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rewrite_compaction_summary"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { workspace = true }

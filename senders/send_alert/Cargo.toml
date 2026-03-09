@@ -1,0 +1,11 @@
+[package]
+name = "send_alert"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "send_alert"
+path = "src/main.rs"
+
+[dependencies]
+socket_emit = { path = "../../capability/socket_emit" }

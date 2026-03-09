@@ -1,11 +1,11 @@
 //! Type system enforcement checks.
 //!
-//! Checks: no_object, no_json_value, no_any_types,
+//! Checks: no_object, no_json_value, no_any_types, no_any_type_aliases,
 //! no_bare_collections, union_member_count, no_implicit_type_aliases.
 
 use crate::parsing::{
     annotation_contains_name, bare_names_in_annotation, count_union_members,
-    find_type_annotations, node_field, node_line, node_text, walk_tree,
+    find_nodes_by_type, find_type_annotations, node_field, node_line, node_text, walk_tree,
 };
 use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
 
@@ -135,6 +135,45 @@ pub fn check_union_member_count(source: &ParsedSource, config: &CheckConfig) -> 
                     "union has too many members".to_string(),
                 ));
             }
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// no_any_type_aliases
+// -------------------------------------------------------------------------
+
+pub fn check_no_any_type_aliases(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for node in find_nodes_by_type(source.tree.root_node(), "type_alias_statement") {
+        // Extract alias name (second named child of kind "type" wrapping an identifier)
+        // and value (last named child of kind "type")
+        let mut cursor = node.walk();
+        let type_children: Vec<_> = node
+            .named_children(&mut cursor)
+            .filter(|c| c.kind() == "type")
+            .collect();
+
+        // Need at least 2: name wrapper and value wrapper
+        if type_children.len() < 2 {
+            continue;
+        }
+
+        let name_node = type_children[0];
+        let value_node = *type_children.last().unwrap();
+
+        let alias_name = name_node
+            .named_child(0)
+            .map(|n| node_text(n, source.source_bytes))
+            .unwrap_or("<unknown>");
+
+        if annotation_contains_name(value_node, "Any", source.source_bytes) {
+            violations.push(violation(
+                node_line(node),
+                format!("type alias '{alias_name}' launders Any — use Any directly so type holes cluster visibly"),
+            ));
         }
     }
     violations
@@ -378,5 +417,38 @@ mod tests {
         let parsed = parse("Config = dict[str, int]\n");
         let violations = check_no_implicit_type_aliases(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
+    }
+
+    // -- no_any_type_aliases --
+
+    #[test]
+    fn any_type_alias_caught() {
+        let parsed = parse("type JsonNode = dict[str, Any]\n");
+        let violations = check_no_any_type_aliases(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("JsonNode"));
+        assert!(violations[0].message.contains("launders Any"));
+    }
+
+    #[test]
+    fn nested_any_type_alias_caught() {
+        let parsed = parse("type Payload = list[dict[str, Any]]\n");
+        let violations = check_no_any_type_aliases(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("Payload"));
+    }
+
+    #[test]
+    fn clean_type_alias_ok() {
+        let parsed = parse("type UserId = str\n");
+        let violations = check_no_any_type_aliases(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn type_alias_no_any_ok() {
+        let parsed = parse("type Config = dict[str, int]\n");
+        let violations = check_no_any_type_aliases(&parsed, &default_config());
+        assert!(violations.is_empty());
     }
 }

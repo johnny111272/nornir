@@ -27,7 +27,7 @@ struct Args {
     project_dir: Option<PathBuf>,
 }
 
-fn parse_args() -> Args {
+fn parse_args() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
 
     let mut force = false;
@@ -46,13 +46,8 @@ fn parse_args() -> Args {
                 idx += 1;
                 project_dir = raw.get(idx).map(PathBuf::from);
             }
-            "--help" | "-h" => {
-                print_usage();
-                process::exit(0);
-            }
             arg if arg.starts_with('-') => {
-                eprintln!("[saga] unknown flag: {}", arg);
-                process::exit(2);
+                return Err(format!("[saga] unknown flag: {}", arg));
             }
             arg => positional.push(arg.to_string()),
         }
@@ -64,7 +59,7 @@ fn parse_args() -> Args {
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
 
-    Args { path, force, write_sidecar, read_stdin, project_dir }
+    Ok(Args { path, force, write_sidecar, read_stdin, project_dir })
 }
 
 fn print_usage() {
@@ -96,45 +91,23 @@ OPTIONS:
 // =============================================================================
 
 fn find_python_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    walk_python_files(dir, &mut files);
-    files.sort();
-    files
+    saga_core::find_files(dir, &[], &|name| name.ends_with(".py"))
 }
 
-fn walk_python_files(dir: &Path, results: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if path.is_dir() {
-            if name.starts_with('.')
-                || name == "__pycache__"
-                || name == "node_modules"
-                || name == ".venv"
-                || name == "venv"
-            {
-                continue;
-            }
-            walk_python_files(&path, results);
-        } else if name.ends_with(".py") {
-            results.push(path);
-        }
-    }
-}
-
-fn run_directory(dir: &Path, force: bool) {
+fn run_directory(dir: &Path, force: bool) -> Result<(), String> {
     let project_root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+
+    // Remove orphaned .qa sidecars before generation
+    let orphans = saga_core::remove_orphaned_sidecars(&project_root);
+    if !orphans.is_empty() {
+        eprintln!("[saga] removed {} orphaned .qa sidecars", orphans.len());
+    }
+
     let py_files = find_python_files(&project_root);
 
     if py_files.is_empty() {
         eprintln!("[saga] no .py files found in {}", dir.display());
-        process::exit(0);
+        return Ok(());
     }
 
     let mut generated = 0usize;
@@ -168,48 +141,67 @@ fn run_directory(dir: &Path, force: bool) {
         "[saga] {} generated, {} skipped, {} failed (of {} .py files)",
         generated, skipped, failed, py_files.len()
     );
+    Ok(())
 }
 
 // =============================================================================
 // Main
 // =============================================================================
 
-fn main() {
-    let args = parse_args();
+fn run_file(args: &Args) -> Result<(), String> {
+    let project_root = args.project_dir.as_deref();
 
-    if args.path.is_dir() {
-        run_directory(&args.path, args.force);
+    let report = if args.read_stdin {
+        let mut content = String::new();
+        std::io::stdin().read_to_string(&mut content)
+            .map_err(|e| format!("[saga] failed to read stdin: {}", e))?;
+        saga_core::generate_report_from_content(&args.path, &content, project_root)
     } else {
-        let project_root = args.project_dir.as_deref();
-
-        let report = if args.read_stdin {
-            let mut content = String::new();
-            if let Err(e) = std::io::stdin().read_to_string(&mut content) {
-                eprintln!("[saga] failed to read stdin: {}", e);
-                process::exit(1);
-            }
-            saga_core::generate_report_from_content(&args.path, &content, project_root)
-        } else {
-            if !args.path.exists() {
-                eprintln!("[saga] file not found: {}", args.path.display());
-                process::exit(1);
-            }
-            saga_core::generate_report(&args.path, project_root)
-        };
-
-        if args.write_sidecar {
-            match saga_core::save_sidecar(&report) {
-                Ok(path) => eprintln!("[saga] wrote {}", path.display()),
-                Err(e) => eprintln!("[saga] sidecar write failed: {}", e),
-            }
+        if !args.path.exists() {
+            return Err(format!("[saga] file not found: {}", args.path.display()));
         }
+        saga_core::generate_report(&args.path, project_root)
+    };
 
-        match serde_json::to_string_pretty(&report) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("[saga] json serialization failed: {}", e);
-                process::exit(1);
-            }
+    if args.write_sidecar {
+        match saga_core::save_sidecar(&report) {
+            Ok(path) => eprintln!("[saga] wrote {}", path.display()),
+            Err(e) => eprintln!("[saga] sidecar write failed: {}", e),
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|e| format!("[saga] json serialization failed: {}", e))?;
+    println!("{}", json);
+    Ok(())
+}
+
+fn main() {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.iter().any(|a| a == "--help" || a == "-h") {
+        print_usage();
+        process::exit(0);
+    }
+
+    let args = match parse_args() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(2);
+        }
+    };
+
+    let result = if args.path.is_dir() {
+        run_directory(&args.path, args.force)
+    } else {
+        run_file(&args)
+    };
+
+    match result {
+        Ok(()) => process::exit(0),
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
         }
     }
 }

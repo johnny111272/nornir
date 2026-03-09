@@ -1,0 +1,13 @@
+[package]
+name = "watch_and_diff_exchange_intercepts"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "watch_and_diff_exchange_intercepts"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+socket_emit = { path = "../../capability/socket_emit" }
