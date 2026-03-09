@@ -116,9 +116,19 @@ fn strip_fields(value: &mut Value) {
     }
 }
 
+/// True if a text block is a syn_report system-reminder (redundant — syn sends direct datagrams).
+fn is_syn_report_reminder(block: &Value) -> bool {
+    block
+        .get("text")
+        .and_then(|t| t.as_str())
+        .map(|text| text.contains("<system-reminder>") && text.contains("type: syn_report"))
+        .unwrap_or(false)
+}
+
 /// Clean a message for datagram payload.
 /// - Strip `signature` and `cache_control` from the message and all content blocks
-/// - Drop `type: tool_use` content blocks entirely
+/// - Drop `type: tool_use` and `type: tool_result` content blocks entirely
+/// - Drop syn_report system-reminder text blocks (redundant with direct datagrams)
 fn clean_message(msg: &Value) -> Value {
     let mut msg = msg.clone();
     strip_fields(&mut msg);
@@ -126,7 +136,13 @@ fn clean_message(msg: &Value) -> Value {
     if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
         content.retain(|block| {
             let block_type = block.get("type").and_then(|t| t.as_str());
-            block_type != Some("tool_use") && block_type != Some("tool_result")
+            if block_type == Some("tool_use") || block_type == Some("tool_result") {
+                return false;
+            }
+            if block_type == Some("text") && is_syn_report_reminder(block) {
+                return false;
+            }
+            true
         });
         for block in content.iter_mut() {
             strip_fields(block);
@@ -477,6 +493,35 @@ mod tests {
         let content = cleaned["content"].as_array().unwrap();
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["text"], "User message after tool result.");
+    }
+
+    #[test]
+    fn clean_drops_syn_report_reminders() {
+        let msg = json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<system-reminder>\nPostToolUse:Edit hook additional context: type: syn_report\ntotal: 4\n</system-reminder>"},
+                {"type": "text", "text": "actual user message"}
+            ]
+        });
+        let cleaned = clean_message(&msg);
+        let content = cleaned["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["text"], "actual user message");
+    }
+
+    #[test]
+    fn clean_keeps_non_syn_system_reminders() {
+        let msg = json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<system-reminder>\nSome other reminder\n</system-reminder>"},
+                {"type": "text", "text": "user message"}
+            ]
+        });
+        let cleaned = clean_message(&msg);
+        let content = cleaned["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
     }
 
     #[test]
