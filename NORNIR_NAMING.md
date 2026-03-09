@@ -61,9 +61,10 @@ Core crates are pure Rust libraries with no I/O side effects. They contain the f
 | `schema_core` | EmbeddedValidator with lazy-static schema loading |
 | `path_core` | Path field extraction from schema+data |
 | `write_core` | Config-driven atomic writes with fsync |
-| `saga_core` | SanityReport + Issue types for code quality |
+| `saga_core` | SanityReport + Issue types, .qa sidecar generation, directory walker |
 | `gleipnir_core` | Tree-sitter AST guardrail engine |
 | `diff_core` | Line-level diff and TOML block extraction |
+| `report_render` | QA report grouping, formatting, serialization for consumers |
 
 **The `_core` suffix is mandatory.** It signals "this is a pure library, safe to depend on from anywhere."
 
@@ -78,8 +79,9 @@ Capability crates provide specific features and may have I/O side effects. No ma
 | `io_filter` | stdin-validate-stdout filter contract |
 | `io_check` | File-arg diagnostic output contract |
 | `gate_io` | Gate I/O orchestration (read/validate/write) |
-| `hook_io` | Hook input parsing and response formatting |
+| `hook_io` | Hook input parsing, response formatting, shared rule types |
 | `socket_emit` | Fire-and-forget Unix socket datagram emission |
+| `intercept_io` | PyO3 module: json_to_toml + append_jsonl_line for bifrost |
 
 ### Gate Modules (`gates/`)
 

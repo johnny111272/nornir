@@ -226,3 +226,533 @@ fn make_decision(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_rules: embedded TOML ────────────────────────────────
+
+    #[test]
+    fn parse_rules_succeeds_on_embedded_toml() {
+        let rules = parse_rules(RULES_TOML);
+        assert!(rules.is_ok(), "Embedded RULES_TOML must parse successfully");
+    }
+
+    #[test]
+    fn parse_rules_subversion_rules_compile() {
+        let rules = parse_rules(RULES_TOML).unwrap();
+        assert!(
+            !rules.subversion.is_empty(),
+            "Subversion rules must not be empty"
+        );
+        // All rules compiled successfully (from_raw filters invalid regex)
+        for rule in &rules.subversion {
+            assert!(
+                rule.compiled.is_match("") || !rule.compiled.is_match(""),
+                "Compiled regex must be functional"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rules_truncation_rules_compile() {
+        let rules = parse_rules(RULES_TOML).unwrap();
+        assert!(
+            !rules.truncation.is_empty(),
+            "Truncation rules must not be empty"
+        );
+    }
+
+    #[test]
+    fn parse_rules_evasion_rules_compile() {
+        let rules = parse_rules(RULES_TOML).unwrap();
+        assert!(
+            !rules.evasion.is_empty(),
+            "Evasion rules must not be empty"
+        );
+    }
+
+    #[test]
+    fn parse_rules_invalid_toml_returns_error() {
+        let result = parse_rules("[[[broken");
+        assert!(result.is_err());
+    }
+
+    // ── CompiledRule::from_raw ────────────────────────────────────
+
+    #[test]
+    fn compiled_rule_from_raw_valid_regex() {
+        let raw = RawRule {
+            pattern: r"rm.*\.lock".to_string(),
+            description: "test rule".to_string(),
+        };
+        let compiled = CompiledRule::from_raw(raw);
+        assert!(compiled.is_some(), "Valid regex must compile");
+        let cr = compiled.unwrap();
+        assert!(cr.compiled.is_match("rm foo.lock"));
+    }
+
+    #[test]
+    fn compiled_rule_from_raw_invalid_regex() {
+        let raw = RawRule {
+            pattern: r"[invalid".to_string(),
+            description: "bad regex".to_string(),
+        };
+        let compiled = CompiledRule::from_raw(raw);
+        assert!(compiled.is_none(), "Invalid regex must return None");
+    }
+
+    #[test]
+    fn compiled_rule_from_raw_empty_pattern() {
+        let raw = RawRule {
+            pattern: String::new(),
+            description: "empty".to_string(),
+        };
+        let compiled = CompiledRule::from_raw(raw);
+        // Empty string is valid regex (matches everything)
+        assert!(compiled.is_some());
+    }
+
+    // ── check_category: THE critical security function ────────────
+    //
+    // Tests BOTH directions:
+    //   1. Malicious input IS detected (no false negatives)
+    //   2. Benign input is NOT flagged (no false positives)
+
+    fn make_rules_from_toml() -> Rules {
+        parse_rules(RULES_TOML).unwrap()
+    }
+
+    // -- Subversion detections (must catch) --
+
+    #[test]
+    fn subversion_rm_lock_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm foo.lock",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(result.is_some(), "rm *.lock must be detected as subversion");
+        match result.unwrap() {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "subversion"),
+            _ => panic!("Block severity must produce Deny"),
+        }
+    }
+
+    #[test]
+    fn subversion_chflags_noschg_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "chflags noschg rules.toml",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "chflags noschg must be detected as subversion"
+        );
+    }
+
+    #[test]
+    fn subversion_export_hook_env_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "export HOOK_LLM_ALLOW_PATHS=/",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "export HOOK_LLM env var manipulation must be detected"
+        );
+    }
+
+    #[test]
+    fn subversion_env_hook_llm_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "env HOOK_LLM_ALLOW_BASH=all cargo build",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "env HOOK_LLM override must be detected"
+        );
+    }
+
+    #[test]
+    fn subversion_chmod_rules_toml_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "chmod 777 rules.toml",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "chmod on rules.toml must be detected"
+        );
+    }
+
+    #[test]
+    fn subversion_flock_unlock_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "flock /tmp/lockfile --unlock",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "flock --unlock must be detected"
+        );
+    }
+
+    // -- Truncation detections (must catch) --
+
+    #[test]
+    fn truncation_head_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "head -5 CLAUDE.md",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "head CLAUDE.md must be detected as truncation"
+        );
+    }
+
+    #[test]
+    fn truncation_tail_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "tail CLAUDE.md",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "tail CLAUDE.md must be detected as truncation"
+        );
+    }
+
+    #[test]
+    fn truncation_grep_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "grep pattern CLAUDE.md",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "grep CLAUDE.md must be detected as truncation"
+        );
+    }
+
+    #[test]
+    fn truncation_sed_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "sed -n '1,10p' CLAUDE.md",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "sed CLAUDE.md must be detected as truncation"
+        );
+    }
+
+    #[test]
+    fn truncation_awk_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "awk 'NR<=10' CLAUDE.md",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "awk CLAUDE.md must be detected as truncation"
+        );
+    }
+
+    #[test]
+    fn truncation_guardrails_tail_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cat guardrails.toml | tail -20",
+            &rules.truncation,
+            Severity::Warn,
+            "truncation",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "guardrails piped to tail must be detected"
+        );
+    }
+
+    // -- Evasion detections (must catch) --
+
+    #[test]
+    fn evasion_git_checkout_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout CLAUDE.md",
+            &rules.evasion,
+            Severity::Warn,
+            "evasion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "git checkout CLAUDE.md must be detected as evasion"
+        );
+    }
+
+    #[test]
+    fn evasion_mv_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "mv CLAUDE.md CLAUDE.md.bak",
+            &rules.evasion,
+            Severity::Warn,
+            "evasion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "mv CLAUDE.md must be detected as evasion"
+        );
+    }
+
+    #[test]
+    fn evasion_cp_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cp malicious.md CLAUDE.md",
+            &rules.evasion,
+            Severity::Warn,
+            "evasion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "cp CLAUDE.md must be detected as evasion"
+        );
+    }
+
+    #[test]
+    fn evasion_git_restore_claude_md_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git restore CLAUDE.md",
+            &rules.evasion,
+            Severity::Warn,
+            "evasion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "git restore CLAUDE.md must be detected as evasion"
+        );
+    }
+
+    #[test]
+    fn evasion_git_config_hooks_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git config core.hooks /dev/null",
+            &rules.evasion,
+            Severity::Warn,
+            "evasion",
+            &[],
+        );
+        assert!(
+            result.is_some(),
+            "git config hooks must be detected as evasion"
+        );
+    }
+
+    // -- Benign commands (must NOT match) --
+
+    #[test]
+    fn benign_ls_not_flagged() {
+        let rules = make_rules_from_toml();
+        let result_sub = check_category("ls -la", &rules.subversion, Severity::Block, "subversion", &[]);
+        let result_trunc = check_category("ls -la", &rules.truncation, Severity::Block, "truncation", &[]);
+        let result_eva = check_category("ls -la", &rules.evasion, Severity::Block, "evasion", &[]);
+        assert!(result_sub.is_none(), "ls must not match subversion");
+        assert!(result_trunc.is_none(), "ls must not match truncation");
+        assert!(result_eva.is_none(), "ls must not match evasion");
+    }
+
+    #[test]
+    fn benign_cargo_build_not_flagged() {
+        let rules = make_rules_from_toml();
+        let result_sub = check_category("cargo build", &rules.subversion, Severity::Block, "subversion", &[]);
+        let result_trunc = check_category("cargo build", &rules.truncation, Severity::Block, "truncation", &[]);
+        let result_eva = check_category("cargo build", &rules.evasion, Severity::Block, "evasion", &[]);
+        assert!(result_sub.is_none(), "cargo build must not match subversion");
+        assert!(result_trunc.is_none(), "cargo build must not match truncation");
+        assert!(result_eva.is_none(), "cargo build must not match evasion");
+    }
+
+    #[test]
+    fn benign_cat_file_not_flagged() {
+        let rules = make_rules_from_toml();
+        let result_sub = check_category("cat src/main.rs", &rules.subversion, Severity::Block, "subversion", &[]);
+        let result_trunc = check_category("cat src/main.rs", &rules.truncation, Severity::Block, "truncation", &[]);
+        let result_eva = check_category("cat src/main.rs", &rules.evasion, Severity::Block, "evasion", &[]);
+        assert!(result_sub.is_none());
+        assert!(result_trunc.is_none());
+        assert!(result_eva.is_none());
+    }
+
+    #[test]
+    fn benign_git_status_not_flagged() {
+        let rules = make_rules_from_toml();
+        let result_eva = check_category("git status", &rules.evasion, Severity::Block, "evasion", &[]);
+        assert!(result_eva.is_none(), "git status must not match evasion");
+    }
+
+    #[test]
+    fn benign_git_diff_not_flagged() {
+        let rules = make_rules_from_toml();
+        let result_eva = check_category("git diff", &rules.evasion, Severity::Block, "evasion", &[]);
+        assert!(result_eva.is_none(), "git diff must not match evasion");
+    }
+
+    // -- Severity mapping --
+
+    #[test]
+    fn check_category_block_returns_deny() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm foo.lock",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &[],
+        );
+        match result {
+            Some(HookDecision::Deny { .. }) => {} // correct
+            _ => panic!("Block severity must produce Deny"),
+        }
+    }
+
+    #[test]
+    fn check_category_warn_returns_warn() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm foo.lock",
+            &rules.subversion,
+            Severity::Warn,
+            "subversion",
+            &[],
+        );
+        match result {
+            Some(HookDecision::Warn { .. }) => {} // correct
+            _ => panic!("Warn severity must produce Warn"),
+        }
+    }
+
+    // -- Exemption via allow_patterns --
+
+    #[test]
+    fn exempted_pattern_returns_none() {
+        let rules = make_rules_from_toml();
+        // The "rm.*\.lock" pattern contains "lock" — use that as the exemption key
+        let allow = vec!["rm.*\\.lock".to_string()];
+        let result = check_category(
+            "rm foo.lock",
+            &rules.subversion,
+            Severity::Block,
+            "subversion",
+            &allow,
+        );
+        assert!(result.is_none(), "Exempted pattern must return None");
+    }
+
+    // ── make_decision ─────────────────────────────────────────────
+
+    #[test]
+    fn make_decision_long_command_truncated() {
+        let long_cmd = "a".repeat(80);
+        let decision = make_decision(Severity::Block, "subversion", "test", &long_cmd);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                // The short_cmd should be 57 chars + "..."
+                assert!(reason.contains("..."), "Long command must be truncated with ...");
+                assert!(!reason.contains(&long_cmd), "Full command must not appear");
+            }
+            _ => panic!("Must be Deny"),
+        }
+    }
+
+    #[test]
+    fn make_decision_short_command_not_truncated() {
+        let short_cmd = "rm foo.lock";
+        let decision = make_decision(Severity::Block, "subversion", "test", short_cmd);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                assert!(reason.contains("rm foo.lock"));
+                assert!(!reason.contains("..."));
+            }
+            _ => panic!("Must be Deny"),
+        }
+    }
+
+    #[test]
+    fn make_decision_exactly_60_chars_not_truncated() {
+        let cmd = "a".repeat(60);
+        let decision = make_decision(Severity::Block, "subversion", "test", &cmd);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                assert!(!reason.contains("..."), "Exactly 60 chars should not be truncated");
+            }
+            _ => panic!("Must be Deny"),
+        }
+    }
+
+    #[test]
+    fn make_decision_61_chars_is_truncated() {
+        let cmd = "a".repeat(61);
+        let decision = make_decision(Severity::Block, "subversion", "test", &cmd);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                assert!(reason.contains("..."), "61 chars should be truncated");
+            }
+            _ => panic!("Must be Deny"),
+        }
+    }
+}

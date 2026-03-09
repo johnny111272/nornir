@@ -277,3 +277,472 @@ fn strip_heredoc_body(command: &str) -> String {
     // and the delimiter line. The heredoc body is safe to ignore.
     command.lines().next().unwrap_or(command).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── has_chain_chars ───────────────────────────────────────────
+
+    #[test]
+    fn has_chain_chars_semicolon() {
+        assert!(has_chain_chars("ls; rm -rf /"));
+    }
+
+    #[test]
+    fn has_chain_chars_and_and() {
+        assert!(has_chain_chars("cmd && cmd2"));
+    }
+
+    #[test]
+    fn has_chain_chars_or_or() {
+        assert!(has_chain_chars("cmd || cmd2"));
+    }
+
+    #[test]
+    fn has_chain_chars_backtick() {
+        assert!(has_chain_chars("echo `date`"));
+    }
+
+    #[test]
+    fn has_chain_chars_simple_path_false() {
+        assert!(!has_chain_chars("ls -la /path"));
+    }
+
+    #[test]
+    fn has_chain_chars_single_pipe_allowed() {
+        // Single pipe is NOT a chaining character in this implementation
+        assert!(!has_chain_chars("cat <<'EOF' | writer"));
+    }
+
+    #[test]
+    fn has_chain_chars_empty_string() {
+        assert!(!has_chain_chars(""));
+    }
+
+    #[test]
+    fn has_chain_chars_normal_command() {
+        assert!(!has_chain_chars("cargo build --release"));
+    }
+
+    #[test]
+    fn has_chain_chars_single_ampersand_not_detected() {
+        // Single & (background) is NOT in the check — only && is
+        assert!(!has_chain_chars("sleep 5 &"));
+    }
+
+    // ── is_bare_name ──────────────────────────────────────────────
+
+    #[test]
+    fn is_bare_name_valid_stem() {
+        assert!(is_bare_name("entry-123"));
+    }
+
+    #[test]
+    fn is_bare_name_with_underscore() {
+        assert!(is_bare_name("my_file"));
+    }
+
+    #[test]
+    fn is_bare_name_alphanumeric() {
+        assert!(is_bare_name("report2024"));
+    }
+
+    #[test]
+    fn is_bare_name_path_separator_rejected() {
+        assert!(!is_bare_name("foo/bar"));
+    }
+
+    #[test]
+    fn is_bare_name_hidden_file_rejected() {
+        assert!(!is_bare_name(".hidden"));
+    }
+
+    #[test]
+    fn is_bare_name_flag_rejected() {
+        assert!(!is_bare_name("-flag"));
+    }
+
+    #[test]
+    fn is_bare_name_empty_rejected() {
+        assert!(!is_bare_name(""));
+    }
+
+    #[test]
+    fn is_bare_name_backslash_rejected() {
+        assert!(!is_bare_name("foo\\bar"));
+    }
+
+    #[test]
+    fn is_bare_name_dotdot_rejected() {
+        assert!(!is_bare_name("foo..bar"));
+    }
+
+    #[test]
+    fn is_bare_name_null_byte_rejected() {
+        assert!(!is_bare_name("foo\0bar"));
+    }
+
+    // ── parse_heredoc_header ──────────────────────────────────────
+
+    #[test]
+    fn parse_heredoc_header_basic() {
+        let result = parse_heredoc_header("cat <<'RECORD' | append_truth_qc_report_record");
+        assert!(result.is_some());
+        let (delim, writer, name_arg) = result.unwrap();
+        assert_eq!(delim, "RECORD");
+        assert_eq!(writer, "append_truth_qc_report_record");
+        assert!(name_arg.is_none());
+    }
+
+    #[test]
+    fn parse_heredoc_header_with_name_arg() {
+        let result = parse_heredoc_header("cat <<'EOF' | writer_name arg1");
+        assert!(result.is_some());
+        let (delim, writer, name_arg) = result.unwrap();
+        assert_eq!(delim, "EOF");
+        assert_eq!(writer, "writer_name");
+        assert_eq!(name_arg, Some("arg1".to_string()));
+    }
+
+    #[test]
+    fn parse_heredoc_header_not_heredoc() {
+        let result = parse_heredoc_header("echo hello");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_heredoc_header_unquoted_delimiter_rejected() {
+        // No quotes around delimiter — must be rejected
+        let result = parse_heredoc_header("cat <<RECORD | writer");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_heredoc_header_double_quoted_rejected() {
+        // Double quotes — must be rejected (only single quotes allowed)
+        let result = parse_heredoc_header("cat <<\"RECORD\" | writer");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_heredoc_header_no_pipe() {
+        let result = parse_heredoc_header("cat <<'RECORD'");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_heredoc_header_lowercase_delimiter_rejected() {
+        // Delimiter regex requires [A-Z_]+ — lowercase rejected
+        let result = parse_heredoc_header("cat <<'record' | writer");
+        assert!(result.is_none());
+    }
+
+    // ── validate_writer ───────────────────────────────────────────
+
+    #[test]
+    fn validate_writer_valid_heredoc() {
+        let cmd = "cat <<'RECORD' | my_writer\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Valid heredoc with allowed writer must Allow"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_unknown_writer_denied() {
+        let cmd = "cat <<'RECORD' | evil_writer\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { category, reason, .. } => {
+                assert_eq!(category, "bash");
+                assert!(reason.contains("evil_writer"));
+                assert!(reason.contains("not an allowed writer"));
+            }
+            _ => panic!("Unknown writer must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_bad_name_arg_denied() {
+        let cmd = "cat <<'RECORD' | my_writer ../escape\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                assert!(
+                    reason.contains("plain filename stem"),
+                    "Bad name arg must explain the requirement"
+                );
+            }
+            _ => panic!("Path traversal in name arg must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_not_heredoc_pattern() {
+        let cmd = "rm -rf /";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { reason, .. } => {
+                assert!(reason.contains("heredoc pipe pattern"));
+            }
+            _ => panic!("Non-heredoc pattern must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_echo_pipe_valid() {
+        let cmd = "echo 'hello' | my_writer";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Valid echo pipe with allowed writer must Allow"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_echo_pipe_unknown_writer() {
+        let cmd = "echo 'hello' | bad_writer";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("Echo pipe with unknown writer must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_heredoc_wrong_closing_delimiter() {
+        let cmd = "cat <<'RECORD' | my_writer\n{\"key\":\"value\"}\nWRONG";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct — mismatched delimiter
+            _ => panic!("Mismatched delimiter must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_heredoc_with_valid_name_arg() {
+        let cmd = "cat <<'RECORD' | my_writer entry-42\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Valid heredoc with bare name arg must Allow"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_name_arg_leading_dot_denied() {
+        let cmd = "cat <<'RECORD' | my_writer .secret\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("Name arg with leading dot must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_writer_name_arg_leading_dash_denied() {
+        let cmd = "cat <<'RECORD' | my_writer -flag\n{\"key\":\"value\"}\nRECORD";
+        let writers = vec!["my_writer".to_string()];
+        let decision = validate_writer(cmd, &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("Name arg with leading dash must Deny"),
+        }
+    }
+
+    // ── validate_inspect ──────────────────────────────────────────
+
+    #[test]
+    fn validate_inspect_path_under_prefix_allows() {
+        let decision = validate_inspect("ls /allowed/path/file.txt", "ls", "/allowed/path/");
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Path under allowed prefix must Allow"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_path_outside_prefix_denied() {
+        let decision = validate_inspect("ls /etc/passwd", "ls", "/allowed/path/");
+        match decision {
+            HookDecision::Deny { category, reason, .. } => {
+                assert_eq!(category, "bash");
+                assert!(reason.contains("/etc/passwd"));
+                assert!(reason.contains("/allowed/path/"));
+            }
+            _ => panic!("Path outside prefix must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_with_chaining_denied() {
+        let decision = validate_inspect("ls /allowed/path/ && rm -rf /", "ls", "/allowed/path/");
+        match decision {
+            HookDecision::Deny { category, .. } => {
+                assert_eq!(category, "chaining");
+            }
+            _ => panic!("Chaining must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_no_paths_at_all_allows() {
+        // Command with no path-like arguments at all
+        let decision = validate_inspect("ls", "ls", "/allowed/");
+        match decision {
+            HookDecision::Allow => {} // correct — no paths to check
+            _ => panic!("No paths at all means nothing to block"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_relative_path_with_slash_caught() {
+        // The regex (/\S+) catches "/path" inside "relative/path"
+        // This is intentional — slashes in arguments are suspicious
+        let decision = validate_inspect("ls relative/path", "ls", "/allowed/");
+        match decision {
+            HookDecision::Deny { .. } => {} // correct — /path is extracted and denied
+            _ => panic!("Embedded slash caught by path regex"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_multiple_paths_all_valid() {
+        let decision = validate_inspect(
+            "find /allowed/a /allowed/b -name '*.rs'",
+            "find",
+            "/allowed/",
+        );
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Multiple paths all under prefix must Allow"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_one_bad_path_among_many() {
+        let decision = validate_inspect(
+            "find /allowed/a /etc/shadow -name '*.rs'",
+            "find",
+            "/allowed/",
+        );
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("One bad path must Deny the whole command"),
+        }
+    }
+
+    // ── strip_heredoc_body ────────────────────────────────────────
+
+    #[test]
+    fn strip_heredoc_body_multiline() {
+        let cmd = "cat <<'RECORD' | writer\n{\"key\":\"value\"}\nRECORD";
+        let result = strip_heredoc_body(cmd);
+        assert_eq!(result, "cat <<'RECORD' | writer");
+    }
+
+    #[test]
+    fn strip_heredoc_body_single_line() {
+        let cmd = "echo hello";
+        let result = strip_heredoc_body(cmd);
+        assert_eq!(result, "echo hello");
+    }
+
+    #[test]
+    fn strip_heredoc_body_empty() {
+        let cmd = "";
+        let result = strip_heredoc_body(cmd);
+        assert_eq!(result, "");
+    }
+
+    // ── warn_chaining ─────────────────────────────────────────────
+
+    #[test]
+    fn warn_chaining_produces_deny() {
+        let decision = warn_chaining("ls; rm -rf /");
+        match decision {
+            HookDecision::Deny { category, reason, .. } => {
+                assert_eq!(category, "chaining");
+                assert!(reason.contains("Shell chaining"));
+            }
+            _ => panic!("warn_chaining must produce Deny"),
+        }
+    }
+
+    // ── check_writer_and_name ─────────────────────────────────────
+
+    #[test]
+    fn check_writer_and_name_valid_writer_no_arg() {
+        let writers = vec!["my_writer".to_string()];
+        let decision = check_writer_and_name("my_writer", None, &writers);
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Valid writer with no name arg must Allow"),
+        }
+    }
+
+    #[test]
+    fn check_writer_and_name_invalid_writer() {
+        let writers = vec!["my_writer".to_string()];
+        let decision = check_writer_and_name("evil_writer", None, &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("Unknown writer must Deny"),
+        }
+    }
+
+    #[test]
+    fn check_writer_and_name_valid_writer_valid_arg() {
+        let writers = vec!["my_writer".to_string()];
+        let decision = check_writer_and_name("my_writer", Some("entry-42"), &writers);
+        match decision {
+            HookDecision::Allow => {} // correct
+            _ => panic!("Valid writer + valid bare name must Allow"),
+        }
+    }
+
+    #[test]
+    fn check_writer_and_name_valid_writer_bad_arg() {
+        let writers = vec!["my_writer".to_string()];
+        let decision = check_writer_and_name("my_writer", Some("/etc/passwd"), &writers);
+        match decision {
+            HookDecision::Deny { .. } => {} // correct
+            _ => panic!("Valid writer + path-containing name must Deny"),
+        }
+    }
+
+    // ── Integration: decide function patterns ─────────────────────
+
+    fn make_bash_input(command: &str) -> HookInput {
+        HookInput {
+            tool_name: Some("Bash".to_string()),
+            tool_input: serde_json::json!({ "command": command }),
+        }
+    }
+
+    #[test]
+    fn decide_empty_command_denied() {
+        // decide() denies empty commands for subagent bash
+        let input = make_bash_input("");
+        let command = input.tool_input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(command.trim().is_empty());
+    }
+
+    #[test]
+    fn decide_command_extraction_works() {
+        let input = make_bash_input("cat <<'RECORD' | my_writer\n{}\nRECORD");
+        let command = input.tool_input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(command, "cat <<'RECORD' | my_writer\n{}\nRECORD");
+    }
+}

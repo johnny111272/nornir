@@ -8,20 +8,23 @@ A **validation-as-code** system. Schemas are the source of truth. They are embed
 
 Nornir currently produces:
 - 8 CLI validation binaries (`check_*`)
-- 32+ PyO3 gate modules (`gate_*` — Python-importable Rust)
-- 4+ writer binaries (`append_*`, `write_*`)
+- 33 PyO3 gate modules (`gate_*` — Python-importable Rust)
+- 5 writer binaries (`append_*`, `write_*`)
 - 5 hook binaries (`hook_*` — LLM security interceptors)
 - 5 sender binaries (`send_*` — datagram emitters)
+- 1 rewriter binary (`rewrite_*`)
 - 1 converter binary (`convert_*`)
 - 1 dispatcher binary (`split_*`)
-- 15 library crates (core + capability)
+- 2 specialist tools (`saga`, `syn`)
+- 17 library crates (9 core + 8 capability)
 
 ## Architecture: Three-Tier Dependency Model
 
 ```
 Tier 1: CORE (pure libraries, no I/O)
     error_core, format_core, schema_core, path_core,
-    write_core, saga_core, gleipnir_core, diff_core
+    write_core, saga_core, gleipnir_core, diff_core,
+    report_render
 
          │
          ▼
@@ -31,8 +34,8 @@ Tier 2: CAPABILITY (feature libraries, may have I/O)
          │
          ▼
 Tier 3: BINARIES (executables and Python extensions)
-    gates/*, cli/*, writers/*, hooks/*,
-    senders/*, converters/*, watchers/*, dispatchers/*
+    gates/*, cli/*, writers/*, hooks/*, senders/*,
+    converters/*, rewriters/*, watchers/*, dispatchers/*
 ```
 
 **Rules:**
@@ -69,9 +72,10 @@ nornir/
 │   ├── schema_core/        # JSON Schema validation engine
 │   ├── path_core/          # Path field extraction from schema+data
 │   ├── write_core/         # Atomic write engine (config, fsync)
-│   ├── saga_core/          # SanityReport types for code quality
+│   ├── saga_core/          # SanityReport types, .qa sidecar generation, directory walker
 │   ├── gleipnir_core/      # Tree-sitter AST guardrail engine
-│   └── diff_core/          # Line-level diff + block extraction
+│   ├── diff_core/          # Line-level diff + block extraction
+│   └── report_render/      # QA report grouping, formatting, serialization for consumers
 │
 ├── capability/             # Tier 2: Feature libraries (may have I/O)
 │   ├── schemas_embedded/   # All schemas via include_str!()
@@ -129,7 +133,7 @@ nornir/
 │   └── convert_json_to_toml/
 │
 ├── watchers/               # Tier 3: File/event watcher binaries
-│   └── watch_and_diff_exchange_intercepts/
+│   └── watch_and_diff_exchange_intercepts/  # Gutted — clean redesign pending
 │
 ├── dispatchers/            # Tier 3: Batch processing
 │   └── split_jsonl_batches/
@@ -145,6 +149,81 @@ nornir/
 ├── deploy_tools.py         # Builds + deploys specialist tools (saga, syn)
 └── generate_writer.py      # Helper: scaffolds new writer crates
 ```
+
+## Architecture Patterns
+
+### Binary Structure
+
+All Tier 3 binaries follow the same pattern: `parse_args()` and `run()` return `Result`, `main()` is the only exit point.
+
+```rust
+fn main() {
+    let args = match parse_args() {
+        Ok(a) => a,
+        Err(e) => { eprintln!("{e}"); process::exit(2); }
+    };
+    match run(&args) {
+        Ok(msg) => println!("{msg}"),
+        Err(e) => { eprintln!("{e}"); process::exit(1); }
+    }
+}
+```
+
+**No `process::exit()` in helper functions.** Helpers return `Result`, main matches on it. This makes all logic testable and composable.
+
+### Declarative Writers
+
+Writers are ~16-line binaries. Define a `WriterConfig` and call `write_core::run()`:
+
+```rust
+fn main() {
+    match write_core::run(&WriterConfig { name: "...", schema: &SCHEMA, ... }) {
+        Ok(msg) => println!("{msg}"),
+        Err(msg) => { eprintln!("{msg}"); process::exit(1); }
+    }
+}
+```
+
+### Hook Pattern
+
+Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function `fn(&HookInput) -> HookDecision`. Shared rule parsing lives in `hook_io::rules`.
+
+### Pure/Impure Separation
+
+- saga_core generates reports (pure types + impure generation)
+- report_render formats/groups reports (pure — used by syn, svalinn, future consumers)
+- socket_emit emits datagrams (impure — used by all senders, syn, hooks)
+- saga_core provides shared directory walking (`walk_files`, `find_files`)
+
+## Test Coverage
+
+564 tests across 20 crates. All pass.
+
+| Tier | Crate | Tests |
+|------|-------|-------|
+| Core | gleipnir_core | 134 |
+| Core | format_core | 74 |
+| Core | report_render | 38 |
+| Core | saga_core | 21 |
+| Core | split_jsonl_batches | 17 |
+| Core | write_core | 11 |
+| Core | error_core | 10 |
+| Core | schema_core | 9 |
+| Core | diff_core | 7 |
+| Core | path_core | 7 |
+| Capability | schemas_embedded | 26 |
+| Capability | hook_io | 18 |
+| Capability | path_verify | 3 |
+| Tier 3 | hook_pre_subagent_bash | 53 |
+| Tier 3 | syn | 43 |
+| Tier 3 | hook_pre_llm_bash | 37 |
+| Tier 3 | hook_pre_llm_tool | 24 |
+| Tier 3 | hook_pre_subagent_tool | 14 |
+| Tier 3 | rewrite_compaction_summary | 14 |
+| Tier 3 | send_datagram | 12 |
+| Tier 3 | hook_post_llm_tool | 10 |
+
+Zero-test Tier 3 crates are trivial delegation (~16–25 lines): declarative writers, simple senders, check_* binaries, convert_json_to_toml, and the 33 gate crates. Testing them would test the framework, not the crate.
 
 ## Common Terms
 

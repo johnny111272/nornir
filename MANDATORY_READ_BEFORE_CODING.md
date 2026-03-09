@@ -54,9 +54,14 @@ Every binary must be added to the appropriate deploy script. Building and symlin
 - `deploy_gates.py` — CLI check tools + PyO3 gate modules
 - `deploy_hooks.py` — Hook binaries
 - `deploy_writers.py` — Writer binaries
+- `deploy_rewriters.py` — Rewriter binaries
+- `deploy_senders.py` — Sender binaries
+- `deploy_converters.py` — Converter binaries
+- `deploy_watchers.py` — Watcher binaries
+- `deploy_dispatchers.py` — Dispatcher binaries
 - `deploy_tools.py` — Specialist tools (saga, syn)
 
-If your crate doesn't fit an existing deploy script, create a new one following the same pattern OR extend the appropriate existing one.
+Every binary category has a deploy script. If your crate doesn't fit an existing one, create a new one following the same pattern.
 
 ## Pre-Coding Checklist
 

@@ -4,6 +4,7 @@ use socket_emit::{Datagram, DatagramKind, Priority, emit_datagram, now, workspac
 // Types
 // =============================================================================
 
+#[derive(Debug)]
 struct Config {
     source: String,
     kind: DatagramKind,
@@ -156,5 +157,168 @@ fn main() {
             eprintln!("{e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    // =========================================================================
+    // parse_args — required flags present
+    // =========================================================================
+
+    #[test]
+    fn parse_args_all_required() {
+        let a = args(&["--source", "saga", "--type", "alert", "--priority", "high"]);
+        let config = parse_args(&a).unwrap();
+        assert_eq!(config.source, "saga");
+        assert_eq!(config.kind, DatagramKind::Alert);
+        assert_eq!(config.priority, Priority::High);
+        assert!(config.workspace.is_none());
+        assert!(config.detail.is_none());
+        assert!(config.speech.is_none());
+        assert!(config.payload_file.is_none());
+        assert!(config.payload_str.is_none());
+    }
+
+    #[test]
+    fn parse_args_all_flags() {
+        let a = args(&[
+            "--source", "hook",
+            "--type", "report",
+            "--priority", "normal",
+            "--workspace", "odinn",
+            "--detail", "something happened",
+            "--speech", "alert spoken text",
+            "--payload", r#"{"key":"val"}"#,
+        ]);
+        let config = parse_args(&a).unwrap();
+        assert_eq!(config.source, "hook");
+        assert_eq!(config.kind, DatagramKind::Report);
+        assert_eq!(config.priority, Priority::Normal);
+        assert_eq!(config.workspace.as_deref(), Some("odinn"));
+        assert_eq!(config.detail.as_deref(), Some("something happened"));
+        assert_eq!(config.speech.as_deref(), Some("alert spoken text"));
+        assert_eq!(config.payload_str.as_deref(), Some(r#"{"key":"val"}"#));
+    }
+
+    // =========================================================================
+    // parse_args — missing required flags
+    // =========================================================================
+
+    #[test]
+    fn parse_args_missing_source() {
+        let a = args(&["--type", "alert", "--priority", "high"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--source"), "error should mention --source: {err}");
+    }
+
+    #[test]
+    fn parse_args_missing_type() {
+        let a = args(&["--source", "saga", "--priority", "high"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--type"), "error should mention --type: {err}");
+    }
+
+    #[test]
+    fn parse_args_missing_priority() {
+        let a = args(&["--source", "saga", "--type", "alert"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--priority"), "error should mention --priority: {err}");
+    }
+
+    // =========================================================================
+    // parse_args — invalid enum values
+    // =========================================================================
+
+    #[test]
+    fn parse_args_invalid_type() {
+        let a = args(&["--source", "s", "--type", "bogus", "--priority", "high"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("bogus"), "error should mention the bad value: {err}");
+    }
+
+    #[test]
+    fn parse_args_invalid_priority() {
+        let a = args(&["--source", "s", "--type", "alert", "--priority", "mega"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("mega"), "error should mention the bad value: {err}");
+    }
+
+    // =========================================================================
+    // parse_args — unknown flags
+    // =========================================================================
+
+    #[test]
+    fn parse_args_unknown_flag() {
+        let a = args(&["--source", "s", "--type", "alert", "--priority", "high", "--banana"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--banana"), "error should mention unknown flag: {err}");
+    }
+
+    // =========================================================================
+    // parse_args — all datagram kinds
+    // =========================================================================
+
+    #[test]
+    fn parse_args_all_datagram_kinds() {
+        for (name, expected) in [
+            ("alert", DatagramKind::Alert),
+            ("report", DatagramKind::Report),
+            ("canary", DatagramKind::Canary),
+            ("notify", DatagramKind::Notify),
+            ("exchange", DatagramKind::Exchange),
+        ] {
+            let a = args(&["--source", "s", "--type", name, "--priority", "low"]);
+            let config = parse_args(&a).unwrap();
+            assert_eq!(config.kind, expected, "kind mismatch for --type {name}");
+        }
+    }
+
+    // =========================================================================
+    // parse_args — all priorities
+    // =========================================================================
+
+    #[test]
+    fn parse_args_all_priorities() {
+        for (name, expected) in [
+            ("critical", Priority::Critical),
+            ("high", Priority::High),
+            ("normal", Priority::Normal),
+            ("low", Priority::Low),
+            ("trace", Priority::Trace),
+        ] {
+            let a = args(&["--source", "s", "--type", "alert", "--priority", name]);
+            let config = parse_args(&a).unwrap();
+            assert_eq!(config.priority, expected, "priority mismatch for --priority {name}");
+        }
+    }
+
+    // =========================================================================
+    // parse_args — detail and speech are optional
+    // =========================================================================
+
+    #[test]
+    fn parse_args_optional_detail_speech() {
+        let a = args(&["--source", "s", "--type", "alert", "--priority", "low"]);
+        let config = parse_args(&a).unwrap();
+        assert!(config.detail.is_none());
+        assert!(config.speech.is_none());
+    }
+
+    // =========================================================================
+    // parse_args — flag without value
+    // =========================================================================
+
+    #[test]
+    fn parse_args_source_without_value() {
+        let a = args(&["--source"]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--source"), "error should mention --source: {err}");
     }
 }

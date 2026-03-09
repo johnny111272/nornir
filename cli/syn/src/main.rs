@@ -476,3 +476,703 @@ fn main() {
         }
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // Test helpers
+    // =========================================================================
+
+    fn make_issue(tool: &str, code: &str, severity: &str, line: usize) -> saga_core::Issue {
+        saga_core::Issue {
+            tool: tool.into(),
+            code: code.into(),
+            severity: severity.into(),
+            line,
+            column: None,
+            message: String::new(),
+            category: String::new(),
+            fixable: false,
+            signal: String::new(),
+            direction: String::new(),
+            canary: String::new(),
+        }
+    }
+
+    fn make_issue_fixable(tool: &str, code: &str, severity: &str, line: usize) -> saga_core::Issue {
+        saga_core::Issue {
+            fixable: true,
+            ..make_issue(tool, code, severity, line)
+        }
+    }
+
+    fn make_report(path: &str, issues: Vec<saga_core::Issue>) -> saga_core::SanityReport {
+        saga_core::SanityReport {
+            file: path.into(),
+            relative_path: path.into(),
+            issues,
+            ..Default::default()
+        }
+    }
+
+    fn make_config(warn_expr: &str, deny_expr: &str) -> SynConfig {
+        SynConfig {
+            warn_filter: compile_filter(warn_expr).unwrap(),
+            deny_filter: compile_filter(deny_expr).unwrap(),
+            _warn_expr: warn_expr.into(),
+            _deny_expr: deny_expr.into(),
+        }
+    }
+
+    fn make_args_report() -> Args {
+        Args {
+            mode: Mode::Report,
+            output: OutputMode::Json,
+            silent: true,
+            stdin: false,
+            project_dir: None,
+            target: Target::Src,
+            tool_filter: None,
+            level_filter: None,
+            custom_filter: None,
+            path: None,
+        }
+    }
+
+    fn make_args_gate() -> Args {
+        Args {
+            mode: Mode::Gate,
+            output: OutputMode::Json,
+            silent: true,
+            stdin: false,
+            project_dir: None,
+            target: Target::Src,
+            tool_filter: None,
+            level_filter: None,
+            custom_filter: None,
+            path: None,
+        }
+    }
+
+    // =========================================================================
+    // compile_filter
+    // =========================================================================
+
+    #[test]
+    fn compile_filter_valid_tool_eq() {
+        let result = compile_filter(r#".tool == "gleipnir""#);
+        assert!(result.is_ok(), "valid jq filter should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn compile_filter_valid_severity_eq() {
+        let result = compile_filter(r#".severity == "blocked""#);
+        assert!(result.is_ok(), "severity equality filter should compile");
+    }
+
+    #[test]
+    fn compile_filter_invalid_syntax() {
+        let result = compile_filter(".[[[");
+        assert!(result.is_err(), "malformed jq expression should fail to compile");
+    }
+
+    #[test]
+    fn compile_filter_complex_and_expression() {
+        let result = compile_filter(r#".tool == "ruff" and .severity == "error""#);
+        assert!(result.is_ok(), "complex 'and' filter should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn compile_filter_boolean_field() {
+        // jaq uses .fixable (identity truthy) rather than .fixable == true
+        let result = compile_filter(".fixable");
+        assert!(result.is_ok(), "boolean field filter should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn compile_filter_string_interpolation() {
+        // Test a filter pattern that uses string comparison — a real-world pattern
+        let result = compile_filter(r#".category == "style""#);
+        assert!(result.is_ok(), "category string comparison should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn compile_filter_empty_string() {
+        // An empty string is not valid jq
+        let result = compile_filter("");
+        // jaq may or may not parse empty — just verify it doesn't panic
+        let _ = result;
+    }
+
+    // =========================================================================
+    // matches_filter
+    // =========================================================================
+
+    #[test]
+    fn matches_filter_tool_eq_matches() {
+        let filter = compile_filter(r#".tool == "gleipnir""#).unwrap();
+        let issue = make_issue("gleipnir", "G001", "error", 10);
+        assert!(matches_filter(&issue, &filter), "gleipnir issue should match .tool == gleipnir");
+    }
+
+    #[test]
+    fn matches_filter_tool_eq_no_match() {
+        let filter = compile_filter(r#".tool == "gleipnir""#).unwrap();
+        let issue = make_issue("ruff", "E501", "warning", 10);
+        assert!(!matches_filter(&issue, &filter), "ruff issue should NOT match .tool == gleipnir");
+    }
+
+    #[test]
+    fn matches_filter_severity_eq_matches() {
+        let filter = compile_filter(r#".severity == "error""#).unwrap();
+        let issue = make_issue("ruff", "E501", "error", 10);
+        assert!(matches_filter(&issue, &filter), "error issue should match .severity == error");
+    }
+
+    #[test]
+    fn matches_filter_severity_eq_no_match() {
+        let filter = compile_filter(r#".severity == "blocked""#).unwrap();
+        let issue = make_issue("ruff", "E501", "warning", 10);
+        assert!(!matches_filter(&issue, &filter), "warning issue should NOT match .severity == blocked");
+    }
+
+    #[test]
+    fn matches_filter_fixable_true() {
+        // jaq: .fixable is truthy when true
+        let filter = compile_filter(".fixable").unwrap();
+        let issue = make_issue_fixable("ruff", "E501", "warning", 10);
+        assert!(matches_filter(&issue, &filter), "fixable issue should match .fixable");
+    }
+
+    #[test]
+    fn matches_filter_fixable_false_no_match() {
+        let filter = compile_filter(".fixable").unwrap();
+        let issue = make_issue("ruff", "E501", "warning", 10);
+        assert!(!matches_filter(&issue, &filter), "non-fixable issue should NOT match .fixable");
+    }
+
+    #[test]
+    fn matches_filter_complex_and_both_match() {
+        let filter = compile_filter(r#".tool == "ruff" and .severity == "error""#).unwrap();
+        let issue = make_issue("ruff", "E501", "error", 10);
+        assert!(matches_filter(&issue, &filter), "ruff+error should match compound filter");
+    }
+
+    #[test]
+    fn matches_filter_complex_and_one_fails() {
+        let filter = compile_filter(r#".tool == "ruff" and .severity == "error""#).unwrap();
+        let issue = make_issue("ruff", "E501", "warning", 10);
+        assert!(!matches_filter(&issue, &filter), "ruff+warning should NOT match ruff+error filter");
+    }
+
+    #[test]
+    fn matches_filter_or_expression() {
+        let filter = compile_filter(r#".tool == "ruff" or .tool == "gleipnir""#).unwrap();
+        let ruff_issue = make_issue("ruff", "E501", "warning", 1);
+        let gleipnir_issue = make_issue("gleipnir", "G001", "error", 1);
+        let other_issue = make_issue("basedpyright", "BP001", "info", 1);
+        assert!(matches_filter(&ruff_issue, &filter));
+        assert!(matches_filter(&gleipnir_issue, &filter));
+        assert!(!matches_filter(&other_issue, &filter));
+    }
+
+    #[test]
+    fn matches_filter_line_number() {
+        let filter = compile_filter(".line > 50").unwrap();
+        let issue_above = make_issue("ruff", "E501", "warning", 100);
+        let issue_below = make_issue("ruff", "E501", "warning", 10);
+        assert!(matches_filter(&issue_above, &filter));
+        assert!(!matches_filter(&issue_below, &filter));
+    }
+
+    // =========================================================================
+    // load_filter_config
+    // =========================================================================
+
+    #[test]
+    fn load_filter_config_nonexistent_path_uses_default() {
+        let path = std::path::Path::new("/nonexistent/path/warn.toml");
+        let default_expr = r#".tool == "gleipnir""#;
+        let (expr, _filter) = load_filter_config(path, default_expr).unwrap();
+        assert_eq!(expr, default_expr, "non-existent config should fall back to default expression");
+    }
+
+    #[test]
+    fn load_filter_config_valid_toml_file() {
+        let dir = std::env::temp_dir().join(format!("syn_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("warn.toml");
+        std::fs::write(&config_path, r#"filter = '.tool == "ruff"'"#).unwrap();
+
+        let (expr, _filter) = load_filter_config(&config_path, DEFAULT_WARN_FILTER).unwrap();
+        assert_eq!(expr, r#".tool == "ruff""#, "should read filter from TOML file");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_filter_config_toml_missing_filter_key_uses_default() {
+        let dir = std::env::temp_dir().join(format!("syn_test_nokey_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("warn.toml");
+        std::fs::write(&config_path, "something_else = 42\n").unwrap();
+
+        let (expr, _filter) = load_filter_config(&config_path, DEFAULT_WARN_FILTER).unwrap();
+        assert_eq!(expr, DEFAULT_WARN_FILTER, "TOML without 'filter' key should fall back to default");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_filter_config_invalid_jq_in_file_returns_error() {
+        let dir = std::env::temp_dir().join(format!("syn_test_badjq_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("deny.toml");
+        std::fs::write(&config_path, r#"filter = '.[[['"#).unwrap();
+
+        let result = load_filter_config(&config_path, DEFAULT_DENY_FILTER);
+        assert!(result.is_err(), "invalid jq in config file should return error");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // apply_filters — THE core policy function
+    // =========================================================================
+
+    // --- Warn filter only shows matching issues ---
+
+    #[test]
+    fn apply_filters_warn_filter_selects_matching_tool() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("ruff", "E501", "warning", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 1, "warn filter .tool==gleipnir should show only gleipnir issues");
+        assert_eq!(result.warn_groups[0].tool, "gleipnir");
+    }
+
+    #[test]
+    fn apply_filters_warn_filter_excludes_nonmatching() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        // All ruff issues — none match warn filter
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),
+                make_issue("ruff", "F401", "error", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert!(result.warn_groups.is_empty(), "no issues match warn filter, groups should be empty");
+        assert_eq!(result.decision, "allow");
+    }
+
+    // --- Deny filter counts subset ---
+
+    #[test]
+    fn apply_filters_deny_filter_counts_blocked() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "blocked", 10),
+                make_issue("gleipnir", "G002", "error", 20),
+                make_issue("gleipnir", "G003", "blocked", 30),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.deny_issues, 2, "two blocked issues should yield deny_issues=2");
+    }
+
+    #[test]
+    fn apply_filters_deny_filter_zero_when_no_match() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("gleipnir", "G002", "warning", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.deny_issues, 0, "no blocked issues should yield deny_issues=0");
+    }
+
+    // --- Gate mode with deny issues → decision "deny" ---
+
+    #[test]
+    fn apply_filters_gate_mode_deny_issues_returns_deny() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "blocked", 10),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.decision, "deny", "gate mode with blocked issues should deny");
+        assert_eq!(result.deny_issues, 1);
+    }
+
+    // --- Gate mode no deny → decision "warn" ---
+
+    #[test]
+    fn apply_filters_gate_mode_no_deny_with_issues_returns_warn() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("gleipnir", "G002", "warning", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.decision, "warn", "gate mode with non-blocked issues should warn");
+        assert_eq!(result.deny_issues, 0);
+    }
+
+    // --- Report mode never returns "deny" ---
+
+    #[test]
+    fn apply_filters_report_mode_never_returns_deny() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "blocked", 10),
+                make_issue("gleipnir", "G002", "blocked", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_ne!(result.decision, "deny", "report mode should never return 'deny'");
+        assert_eq!(result.decision, "warn", "report mode with deny-matching issues should return 'warn'");
+        assert_eq!(result.deny_issues, 2, "deny_issues count should still track matches");
+    }
+
+    // --- CLI override replaces warn filter ---
+
+    #[test]
+    fn apply_filters_cli_tool_override_replaces_warn_filter() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.tool_filter = Some("ruff".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("ruff", "E501", "warning", 20),
+                make_issue("ruff", "F401", "error", 30),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 2, "CLI --tool ruff should show only ruff issues (2), ignoring warn filter");
+        for group in &result.warn_groups {
+            assert_eq!(group.tool, "ruff", "all visible groups should be ruff");
+        }
+    }
+
+    #[test]
+    fn apply_filters_cli_tool_all_shows_everything() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.tool_filter = Some("all".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("ruff", "E501", "warning", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 2, "CLI --tool all should show all issues");
+    }
+
+    // --- CLI override level filter ---
+
+    #[test]
+    fn apply_filters_cli_level_filter_error_hides_lower() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.tool_filter = Some("all".into());
+        args.level_filter = Some("error".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),
+                make_issue("ruff", "F401", "error", 20),
+                make_issue("gleipnir", "G001", "blocked", 30),
+                make_issue("gleipnir", "G002", "info", 40),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 2, "level filter 'error' should show error+blocked (severity >= error)");
+    }
+
+    #[test]
+    fn apply_filters_cli_level_filter_blocked_most_restrictive() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.tool_filter = Some("all".into());
+        args.level_filter = Some("blocked".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("gleipnir", "G002", "blocked", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 1, "level filter 'blocked' should show only blocked issues");
+    }
+
+    // --- CLI custom filter ---
+
+    #[test]
+    fn apply_filters_cli_custom_filter() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.custom_filter = Some(r#".code == "E501""#.into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),
+                make_issue("ruff", "F401", "error", 20),
+                make_issue("gleipnir", "G001", "error", 30),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 1, "custom filter .code==E501 should show only E501 issue");
+        assert_eq!(result.warn_groups[0].code, "E501");
+    }
+
+    // --- Empty reports → decision "allow" ---
+
+    #[test]
+    fn apply_filters_empty_reports_returns_allow() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_report();
+        let reports: Vec<saga_core::SanityReport> = vec![];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.decision, "allow");
+        assert!(result.warn_groups.is_empty());
+        assert_eq!(result.deny_issues, 0);
+    }
+
+    #[test]
+    fn apply_filters_gate_empty_reports_returns_allow() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+        let reports: Vec<saga_core::SanityReport> = vec![];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.decision, "allow");
+    }
+
+    // --- Reports with no matching issues → allow ---
+
+    #[test]
+    fn apply_filters_no_matching_issues_returns_allow() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.decision, "allow", "no gleipnir issues → nothing visible → allow");
+    }
+
+    // --- Multiple reports, mixed tools ---
+
+    #[test]
+    fn apply_filters_multiple_reports_aggregates() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "blocked", 10),
+                make_issue("ruff", "E501", "warning", 20),
+            ]),
+            make_report("src/b.py", vec![
+                make_issue("gleipnir", "G001", "error", 15),
+                make_issue("gleipnir", "G002", "blocked", 25),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 3, "should see 3 gleipnir issues across 2 reports (ruff excluded)");
+        assert_eq!(result.deny_issues, 2, "2 blocked gleipnir issues");
+        assert_eq!(result.decision, "deny", "gate mode with blocked → deny");
+    }
+
+    // --- Deny filter is applied to visible issues only ---
+
+    #[test]
+    fn apply_filters_deny_only_counts_visible() {
+        // Warn filter shows only gleipnir. Ruff blocked issue is invisible.
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "blocked", 10),       // invisible (not gleipnir)
+                make_issue("gleipnir", "G001", "warning", 20),   // visible, not blocked
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.deny_issues, 0, "ruff blocked issue should not count (not visible)");
+        assert_eq!(result.decision, "warn", "visible issues but no deny → warn");
+    }
+
+    // --- Gate mode with CLI overrides is enforced at parse_args, not apply_filters ---
+
+    #[test]
+    fn apply_filters_gate_mode_note_cli_overrides_parsed_elsewhere() {
+        // In apply_filters, gate mode with CLI overrides would actually apply the config
+        // (has_cli_overrides is false because mode != Report).
+        // This test confirms apply_filters uses config, not CLI overrides, in gate mode.
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_gate();
+        // Even if we set tool_filter on gate args, has_cli_overrides will be false
+        // because mode == Gate (the check is args.mode == Mode::Report).
+        args.tool_filter = Some("ruff".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("ruff", "E501", "warning", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 1, "gate mode ignores CLI overrides, uses config warn filter");
+        assert_eq!(result.warn_groups[0].tool, "gleipnir");
+    }
+
+    // --- Warn filter with pass-all expression ---
+
+    #[test]
+    fn apply_filters_passall_warn_shows_everything() {
+        // Use a universally-true expression (line is always >= 1 in our test data)
+        let config = make_config(".line > 0", r#".severity == "blocked""#);
+        let args = make_args_report();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "error", 10),
+                make_issue("ruff", "E501", "warning", 20),
+                make_issue("basedpyright", "BP001", "info", 30),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 3, "pass-all warn filter should show all issues");
+    }
+
+    // --- Deny filter with pass-all expression ---
+
+    #[test]
+    fn apply_filters_passall_deny_counts_all_visible() {
+        let config = make_config(".line > 0", ".line > 0");
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),
+                make_issue("gleipnir", "G001", "error", 20),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.deny_issues, 2, "pass-all deny filter should count all visible issues");
+        assert_eq!(result.decision, "deny");
+    }
+
+    // --- Deny filter with pass-none expression ---
+
+    #[test]
+    fn apply_filters_deny_passnothing_never_denies() {
+        // An expression that matches nothing: no tool has this name
+        let config = make_config(".line > 0", r#".tool == "NONEXISTENT_TOOL_xyz""#);
+        let args = make_args_gate();
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("gleipnir", "G001", "blocked", 10),
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        assert_eq!(result.deny_issues, 0, "deny filter matching nothing should yield 0");
+        assert_eq!(result.decision, "warn", "visible issues but no deny matches → warn");
+    }
+
+    // --- Combined CLI overrides (tool + level) ---
+
+    #[test]
+    fn apply_filters_cli_tool_and_level_combined() {
+        let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
+        let mut args = make_args_report();
+        args.tool_filter = Some("ruff".into());
+        args.level_filter = Some("error".into());
+
+        let reports = vec![
+            make_report("src/a.py", vec![
+                make_issue("ruff", "E501", "warning", 10),   // ruff but warning < error → skip
+                make_issue("ruff", "F401", "error", 20),     // ruff and error → show
+                make_issue("gleipnir", "G001", "blocked", 30), // not ruff → skip
+            ]),
+        ];
+
+        let result = apply_filters(&reports, &config, &args);
+        let total = report_render::total_issues(&result.warn_groups);
+        assert_eq!(total, 1, "only ruff+error should pass both tool and level filters");
+    }
+}

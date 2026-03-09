@@ -316,21 +316,24 @@ On session initialization or other trigger events:
 ## Dependencies
 
 ### Already Built
-- **format_core** — JSON, YAML, TOML, TOON parse/serialize/convert (70 tests)
+- **format_core** — JSON, YAML, TOML, TOON parse/serialize/convert (74 tests)
 - **TOMLX parser** — 7 files, 42 tests
-- **error_core** — educational error types
-- **saga_core** — generates .qa reports, canonical SanityReport/Issue types
+- **error_core** — educational error types (10 tests)
+- **saga_core** — generates .qa reports, canonical SanityReport/Issue types, directory walker (21 tests)
+- **report_render** — grouping, formatting, severity ordering for QA consumers (38 tests)
 - **socket_emit** — fire-and-forget Hlidskjalf broadcast
 - **jaq-interpret 1.5** — embedded jq filter evaluation
 
-### Current State (Phase 1)
-- Report mode: working (filter, format, broadcast)
-- Gate mode: filtering works, **ratchet comparison NOT YET IMPLEMENTED**
+### Current State (Phase 1 DONE)
+- Report mode: working (filter, format, broadcast) — 43 tests
+- Gate mode: filtering works, decision logic works, **ratchet comparison NOT YET IMPLEMENTED**
 - Deployed to `~/.ai/tools/bin/syn`
+- Pure rendering logic extracted to `core/report_render/` (38 tests) — shared with svalinn
+- syn is 478 lines (down from 909 after report_render extraction)
+- hook_post_llm_tool wired: saga → syn pipeline operational
 
 ### Remaining
 - Ratchet comparison engine (baseline vs new)
 - Ratchet config loading (`.syn/ratchet.toml`)
-- Gate mode stdin input for new .qa
-- Hook integration
-- End-to-end testing
+- Gate mode stdin input for new .qa baseline comparison
+- PreToolUse quality gate (future, needs ratchet)

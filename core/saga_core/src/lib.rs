@@ -587,5 +587,130 @@ mod tests {
         let source = source_path_from_qa(qa).unwrap();
         assert_eq!(source, Path::new("/dir/foo.py"));
     }
+
+    // =========================================================================
+    // qa_path — additional edge cases
+    // =========================================================================
+
+    #[test]
+    fn qa_path_file_in_root_directory() {
+        let source = Path::new("/foo.py");
+        let qa = qa_path(source);
+        assert_eq!(qa, PathBuf::from("/.foo.py.qa"));
+    }
+
+    #[test]
+    fn qa_path_multiple_extensions() {
+        let source = Path::new("/dir/test.spec.py");
+        let qa = qa_path(source);
+        assert_eq!(qa, PathBuf::from("/dir/.test.spec.py.qa"));
+        // Roundtrip: recover original from sidecar
+        let recovered = source_path_from_qa(&qa).unwrap();
+        assert_eq!(recovered, source);
+    }
+
+    #[test]
+    fn qa_path_no_extension() {
+        let source = Path::new("/dir/Makefile");
+        let qa = qa_path(source);
+        assert_eq!(qa, PathBuf::from("/dir/.Makefile.qa"));
+        let recovered = source_path_from_qa(&qa).unwrap();
+        assert_eq!(recovered, source);
+    }
+
+    // =========================================================================
+    // categorize_ruff — prefix mapping table
+    // =========================================================================
+
+    #[test]
+    fn categorize_ruff_style_e() {
+        assert_eq!(categorize_ruff("E501"), "style");
+    }
+
+    #[test]
+    fn categorize_ruff_lint_f() {
+        assert_eq!(categorize_ruff("F401"), "lint");
+    }
+
+    #[test]
+    fn categorize_ruff_lint_s() {
+        assert_eq!(categorize_ruff("S701"), "lint");
+    }
+
+    #[test]
+    fn categorize_ruff_style_i() {
+        assert_eq!(categorize_ruff("I001"), "style");
+    }
+
+    #[test]
+    fn categorize_ruff_complexity_c() {
+        assert_eq!(categorize_ruff("C901"), "complexity");
+    }
+
+    #[test]
+    fn categorize_ruff_complexity_perf() {
+        assert_eq!(categorize_ruff("PERF401"), "complexity");
+    }
+
+    #[test]
+    fn categorize_ruff_type_ann() {
+        assert_eq!(categorize_ruff("ANN001"), "type");
+    }
+
+    #[test]
+    fn categorize_ruff_style_up() {
+        assert_eq!(categorize_ruff("UP001"), "style");
+    }
+
+    #[test]
+    fn categorize_ruff_lint_b() {
+        assert_eq!(categorize_ruff("B001"), "lint");
+    }
+
+    #[test]
+    fn categorize_ruff_unknown_code_default() {
+        assert_eq!(categorize_ruff("UNKNOWN_CODE"), "lint");
+    }
+
+    #[test]
+    fn categorize_ruff_empty_string_default() {
+        assert_eq!(categorize_ruff(""), "lint");
+    }
+
+    // =========================================================================
+    // chrono_now — ISO format ending in Z
+    // =========================================================================
+
+    #[test]
+    fn chrono_now_ends_with_z() {
+        let ts = chrono_now();
+        assert!(ts.ends_with('Z'), "timestamp should end with Z, got: {ts}");
+    }
+
+    // =========================================================================
+    // hash_content — deterministic SHA-256
+    // =========================================================================
+
+    #[test]
+    fn hash_content_deterministic() {
+        let a = hash_content("hello world");
+        let b = hash_content("hello world");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hash_content_different_inputs() {
+        let a = hash_content("hello");
+        let b = hash_content("world");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_content_empty_string() {
+        let h = hash_content("");
+        assert!(!h.is_empty(), "hash of empty string should not be empty");
+        // SHA-256 of empty input is a well-known constant
+        assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
 }
 

@@ -407,3 +407,463 @@ pub fn format_output(groups: &[CheckGroup], output_mode: OutputMode) -> String {
         OutputMode::Json => format_json(groups),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // Test helpers
+    // =========================================================================
+
+    fn make_issue(
+        tool: &str,
+        code: &str,
+        severity: &str,
+        line: usize,
+        message: &str,
+    ) -> saga_core::Issue {
+        saga_core::Issue {
+            tool: tool.into(),
+            code: code.into(),
+            severity: severity.into(),
+            line,
+            column: None,
+            message: message.into(),
+            category: String::new(),
+            fixable: false,
+            signal: String::new(),
+            direction: String::new(),
+            canary: String::new(),
+        }
+    }
+
+    fn make_report(
+        relative_path: &str,
+        issues: Vec<saga_core::Issue>,
+    ) -> saga_core::SanityReport {
+        saga_core::SanityReport {
+            file: format!("/project/{}", relative_path),
+            relative_path: relative_path.into(),
+            issues,
+            ..Default::default()
+        }
+    }
+
+    // =========================================================================
+    // severity_rank
+    // =========================================================================
+
+    #[test]
+    fn severity_rank_info() {
+        assert_eq!(severity_rank("info"), 0);
+    }
+
+    #[test]
+    fn severity_rank_warning() {
+        assert_eq!(severity_rank("warning"), 1);
+    }
+
+    #[test]
+    fn severity_rank_error() {
+        assert_eq!(severity_rank("error"), 2);
+    }
+
+    #[test]
+    fn severity_rank_blocked() {
+        assert_eq!(severity_rank("blocked"), 3);
+    }
+
+    #[test]
+    fn severity_rank_unknown_returns_zero() {
+        assert_eq!(severity_rank("critical"), 0);
+        assert_eq!(severity_rank("fatal"), 0);
+        assert_eq!(severity_rank("WARN"), 0);
+    }
+
+    #[test]
+    fn severity_rank_empty_returns_zero() {
+        assert_eq!(severity_rank(""), 0);
+    }
+
+    // =========================================================================
+    // collapse_line_numbers
+    // =========================================================================
+
+    #[test]
+    fn collapse_duplicates_with_mixed() {
+        // Two 14s, then unique 21, 22
+        assert_eq!(collapse_line_numbers(&[14, 14, 21, 22]), "14/2,21,22");
+    }
+
+    #[test]
+    fn collapse_single_line() {
+        assert_eq!(collapse_line_numbers(&[1]), "1");
+    }
+
+    #[test]
+    fn collapse_triple_duplicate() {
+        assert_eq!(collapse_line_numbers(&[5, 5, 5]), "5/3");
+    }
+
+    #[test]
+    fn collapse_empty_input() {
+        assert_eq!(collapse_line_numbers(&[]), "");
+    }
+
+    #[test]
+    fn collapse_no_duplicates() {
+        assert_eq!(collapse_line_numbers(&[1, 2, 3]), "1,2,3");
+    }
+
+    #[test]
+    fn collapse_adjacent_groups() {
+        // Two groups of duplicates next to each other
+        assert_eq!(collapse_line_numbers(&[10, 10, 20, 20]), "10/2,20/2");
+    }
+
+    #[test]
+    fn collapse_single_then_duplicate() {
+        assert_eq!(collapse_line_numbers(&[1, 5, 5]), "1,5/2");
+    }
+
+    // =========================================================================
+    // wrap_adaptive
+    // =========================================================================
+
+    #[test]
+    fn wrap_short_text_fits_first_width() {
+        let result = wrap_adaptive("hello world", 40, 30);
+        assert_eq!(result, vec!["hello world"]);
+    }
+
+    #[test]
+    fn wrap_text_exceeds_first_width() {
+        // first_width = 10 → "hello" fits, "world" doesn't fit on same line
+        let result = wrap_adaptive("hello world foo", 10, 20);
+        // "hello" is first word → current = "hello" (5 chars)
+        // "world": 5 + 1 + 5 = 11 > 10 → wrap, width becomes 20
+        // "foo": 5 + 1 + 3 = 9 <= 20 → fits
+        assert_eq!(result, vec!["hello", "world foo"]);
+    }
+
+    #[test]
+    fn wrap_empty_string() {
+        let result = wrap_adaptive("", 40, 30);
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn wrap_single_long_word_not_broken() {
+        let word = "supercalifragilisticexpialidocious";
+        let result = wrap_adaptive(word, 10, 10);
+        // Single word is never broken mid-word
+        assert_eq!(result, vec![word]);
+    }
+
+    #[test]
+    fn wrap_whitespace_only_input() {
+        let result = wrap_adaptive("   ", 40, 30);
+        // split_whitespace yields nothing, so we get vec![""]
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn wrap_multiple_lines_continuation() {
+        // Each word is 4 chars, first_width = 5 (fits one word),
+        // rest_width = 5 (fits one word each)
+        let result = wrap_adaptive("aaaa bbbb cccc", 5, 5);
+        // "aaaa" → current (4), "bbbb": 4+1+4=9>5 → wrap, "cccc": 4+1+4=9>5 → wrap
+        assert_eq!(result, vec!["aaaa", "bbbb", "cccc"]);
+    }
+
+    // =========================================================================
+    // total_issues
+    // =========================================================================
+
+    #[test]
+    fn total_issues_empty_groups() {
+        assert_eq!(total_issues(&[]), 0);
+    }
+
+    #[test]
+    fn total_issues_multiple_groups() {
+        let groups = vec![
+            CheckGroup {
+                tool: "ruff".into(),
+                code: "E501".into(),
+                severity: "warning".into(),
+                signal: String::new(),
+                direction: String::new(),
+                canary: String::new(),
+                representative_message: "line too long".into(),
+                issues: vec![
+                    LocatedIssue {
+                        file: "a.py".into(),
+                        line: 1,
+                        message: "line too long".into(),
+                    },
+                    LocatedIssue {
+                        file: "b.py".into(),
+                        line: 2,
+                        message: "line too long".into(),
+                    },
+                ],
+                file_count: 2,
+            },
+            CheckGroup {
+                tool: "ruff".into(),
+                code: "F401".into(),
+                severity: "error".into(),
+                signal: String::new(),
+                direction: String::new(),
+                canary: String::new(),
+                representative_message: "unused import".into(),
+                issues: vec![LocatedIssue {
+                    file: "c.py".into(),
+                    line: 5,
+                    message: "unused import".into(),
+                }],
+                file_count: 1,
+            },
+        ];
+        assert_eq!(total_issues(&groups), 3);
+    }
+
+    // =========================================================================
+    // group_issues
+    // =========================================================================
+
+    #[test]
+    fn group_issues_empty_reports() {
+        let groups = group_issues(&[]);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn group_issues_same_tool_code_different_files() {
+        let reports = vec![
+            make_report("src/a.py", vec![make_issue("ruff", "E501", "warning", 10, "line too long")]),
+            make_report("src/b.py", vec![make_issue("ruff", "E501", "warning", 20, "line too long")]),
+        ];
+        let groups = group_issues(&reports);
+        assert_eq!(groups.len(), 1, "same tool+code should produce one group");
+        assert_eq!(groups[0].tool, "ruff");
+        assert_eq!(groups[0].code, "E501");
+        assert_eq!(groups[0].file_count, 2);
+        assert_eq!(groups[0].issues.len(), 2);
+    }
+
+    #[test]
+    fn group_issues_different_tool_code() {
+        let reports = vec![make_report(
+            "src/a.py",
+            vec![
+                make_issue("ruff", "E501", "warning", 10, "line too long"),
+                make_issue("ruff", "F401", "error", 5, "unused import"),
+            ],
+        )];
+        let groups = group_issues(&reports);
+        assert_eq!(groups.len(), 2, "different codes should produce separate groups");
+    }
+
+    #[test]
+    fn group_issues_carries_severity_signal_direction_canary() {
+        let mut issue = make_issue("gleipnir", "G001", "error", 1, "bad pattern");
+        issue.signal = "Detected anti-pattern".into();
+        issue.direction = "Use functional style".into();
+        issue.canary = "canary-token-123".into();
+
+        let reports = vec![make_report("src/x.py", vec![issue])];
+        let groups = group_issues(&reports);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].severity, "error");
+        assert_eq!(groups[0].signal, "Detected anti-pattern");
+        assert_eq!(groups[0].direction, "Use functional style");
+        assert_eq!(groups[0].canary, "canary-token-123");
+    }
+
+    #[test]
+    fn group_issues_representative_message_from_first() {
+        let reports = vec![
+            make_report("src/a.py", vec![make_issue("ruff", "E501", "warning", 1, "first message")]),
+            make_report("src/b.py", vec![make_issue("ruff", "E501", "warning", 2, "second message")]),
+        ];
+        let groups = group_issues(&reports);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].representative_message, "first message");
+    }
+
+    #[test]
+    fn group_issues_same_file_multiple_lines() {
+        let reports = vec![make_report(
+            "src/a.py",
+            vec![
+                make_issue("ruff", "E501", "warning", 10, "line too long"),
+                make_issue("ruff", "E501", "warning", 20, "line too long"),
+            ],
+        )];
+        let groups = group_issues(&reports);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].file_count, 1);
+        assert_eq!(groups[0].issues.len(), 2);
+    }
+
+    // =========================================================================
+    // groups_to_json
+    // =========================================================================
+
+    #[test]
+    fn groups_to_json_empty() {
+        let json = groups_to_json(&[]);
+        assert_eq!(json["total"], 0);
+        assert_eq!(json["check_types"], 0);
+        assert_eq!(json["groups"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn groups_to_json_structure() {
+        let reports = vec![
+            make_report("src/a.py", vec![make_issue("ruff", "E501", "warning", 10, "too long")]),
+            make_report("src/b.py", vec![make_issue("ruff", "E501", "warning", 20, "too long")]),
+        ];
+        let groups = group_issues(&reports);
+        let json = groups_to_json(&groups);
+
+        assert_eq!(json["type"], "syn_report");
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["check_types"], 1);
+
+        let g = &json["groups"][0];
+        assert_eq!(g["tool"], "ruff");
+        assert_eq!(g["code"], "E501");
+        assert_eq!(g["severity"], "warning");
+        assert_eq!(g["count"], 2);
+        assert_eq!(g["file_count"], 2);
+
+        let locations = g["locations"].as_array().unwrap();
+        assert_eq!(locations.len(), 2);
+        // Each location is a different file with a single line
+        assert_eq!(locations[0]["file"], "src/a.py");
+        assert_eq!(locations[0]["line"], 10);
+        assert_eq!(locations[1]["file"], "src/b.py");
+        assert_eq!(locations[1]["line"], 20);
+    }
+
+    #[test]
+    fn groups_to_json_same_file_collapses_lines() {
+        let reports = vec![make_report(
+            "src/a.py",
+            vec![
+                make_issue("ruff", "E501", "warning", 10, "too long"),
+                make_issue("ruff", "E501", "warning", 25, "too long"),
+            ],
+        )];
+        let groups = group_issues(&reports);
+        let json = groups_to_json(&groups);
+
+        let locations = json["groups"][0]["locations"].as_array().unwrap();
+        assert_eq!(locations.len(), 1, "same file should collapse into one location");
+        assert_eq!(locations[0]["file"], "src/a.py");
+        // Multiple lines → "lines" array (not "line" scalar)
+        let lines = locations[0]["lines"].as_array().unwrap();
+        assert_eq!(lines, &[10, 25]);
+        assert!(locations[0]["line"].is_null(), "should use 'lines' not 'line' for multi-line");
+    }
+
+    #[test]
+    fn groups_to_json_single_line_uses_line_not_lines() {
+        let reports = vec![make_report(
+            "src/a.py",
+            vec![make_issue("ruff", "E501", "warning", 42, "too long")],
+        )];
+        let groups = group_issues(&reports);
+        let json = groups_to_json(&groups);
+
+        let loc = &json["groups"][0]["locations"][0];
+        assert_eq!(loc["line"], 42);
+        assert!(loc["lines"].is_null(), "single line should use 'line' not 'lines'");
+    }
+
+    #[test]
+    fn groups_to_json_includes_signal_direction_canary() {
+        let mut issue = make_issue("gleipnir", "G001", "error", 1, "bad");
+        issue.signal = "sig".into();
+        issue.direction = "dir".into();
+        issue.canary = "can".into();
+
+        let reports = vec![make_report("x.py", vec![issue])];
+        let groups = group_issues(&reports);
+        let json = groups_to_json(&groups);
+
+        let g = &json["groups"][0];
+        assert_eq!(g["signal"], "sig");
+        assert_eq!(g["direction"], "dir");
+        assert_eq!(g["canary"], "can");
+    }
+
+    // =========================================================================
+    // format_output
+    // =========================================================================
+
+    #[test]
+    fn format_output_json_empty() {
+        let output = format_output(&[], OutputMode::Json);
+        assert!(output.contains("\"total\":0"), "empty JSON should contain total:0");
+    }
+
+    #[test]
+    fn format_output_colored_empty() {
+        let output = format_output(&[], OutputMode::Colored);
+        assert!(
+            output.contains("All checks passed"),
+            "empty colored output should say all checks passed"
+        );
+    }
+
+    #[test]
+    fn format_output_toon_empty() {
+        let output = format_output(&[], OutputMode::Toon);
+        assert!(
+            output.contains("All checks passed"),
+            "empty toon output should say all checks passed"
+        );
+    }
+
+    #[test]
+    fn format_output_json_nonempty() {
+        let reports = vec![make_report(
+            "a.py",
+            vec![make_issue("ruff", "E501", "warning", 1, "too long")],
+        )];
+        let groups = group_issues(&reports);
+        let output = format_output(&groups, OutputMode::Json);
+        assert!(!output.is_empty());
+        assert!(output.contains("\"total\""));
+        assert!(output.contains("\"groups\""));
+    }
+
+    #[test]
+    fn format_output_colored_nonempty() {
+        let reports = vec![make_report(
+            "a.py",
+            vec![make_issue("ruff", "E501", "warning", 1, "too long")],
+        )];
+        let groups = group_issues(&reports);
+        let output = format_output(&groups, OutputMode::Colored);
+        assert!(!output.is_empty());
+        assert!(output.contains("violations"));
+    }
+
+    #[test]
+    fn format_output_toon_nonempty() {
+        let reports = vec![make_report(
+            "a.py",
+            vec![make_issue("ruff", "E501", "warning", 1, "too long")],
+        )];
+        let groups = group_issues(&reports);
+        let output = format_output(&groups, OutputMode::Toon);
+        assert!(!output.is_empty());
+    }
+}

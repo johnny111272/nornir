@@ -101,3 +101,101 @@ fn saga_bin() -> PathBuf {
 fn syn_bin() -> PathBuf {
     tools_bin().join("syn")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── classify_file ─────────────────────────────────────────────
+
+    #[test]
+    fn classify_python_file() {
+        match classify_file(Path::new("/tmp/test.py")) {
+            FileKind::Python => {} // correct
+            FileKind::Other => panic!(".py must classify as Python"),
+        }
+    }
+
+    #[test]
+    fn classify_rust_file_as_other() {
+        match classify_file(Path::new("/tmp/test.rs")) {
+            FileKind::Other => {} // correct
+            FileKind::Python => panic!(".rs must classify as Other"),
+        }
+    }
+
+    #[test]
+    fn classify_no_extension_as_other() {
+        match classify_file(Path::new("/tmp/Makefile")) {
+            FileKind::Other => {} // correct
+            FileKind::Python => panic!("No extension must classify as Other"),
+        }
+    }
+
+    #[test]
+    fn classify_javascript_as_other() {
+        match classify_file(Path::new("/tmp/test.js")) {
+            FileKind::Other => {} // correct
+            FileKind::Python => panic!(".js must classify as Other"),
+        }
+    }
+
+    #[test]
+    fn classify_pyw_as_other() {
+        // .pyw is NOT .py — strict extension match
+        match classify_file(Path::new("/tmp/test.pyw")) {
+            FileKind::Other => {} // correct
+            FileKind::Python => panic!(".pyw must classify as Other"),
+        }
+    }
+
+    // ── extract_file_path ─────────────────────────────────────────
+
+    #[test]
+    fn extract_file_path_no_field() {
+        let input = PostHookInput {
+            tool_name: Some("Write".to_string()),
+            tool_input: serde_json::json!({}),
+            tool_result: None,
+        };
+        assert!(extract_file_path(&input).is_none());
+    }
+
+    #[test]
+    fn extract_file_path_null_value() {
+        let input = PostHookInput {
+            tool_name: Some("Write".to_string()),
+            tool_input: serde_json::json!({ "file_path": null }),
+            tool_result: None,
+        };
+        assert!(extract_file_path(&input).is_none());
+    }
+
+    #[test]
+    fn extract_file_path_numeric_value() {
+        let input = PostHookInput {
+            tool_name: Some("Write".to_string()),
+            tool_input: serde_json::json!({ "file_path": 42 }),
+            tool_result: None,
+        };
+        assert!(extract_file_path(&input).is_none());
+    }
+
+    // ── tools_bin / saga_bin / syn_bin resolution ──────────────────
+
+    #[test]
+    fn saga_bin_under_tools_bin() {
+        let saga = saga_bin();
+        let tools = tools_bin();
+        assert!(saga.starts_with(&tools));
+        assert_eq!(saga.file_name().unwrap().to_str().unwrap(), "saga");
+    }
+
+    #[test]
+    fn syn_bin_under_tools_bin() {
+        let syn = syn_bin();
+        let tools = tools_bin();
+        assert!(syn.starts_with(&tools));
+        assert_eq!(syn.file_name().unwrap().to_str().unwrap(), "syn");
+    }
+}

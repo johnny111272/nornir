@@ -30,18 +30,18 @@ verb axis needed.
 
 ### Current hooks
 
-| Name | Event | Context | Scope |
-|---|---|---|---|
-| `hook_pre_llm_tool` | PreToolUse | LLM | Read/Write/Edit/Grep/Glob |
-| `hook_pre_llm_bash` | PreToolUse | LLM | Bash |
-| `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob |
-| `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash |
+| Name | Event | Context | Scope | Tests |
+|---|---|---|---|---|
+| `hook_pre_llm_tool` | PreToolUse | LLM | Read/Write/Edit/Grep/Glob | 24 |
+| `hook_pre_llm_bash` | PreToolUse | LLM | Bash | 37 |
+| `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob | 14 |
+| `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash | 53 |
+| `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit | 10 |
 
 ### Planned hooks
 
 | Name | Event | Context | Scope | Purpose |
 |---|---|---|---|---|
-| `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit | Quality assessment pipeline |
 | `hook_start_session_orient` | SessionStart | Session | — | Context injection at session begin |
 | `hook_compact_session_preserve` | PreCompact | Session | — | Handover generation |
 
@@ -113,17 +113,32 @@ These are fire-and-forget — never block the hook.
 
 ## hook_io Capability Crate
 
-Single crate, two entry points:
+Single crate, two entry points plus shared rule types:
 
 ```rust
-// PreToolUse — existing
-pub fn run_pre_hook<F>(decide_fn: F) -> ExitCode
+// PreToolUse
+pub fn run_hook<F>(decide_fn: F) -> ExitCode
 where F: FnOnce(&HookInput) -> HookDecision;
 
-// PostToolUse — new
+// PostToolUse
 pub fn run_post_hook<F>(assess_fn: F) -> ExitCode
 where F: FnOnce(&PostHookInput) -> Option<String>;
 ```
+
+### hook_io::rules module (18 tests)
+
+Shared rule parsing extracted from hook binaries:
+
+```rust
+pub enum Severity { Warn, Block }
+pub fn parse_severity(s: &str) -> Option<Severity>;
+
+pub struct RawRule { pub pattern: String, pub description: String }
+pub fn parse_rule_array(table: &toml::Table, key: &str) -> Vec<RawRule>;
+pub fn parse_toml_table(toml_str: &str) -> Result<toml::Table, String>;
+```
+
+All pre hooks use this to parse their embedded `rules.toml` at startup. `hook_pre_llm_tool` uses `RawRule.pattern` as substring match. `hook_pre_llm_bash` compiles patterns as regex via `CompiledRule::from_raw()`.
 
 ### Shared internals
 
