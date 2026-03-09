@@ -1,6 +1,7 @@
 use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, Exchange};
 use socket_emit::emit;
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // =============================================================================
 // Types
@@ -16,6 +17,7 @@ struct Config {
     mode: Mode,
     jsonl_path: String,
     workspace: String,
+    pace: Option<(u64, u64)>, // min_ms, max_ms
 }
 
 // =============================================================================
@@ -26,6 +28,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut mode = None;
     let mut jsonl_path = None;
     let mut workspace = None;
+    let mut pace = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -49,6 +52,11 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                         .clone(),
                 );
             }
+            "--pace" => {
+                i += 1;
+                let val = args.get(i).ok_or("--pace requires a value (e.g. 800:3000)")?;
+                pace = Some(parse_pace(val)?);
+            }
             other => {
                 return Err(format!("Unknown flag: {other}"));
             }
@@ -65,7 +73,33 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         mode,
         jsonl_path,
         workspace,
+        pace,
     })
+}
+
+/// Parse "min:max" pace string into (min_ms, max_ms).
+fn parse_pace(val: &str) -> Result<(u64, u64), String> {
+    let parts: Vec<&str> = val.split(':').collect();
+    if parts.len() != 2 {
+        return Err(format!("--pace expects min:max (e.g. 800:3000), got: {val}"));
+    }
+    let min: u64 = parts[0].parse().map_err(|_| format!("Invalid pace min: {}", parts[0]))?;
+    let max: u64 = parts[1].parse().map_err(|_| format!("Invalid pace max: {}", parts[1]))?;
+    if min > max {
+        return Err(format!("--pace min ({min}) must be <= max ({max})"));
+    }
+    Ok((min, max))
+}
+
+/// Simple PRNG — just needs natural variation, not cryptographic quality.
+/// Uses xorshift64 seeded from system time.
+fn jitter_sleep(min_ms: u64, max_ms: u64, seed: &mut u64) {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    let range = max_ms - min_ms + 1;
+    let delay = min_ms + (*seed % range);
+    std::thread::sleep(Duration::from_millis(delay));
 }
 
 /// Derive workspace name from JSONL path.
@@ -84,7 +118,7 @@ fn workspace_from_path(path: &str) -> String {
 
 fn print_usage() {
     eprintln!(
-        "Usage: watch_and_diff_exchange_intercepts --replay --jsonl-path <path> [--workspace <name>]"
+        "Usage: watch_and_diff_exchange_intercepts --replay --jsonl-path <path> [--workspace <name>] [--pace min:max]"
     );
 }
 
@@ -94,13 +128,19 @@ fn print_usage() {
 
 /// Process a JSONL file from start to end, diffing consecutive exchanges.
 /// For each pair: parse → split → diff → classify → construct → emit.
-fn run_replay(path: &Path, workspace: &str) -> Result<String, String> {
+fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<String, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
     let mut previous: Option<Exchange> = None;
     let mut line_number = 0u64;
     let mut datagrams_emitted = 0u64;
+
+    // Seed PRNG from system time nanoseconds
+    let mut rng_seed: u64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(12345);
 
     for line in content.lines() {
         line_number += 1;
@@ -150,6 +190,10 @@ fn run_replay(path: &Path, workspace: &str) -> Result<String, String> {
         }
 
         previous = Some(current);
+
+        if let Some((min_ms, max_ms)) = pace {
+            jitter_sleep(min_ms, max_ms, &mut rng_seed);
+        }
     }
 
     Ok(format!(
@@ -174,7 +218,7 @@ fn main() {
     };
 
     let result = match config.mode {
-        Mode::Replay => run_replay(Path::new(&config.jsonl_path), &config.workspace),
+        Mode::Replay => run_replay(Path::new(&config.jsonl_path), &config.workspace, config.pace),
     };
 
     match result {
@@ -278,6 +322,50 @@ mod tests {
             err.contains("--jsonl-path"),
             "error should mention --jsonl-path: {err}"
         );
+    }
+
+    // =========================================================================
+    // parse_args — pace flag
+    // =========================================================================
+
+    #[test]
+    fn parse_args_with_pace() {
+        let a = args(&["--replay", "--jsonl-path", "/tmp/x.jsonl", "--pace", "800:3000"]);
+        let config = parse_args(&a).unwrap();
+        assert_eq!(config.pace, Some((800, 3000)));
+    }
+
+    #[test]
+    fn parse_args_without_pace() {
+        let a = args(&["--replay", "--jsonl-path", "/tmp/x.jsonl"]);
+        let config = parse_args(&a).unwrap();
+        assert_eq!(config.pace, None);
+    }
+
+    // =========================================================================
+    // parse_pace
+    // =========================================================================
+
+    #[test]
+    fn parse_pace_valid() {
+        assert_eq!(parse_pace("800:3000").unwrap(), (800, 3000));
+    }
+
+    #[test]
+    fn parse_pace_equal_values() {
+        assert_eq!(parse_pace("1000:1000").unwrap(), (1000, 1000));
+    }
+
+    #[test]
+    fn parse_pace_min_greater_than_max() {
+        let err = parse_pace("3000:800").unwrap_err();
+        assert!(err.contains("min"), "error should mention min: {err}");
+    }
+
+    #[test]
+    fn parse_pace_bad_format() {
+        let err = parse_pace("800").unwrap_err();
+        assert!(err.contains("min:max"), "error should mention format: {err}");
     }
 
     // =========================================================================

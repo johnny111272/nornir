@@ -1,17 +1,23 @@
-//! Fire-and-forget event emitter for Hlidskjalf watchtower.
+//! Fire-and-forget event emitter for the datagram messaging system.
 //!
-//! Sends newline-delimited JSON datagrams over a Unix stream socket.
-//! If Hlidskjalf isn't running, the send silently fails — never blocks the hook.
+//! Dual transport:
+//!   1. Unix stream socket → record_datagrams daemon (persistent archive)
+//!   2. UDP multicast 239.0.0.1:9899 → live consumers (Hlidskjalf, etc.)
 //!
+//! Both channels fire-and-forget. Either can fail silently.
 //! Protocol: compact JSON + newline (one datagram per line).
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+use std::net::{Ipv4Addr, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-const SOCKET_PATH: &str = "/tmp/hlidskjalf.sock";
+const SOCKET_PATH: &str = "/tmp/ai_logger.sock";
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
+
+const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 0, 0, 1);
+const MULTICAST_PORT: u16 = 9899;
 
 /// Event class — what kind of datagram this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,12 +72,52 @@ fn try_emit(datagram: &Datagram) -> Result<(), Box<dyn std::error::Error>> {
     let mut json = serde_json::to_vec(datagram)?;
     json.push(b'\n');
 
-    let mut stream = UnixStream::connect(SOCKET_PATH)?;
-    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    // Channel 1: Unix stream to logging daemon (permanent archive)
+    let _ = try_unix_stream(&json);
 
-    stream.write_all(&json)?;
+    // Channel 2: UDP multicast on loopback (live consumers)
+    let _ = try_udp_multicast(&json);
 
     Ok(())
+}
+
+fn try_unix_stream(json: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = UnixStream::connect(SOCKET_PATH)?;
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    stream.write_all(json)?;
+    Ok(())
+}
+
+fn try_udp_multicast(json: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_multicast_ttl_v4(1)?;
+    set_multicast_interface(&socket, Ipv4Addr::LOCALHOST)?;
+    socket.send_to(json, (MULTICAST_ADDR, MULTICAST_PORT))?;
+    Ok(())
+}
+
+/// Bind multicast output to a specific interface via IP_MULTICAST_IF.
+fn set_multicast_interface(
+    socket: &UdpSocket,
+    interface: Ipv4Addr,
+) -> Result<(), std::io::Error> {
+    use std::os::unix::io::AsRawFd;
+    let fd = socket.as_raw_fd();
+    let addr = interface.octets();
+    let ret = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::IPPROTO_IP,
+            libc::IP_MULTICAST_IF,
+            addr.as_ptr() as *const libc::c_void,
+            4, // sizeof(struct in_addr)
+        )
+    };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// Current time as Unix timestamp (f64).

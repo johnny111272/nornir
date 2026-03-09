@@ -79,6 +79,9 @@ members = [
     "converters/convert_json_to_toml",
     "rewriters/rewrite_compaction_summary",
     "core/diff_core",
+    "core/compaction_inject_core",
+    "interceptors/traffic_interceptor_rewriter",
+    "daemons/record_datagrams",
 ]
 resolver = "2"
 

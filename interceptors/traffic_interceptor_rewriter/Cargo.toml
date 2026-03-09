@@ -1,12 +1,13 @@
 [package]
-name = "rewrite_compaction_summary"
+name = "traffic_interceptor_rewriter"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "rewrite_compaction_summary"
+name = "traffic_interceptor_rewriter"
 path = "src/main.rs"
 
 [dependencies]
 serde_json = { workspace = true }
+socket_emit = { path = "../../capability/socket_emit" }
 compaction_inject_core = { path = "../../core/compaction_inject_core" }

@@ -9,11 +9,10 @@
 //!
 //! Exit codes: 0=success, 1=stdin/parse error, 2=arg parse error
 
+use compaction_inject_core::{inject_compaction_system_block, COMPACTION_INSTRUCTIONS};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process;
-
-const COMPACTION_INSTRUCTIONS: &str = include_str!("../instructions/compaction_summary.md");
 
 // =============================================================================
 // Types
@@ -77,21 +76,6 @@ fn serialize_json(value: &serde_json::Value) -> Result<String, String> {
     serde_json::to_string(value).map_err(|e| format!("JSON serialization: {e}"))
 }
 
-fn inject_system_block(value: &mut serde_json::Value) -> Result<(), String> {
-    let system = value
-        .get_mut("system")
-        .and_then(|s| s.as_array_mut())
-        .ok_or_else(|| "no 'system' array in request JSON".to_string())?;
-
-    let block = serde_json::json!({
-        "type": "text",
-        "text": COMPACTION_INSTRUCTIONS,
-    });
-
-    system.push(block);
-    Ok(())
-}
-
 fn write_debug_snapshot(dir: &str, prefix: &str, content: &str) {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -119,7 +103,7 @@ fn run(args: &Args) -> Result<(), String> {
         }
     }
 
-    inject_system_block(&mut value)?;
+    inject_compaction_system_block(&mut value)?;
 
     let output = serialize_json(&value)?;
 
@@ -222,7 +206,7 @@ mod tests {
             "messages": []
         });
 
-        inject_system_block(&mut value).unwrap();
+        inject_compaction_system_block(&mut value).unwrap();
 
         let system = value["system"].as_array().unwrap();
         assert_eq!(system.len(), 2, "system array should have 2 entries after injection");
@@ -245,7 +229,7 @@ mod tests {
             ]
         });
 
-        inject_system_block(&mut value).unwrap();
+        inject_compaction_system_block(&mut value).unwrap();
 
         // Other fields must be untouched
         assert_eq!(value["model"], "claude-3");
@@ -262,7 +246,7 @@ mod tests {
             "messages": []
         });
 
-        inject_system_block(&mut value).unwrap();
+        inject_compaction_system_block(&mut value).unwrap();
 
         let system = value["system"].as_array().unwrap();
         assert_eq!(system.len(), 1);
@@ -276,7 +260,7 @@ mod tests {
             "messages": []
         });
 
-        let err = inject_system_block(&mut value).unwrap_err();
+        let err = inject_compaction_system_block(&mut value).unwrap_err();
         assert!(err.contains("system"), "error should mention missing system: {err}");
     }
 
@@ -286,7 +270,7 @@ mod tests {
             "system": "just a string"
         });
 
-        let err = inject_system_block(&mut value).unwrap_err();
+        let err = inject_compaction_system_block(&mut value).unwrap_err();
         assert!(err.contains("system"), "error should mention system: {err}");
     }
 
@@ -297,7 +281,7 @@ mod tests {
     #[test]
     fn injected_content_matches_embedded_instructions() {
         let mut value = serde_json::json!({ "system": [] });
-        inject_system_block(&mut value).unwrap();
+        inject_compaction_system_block(&mut value).unwrap();
 
         let injected_text = value["system"][0]["text"].as_str().unwrap();
         assert_eq!(injected_text, COMPACTION_INSTRUCTIONS);

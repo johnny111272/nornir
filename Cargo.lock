@@ -503,6 +503,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "compaction_inject_core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "convert_json_to_toml"
 version = "0.1.0"
 dependencies = [
@@ -635,6 +642,11 @@ dependencies = [
 [[package]]
 name = "diff_core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "socket_emit",
+]
 
 [[package]]
 name = "digest"
@@ -2302,6 +2314,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "record_datagrams"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2421,6 +2440,7 @@ dependencies = [
 name = "rewrite_compaction_summary"
 version = "0.1.0"
 dependencies = [
+ "compaction_inject_core",
  "serde_json",
 ]
 
@@ -2714,6 +2734,7 @@ dependencies = [
 name = "socket_emit"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -3076,6 +3097,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "traffic_interceptor_rewriter"
+version = "0.1.0"
+dependencies = [
+ "compaction_inject_core",
+ "serde_json",
+ "socket_emit",
+]
+
+[[package]]
 name = "tree-sitter"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3323,6 +3353,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f01b580c9ac74c8d8f0c0e4afb04eeef2acf145458e52c03845ee9cd23e3d12"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "watch_and_diff_exchange_intercepts"
+version = "0.1.0"
+dependencies = [
+ "diff_core",
+ "serde",
+ "serde_json",
+ "socket_emit",
 ]
 
 [[package]]
