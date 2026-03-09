@@ -152,9 +152,22 @@ fn clean_message(msg: &Value) -> Value {
     msg
 }
 
+/// True if a message has no content after cleaning.
+fn is_empty_message(msg: &Value) -> bool {
+    match msg.get("content") {
+        Some(Value::Array(arr)) => arr.is_empty(),
+        _ => false,
+    }
+}
+
 /// Clean a list of messages for datagram payload.
+/// Drops messages with empty content arrays after cleaning.
 fn clean_messages(messages: &[Value]) -> Vec<Value> {
-    messages.iter().map(clean_message).collect()
+    messages
+        .iter()
+        .map(clean_message)
+        .filter(|msg| !is_empty_message(msg))
+        .collect()
 }
 
 /// Clean a system block for datagram payload.
@@ -508,6 +521,18 @@ mod tests {
         let content = cleaned["content"].as_array().unwrap();
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["text"], "actual user message");
+    }
+
+    #[test]
+    fn clean_drops_empty_messages() {
+        let messages = vec![
+            json!({"role": "assistant", "content": [{"type": "tool_use", "id": "x", "name": "Read", "input": {}}]}),
+            json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "data"}]}),
+            json!({"role": "assistant", "content": [{"type": "text", "text": "Here is the result."}]}),
+        ];
+        let cleaned = clean_messages(&messages);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned[0]["content"][0]["text"], "Here is the result.");
     }
 
     #[test]
