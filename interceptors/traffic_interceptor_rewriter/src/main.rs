@@ -108,11 +108,11 @@ fn classify_exchange(value: &serde_json::Value) -> Option<ExchangeKind> {
 // File I/O — impure
 // =============================================================================
 
-/// Append raw bytes + newline to raw_{session_id}.jsonl. Unconditional.
+/// Append raw bytes + newline to rawdata_{session_id}.jsonl. Unconditional.
 fn append_raw(traffic_dir: &Path, session_id: &str, bytes: &[u8]) -> Result<(), String> {
     fs::create_dir_all(traffic_dir)
         .map_err(|e| format!("mkdir {}: {e}", traffic_dir.display()))?;
-    let path = traffic_dir.join(format!("raw_{session_id}.jsonl"));
+    let path = traffic_dir.join(format!("rawdata_{session_id}.jsonl"));
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -127,7 +127,7 @@ fn append_raw(traffic_dir: &Path, session_id: &str, bytes: &[u8]) -> Result<(), 
     Ok(())
 }
 
-/// Append compact JSON + newline to {workspace}/{session_id}.jsonl with fsync.
+/// Append compact JSON + newline to {workspace}/mainexch_{session_id}.jsonl with fsync.
 fn append_exchange(
     traffic_dir: &Path,
     workspace: &str,
@@ -137,7 +137,7 @@ fn append_exchange(
     let dir = traffic_dir.join(workspace);
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
 
-    let path = dir.join(format!("{session_id}.jsonl"));
+    let path = dir.join(format!("mainexch_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize exchange: {e}"))?;
 
@@ -155,7 +155,7 @@ fn append_exchange(
     Ok(())
 }
 
-/// Append compact JSON + newline to {workspace}/precompact_{session_id}.jsonl.
+/// Append compact JSON + newline to {workspace}/precomp_{session_id}.jsonl.
 /// Returns the line number of the appended entry (1-based).
 fn append_precompact(
     traffic_dir: &Path,
@@ -166,7 +166,7 @@ fn append_precompact(
     let dir = traffic_dir.join(workspace);
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
 
-    let path = dir.join(format!("precompact_{session_id}.jsonl"));
+    let path = dir.join(format!("precomp_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize precompact: {e}"))?;
 
@@ -292,7 +292,7 @@ fn run(config: &Config) -> Result<(), String> {
             )?;
 
             // Alert datagram
-            let precompact_filename = format!("precompact_{}.jsonl", config.session_id);
+            let precompact_filename = format!("precomp_{}.jsonl", config.session_id);
             let dg = Datagram {
                 timestamp: socket_emit::now(),
                 source: "intercept".into(),
@@ -605,7 +605,7 @@ mod tests {
         append_raw(&dir, "sess1", b"{\"test\": 1}").unwrap();
         append_raw(&dir, "sess1", b"{\"test\": 2}").unwrap();
 
-        let content = fs::read_to_string(dir.join("raw_sess1.jsonl")).unwrap();
+        let content = fs::read_to_string(dir.join("rawdata_sess1.jsonl")).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], "{\"test\": 1}");
@@ -623,7 +623,7 @@ mod tests {
         let value = json!({"model": "test", "messages": []});
         append_exchange(&dir, "myworkspace", "sess1", &value).unwrap();
 
-        let path = dir.join("myworkspace/sess1.jsonl");
+        let path = dir.join("myworkspace/mainexch_sess1.jsonl");
         assert!(path.exists());
 
         let content = fs::read_to_string(&path).unwrap();
