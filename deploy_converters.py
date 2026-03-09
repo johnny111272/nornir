@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir converter binaries (format conversion tools).
 
@@ -18,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
@@ -26,9 +30,9 @@ CONVERTER_CRATES = [
 ]
 
 
-def build_converters() -> None:
+def build_converters() -> bool:
     """Build converter binaries."""
-    print("Building converter binaries...")
+    logger.info("Building converter binaries...")
     packages = []
     for crate in CONVERTER_CRATES:
         packages.extend(["-p", crate])
@@ -37,32 +41,37 @@ def build_converters() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (converters)", file=sys.stderr)
+        logger.error("cargo build (converters) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for converter binaries."""
     release_dir = NORNIR_DIR / "target" / "release"
+    linked = 0
 
     for crate in CONVERTER_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  Converter symlinks updated in {TOOLS_BIN}")
+    logger.info("Converter symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all converters respond to basic input."""
+def verify() -> list[str]:
+    """Verify all converters respond to basic input. Returns list of verified crate names."""
     release_dir = NORNIR_DIR / "target" / "release"
+    verified = []
     failures = []
 
     for crate in CONVERTER_CRATES:
@@ -75,31 +84,24 @@ def verify() -> None:
         if result.returncode != 0:
             failures.append((crate, result.returncode))
             continue
-        print(f"  converter: {crate}")
+        logger.info("  converter: {}", crate)
+        verified.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} converters broken:", file=sys.stderr)
+        logger.error("{} converters broken:", len(failures))
         for name, code in failures:
-            print(f"  {name} (exit {code})", file=sys.stderr)
+            logger.error("  {} (exit {})", name, code)
         sys.exit(1)
+
+    return verified
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR CONVERTERS")
-    print("=" * 60)
-
     build_converters()
-    ensure_symlinks()
+    linked = ensure_symlinks()
+    verified = verify()
 
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  Converter binaries: {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  Converter symlinks: {TOOLS_BIN}")
-    print(f"  Converters:         {len(CONVERTER_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} converters built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
+    )

@@ -1,11 +1,13 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir writer tools (enforcement output binaries).
 
-Single command: ./tools/nornir/deploy_writers.py
+Single command: ./deploy_writers.py
 
 Builds and deploys:
   - Writer binaries via cargo (symlinks in ~/.ai/tools/bin/)
@@ -19,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
@@ -31,9 +35,9 @@ WRITER_CRATES = [
 ]
 
 
-def build_writers() -> None:
+def build_writers() -> bool:
     """Build writer tool binaries."""
-    print("Building writer tools...")
+    logger.info("Building writer tools...")
     packages = []
     for crate in WRITER_CRATES:
         packages.extend(["-p", crate])
@@ -42,32 +46,37 @@ def build_writers() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (writers)", file=sys.stderr)
+        logger.error("cargo build (writers) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for writer tools."""
     release_dir = NORNIR_DIR / "target" / "release"
+    linked = 0
 
     for crate in WRITER_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  Writer symlinks updated in {TOOLS_BIN}")
+    logger.info("Writer symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all writers respond to --help."""
+def verify() -> list[str]:
+    """Verify all writers respond to --help. Returns list of verified crate names."""
     release_dir = NORNIR_DIR / "target" / "release"
+    verified = []
     failures = []
 
     for crate in WRITER_CRATES:
@@ -79,31 +88,24 @@ def verify() -> None:
         if result.returncode != 0:
             failures.append(crate)
             continue
-        print(f"  writer: {crate}")
+        logger.info("  writer: {}", crate)
+        verified.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} writers broken:", file=sys.stderr)
-        for f in failures:
-            print(f"  {f}", file=sys.stderr)
+        logger.error("{} writers broken:", len(failures))
+        for failed_crate in failures:
+            logger.error("  {}", failed_crate)
         sys.exit(1)
+
+    return verified
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR WRITERS")
-    print("=" * 60)
-
     build_writers()
-    ensure_symlinks()
+    linked = ensure_symlinks()
+    verified = verify()
 
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  Writer binaries: {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  Writer symlinks: {TOOLS_BIN}")
-    print(f"  Writers:         {len(WRITER_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} writers built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
+    )

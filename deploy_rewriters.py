@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir rewriter binaries.
 
@@ -15,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
@@ -23,9 +27,9 @@ REWRITER_CRATES = [
 ]
 
 
-def build() -> None:
+def build_rewriters() -> bool:
     """Build rewriter binaries."""
-    print("Building rewriter binaries...")
+    logger.info("Building rewriter binaries...")
     packages = []
     for crate in REWRITER_CRATES:
         packages.extend(["-p", crate])
@@ -34,69 +38,71 @@ def build() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (rewriters)", file=sys.stderr)
+        logger.error("cargo build (rewriters) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for rewriter binaries."""
     release_dir = NORNIR_DIR / "target" / "release"
     TOOLS_BIN.mkdir(parents=True, exist_ok=True)
+    linked = 0
 
     for crate in REWRITER_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  Symlinks updated in {TOOLS_BIN}")
+    logger.info("Symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all rewriter binaries work."""
+def verify() -> list[str]:
+    """Verify all rewriter binaries work. Returns list of verified crate names."""
     release_dir = NORNIR_DIR / "target" / "release"
+    verified = []
     failures = []
 
     for crate in REWRITER_CRATES:
         binary = release_dir / crate
         result = subprocess.run(
-            ["sh", "-c", f'echo \'{{"system":[],"tools":[],"messages":[]}}\' | {binary}'],
+            [
+                "sh",
+                "-c",
+                f'echo \'{{"system":[],"tools":[],"messages":[]}}\' | {binary}',
+            ],
             capture_output=True,
         )
         if result.returncode != 0:
             failures.append(crate)
             continue
-        print(f"  rewriter: {crate}")
+        logger.info("  rewriter: {}", crate)
+        verified.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} rewriters broken:", file=sys.stderr)
+        logger.error("{} rewriters broken:", len(failures))
         for failed_crate in failures:
-            print(f"  {failed_crate}", file=sys.stderr)
+            logger.error("  {}", failed_crate)
         sys.exit(1)
+
+    return verified
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR REWRITERS")
-    print("=" * 60)
+    build_rewriters()
+    linked = ensure_symlinks()
+    verified = verify()
 
-    build()
-    ensure_symlinks()
-
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  Binaries:    {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  Symlinks:    {TOOLS_BIN}")
-    print(f"  Rewriters:   {len(REWRITER_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} rewriters built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
+    )

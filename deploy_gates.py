@@ -1,11 +1,13 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir validation gates and CLI check tools.
 
-Single command: ./tools/nornir/deploy_gates.py
+Single command: ./deploy_gates.py
 
 Builds and deploys:
   - 8 CLI check tools via cargo (symlinks in ~/.ai/tools/bin/)
@@ -19,6 +21,8 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+from loguru import logger
 
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
@@ -76,9 +80,9 @@ GATE_CRATES = [
 ]
 
 
-def build_cli() -> None:
+def build_cli() -> bool:
     """Build CLI check tool binaries."""
-    print("Building CLI check tools...")
+    logger.info("Building CLI check tools...")
     packages = []
     for crate in CLI_CRATES:
         packages.extend(["-p", crate])
@@ -87,19 +91,21 @@ def build_cli() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (CLI)", file=sys.stderr)
+        logger.error("cargo build (CLI) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def build_gates() -> None:
-    """Build PyO3 gate modules with maturin and extract .so files."""
+def build_gates() -> int:
+    """Build PyO3 gate modules with maturin and extract .so files. Returns gates built."""
     TOOLS_LIB.mkdir(parents=True, exist_ok=True)
     wheels_dir = NORNIR_DIR / "target" / "wheels"
+    built = 0
 
     for crate in GATE_CRATES:
         crate_dir = NORNIR_DIR / "gates" / crate
-        print(f"  maturin: {crate}...")
+        logger.info("  maturin: {}...", crate)
 
         result = subprocess.run(
             ["uvx", "maturin", "build", "--release", "-i", "python3.13"],
@@ -108,20 +114,20 @@ def build_gates() -> None:
             text=True,
         )
         if result.returncode != 0:
-            print(f"FAIL: maturin build {crate}", file=sys.stderr)
-            print(result.stderr, file=sys.stderr)
+            logger.error("maturin build {} failed", crate)
+            logger.error("{}", result.stderr)
             sys.exit(1)
 
         wheels = sorted(wheels_dir.glob(f"{crate}-*.whl"))
         if not wheels:
-            print(f"FAIL: no wheel found for {crate}", file=sys.stderr)
+            logger.error("no wheel found for {}", crate)
             sys.exit(1)
 
         wheel = wheels[-1]
         with zipfile.ZipFile(wheel) as zf:
-            so_files = [n for n in zf.namelist() if n.endswith(".so")]
+            so_files = [name for name in zf.namelist() if name.endswith(".so")]
             if not so_files:
-                print(f"FAIL: no .so in wheel {wheel.name}", file=sys.stderr)
+                logger.error("no .so in wheel {}", wheel.name)
                 sys.exit(1)
             for so_file in so_files:
                 so_name = Path(so_file).name
@@ -129,32 +135,39 @@ def build_gates() -> None:
                 with zf.open(so_file) as src, open(dest, "wb") as dst:
                     dst.write(src.read())
                 dest.chmod(0o755)
+        built += 1
 
-    print(f"  PyO3 gates deployed to {TOOLS_LIB}")
+    logger.info("PyO3 gates deployed to {}", TOOLS_LIB)
+    return built
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for CLI tools."""
     release_dir = NORNIR_DIR / "target" / "release"
+    linked = 0
 
     for crate in CLI_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  CLI symlinks updated in {TOOLS_BIN}")
+    logger.info("CLI symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all gates and CLI tools work."""
+def verify() -> tuple[list[str], list[str]]:
+    """Verify all gates and CLI tools work. Returns (verified_cli, verified_gates)."""
     release_dir = NORNIR_DIR / "target" / "release"
     failures = []
+    verified_cli = []
+    verified_gates = []
 
     for crate in CLI_CRATES:
         binary = release_dir / crate
@@ -165,14 +178,15 @@ def verify() -> None:
         if result.returncode not in (0, 1):
             failures.append(f"CLI: {crate}")
             continue
-        print(f"  CLI: {crate}")
+        logger.info("  CLI: {}", crate)
+        verified_cli.append(crate)
 
     for crate in GATE_CRATES:
         result = subprocess.run(
             [
                 "python3.13", "-c",
                 f"import sys; sys.path.insert(0, '{TOOLS_LIB}'); "
-                f"import {crate}; print({crate}.schema_name())",
+                f"import {crate}; sys.stdout.write({crate}.schema_name() + '\\n')",
             ],
             capture_output=True,
             text=True,
@@ -181,34 +195,25 @@ def verify() -> None:
             failures.append(f"gate: {crate}")
             continue
         schema = result.stdout.strip()
-        print(f"  gate: {crate} -> {schema}")
+        logger.info("  gate: {} -> {}", crate, schema)
+        verified_gates.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} items broken:", file=sys.stderr)
-        for f in failures:
-            print(f"  {f}", file=sys.stderr)
+        logger.error("{} items broken:", len(failures))
+        for failed_item in failures:
+            logger.error("  {}", failed_item)
         sys.exit(1)
+
+    return verified_cli, verified_gates
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR GATES + CLI CHECKERS")
-    print("=" * 60)
-
     build_cli()
-    build_gates()
-    ensure_symlinks()
+    gates_built = build_gates()
+    linked = ensure_symlinks()
+    verified_cli, verified_gates = verify()
 
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  CLI binaries:    {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  CLI symlinks:    {TOOLS_BIN}")
-    print(f"  PyO3 gates:      {TOOLS_LIB}")
-    print(f"  CLI tools:       {len(CLI_CRATES)}")
-    print(f"  Gates:           {len(GATE_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} CLI tools, {} gates built, {} symlinked to {}",
+        len(verified_cli), len(verified_gates), linked, TOOLS_BIN,
+    )

@@ -1,11 +1,13 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir dispatcher tools (batch processing binaries).
 
-Single command: ./tools/nornir/deploy_dispatchers.py
+Single command: ./deploy_dispatchers.py
 
 Builds and deploys:
   - Dispatcher binaries via cargo (symlinks in ~/.ai/tools/bin/)
@@ -18,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
@@ -28,6 +32,7 @@ DISPATCHER_CRATES = [
 
 def build_dispatchers() -> bool:
     """Build dispatcher tool binaries."""
+    logger.info("Building dispatcher binaries...")
     packages = []
     for crate in DISPATCHER_CRATES:
         packages.extend(["-p", crate])
@@ -36,8 +41,9 @@ def build_dispatchers() -> bool:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        sys.stderr.write("FAIL: cargo build (dispatchers)\n")
+        logger.error("cargo build (dispatchers) failed")
         sys.exit(1)
+    logger.info("cargo build complete")
     return True
 
 
@@ -49,7 +55,7 @@ def ensure_symlinks() -> int:
     for crate in DISPATCHER_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            sys.stderr.write(f"WARN: binary not found: {binary}\n")
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
@@ -58,6 +64,7 @@ def ensure_symlinks() -> int:
         link.symlink_to(binary)
         linked += 1
 
+    logger.info("Dispatcher symlinks updated in {}", TOOLS_BIN)
     return linked
 
 
@@ -76,12 +83,13 @@ def verify() -> list[str]:
         if result.returncode != 0:
             failures.append(crate)
             continue
+        logger.info("  dispatcher: {}", crate)
         verified.append(crate)
 
     if failures:
-        sys.stderr.write(f"FAIL: {len(failures)} dispatchers broken:\n")
+        logger.error("{} dispatchers broken:", len(failures))
         for failed_crate in failures:
-            sys.stderr.write(f"  {failed_crate}\n")
+            logger.error("  {}", failed_crate)
         sys.exit(1)
 
     return verified
@@ -92,7 +100,7 @@ if __name__ == "__main__":
     linked = ensure_symlinks()
     verified = verify()
 
-    sys.stdout.write(
-        f"DEPLOY COMPLETE: {len(verified)} dispatchers built, "
-        f"{linked} symlinked to {TOOLS_BIN}\n"
+    logger.info(
+        "DEPLOY COMPLETE: {} dispatchers built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
     )

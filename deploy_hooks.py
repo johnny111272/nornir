@@ -1,11 +1,13 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir hook intercept binaries.
 
-Single command: ./tools/nornir/deploy_hooks.py
+Single command: ./deploy_hooks.py
 
 Builds and deploys:
   - Hook binaries via cargo (symlinks in ~/.ai/tools/bin/)
@@ -17,6 +19,8 @@ Verify with: echo '{}' | {binary_name}
 import subprocess
 import sys
 from pathlib import Path
+
+from loguru import logger
 
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
@@ -30,9 +34,9 @@ HOOK_CRATES = [
 ]
 
 
-def build_hooks() -> None:
+def build_hooks() -> bool:
     """Build hook binaries."""
-    print("Building hook binaries...")
+    logger.info("Building hook binaries...")
     packages = []
     for crate in HOOK_CRATES:
         packages.extend(["-p", crate])
@@ -41,32 +45,37 @@ def build_hooks() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (hooks)", file=sys.stderr)
+        logger.error("cargo build (hooks) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for hook binaries."""
     release_dir = NORNIR_DIR / "target" / "release"
+    linked = 0
 
     for crate in HOOK_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  Hook symlinks updated in {TOOLS_BIN}")
+    logger.info("Hook symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all hooks respond to empty JSON input (should allow or parse-fail gracefully)."""
+def verify() -> list[str]:
+    """Verify all hooks respond to empty JSON input. Returns list of verified crate names."""
     release_dir = NORNIR_DIR / "target" / "release"
+    verified = []
     failures = []
 
     for crate in HOOK_CRATES:
@@ -79,31 +88,24 @@ def verify() -> None:
         if result.returncode != 0:
             failures.append((crate, result.returncode))
             continue
-        print(f"  hook: {crate}")
+        logger.info("  hook: {}", crate)
+        verified.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} hooks broken:", file=sys.stderr)
+        logger.error("{} hooks broken:", len(failures))
         for name, code in failures:
-            print(f"  {name} (exit {code})", file=sys.stderr)
+            logger.error("  {} (exit {})", name, code)
         sys.exit(1)
+
+    return verified
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR HOOKS")
-    print("=" * 60)
-
     build_hooks()
-    ensure_symlinks()
+    linked = ensure_symlinks()
+    verified = verify()
 
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  Hook binaries: {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  Hook symlinks: {TOOLS_BIN}")
-    print(f"  Hooks:         {len(HOOK_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} hooks built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
+    )

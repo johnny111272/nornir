@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.13"
-# dependencies = []
+# dependencies = [
+#     "loguru>=0.7",
+# ]
 # ///
 """Deploy Nornir sender binaries (datagram emitters).
 
@@ -18,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 NORNIR_DIR = Path(__file__).resolve().parent
 TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
 
@@ -30,9 +34,9 @@ SENDER_CRATES = [
 ]
 
 
-def build_senders() -> None:
+def build_senders() -> bool:
     """Build sender binaries."""
-    print("Building sender binaries...")
+    logger.info("Building sender binaries...")
     packages = []
     for crate in SENDER_CRATES:
         packages.extend(["-p", crate])
@@ -41,32 +45,37 @@ def build_senders() -> None:
         cwd=NORNIR_DIR,
     )
     if result.returncode != 0:
-        print("FAIL: cargo build (senders)", file=sys.stderr)
+        logger.error("cargo build (senders) failed")
         sys.exit(1)
-    print("  cargo build complete")
+    logger.info("cargo build complete")
+    return True
 
 
-def ensure_symlinks() -> None:
+def ensure_symlinks() -> int:
     """Create/update symlinks in ~/.ai/tools/bin/ for sender binaries."""
     release_dir = NORNIR_DIR / "target" / "release"
+    linked = 0
 
     for crate in SENDER_CRATES:
         binary = release_dir / crate
         if not binary.exists():
-            print(f"WARN: binary not found: {binary}", file=sys.stderr)
+            logger.warning("binary not found: {}", binary)
             continue
 
         link = TOOLS_BIN / crate
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(binary)
+        linked += 1
 
-    print(f"  Sender symlinks updated in {TOOLS_BIN}")
+    logger.info("Sender symlinks updated in {}", TOOLS_BIN)
+    return linked
 
 
-def verify() -> None:
-    """Verify all senders can be invoked (exit 0 or 2 for usage)."""
+def verify() -> list[str]:
+    """Verify all senders can be invoked. Returns list of verified crate names."""
     release_dir = NORNIR_DIR / "target" / "release"
+    verified = []
     failures = []
 
     for crate in SENDER_CRATES:
@@ -75,35 +84,28 @@ def verify() -> None:
             [str(binary)],
             capture_output=True,
         )
-        # Accept exit 0 or 2 (usage) as valid
-        if result.returncode not in (0, 2):
-            failures.append((crate, result.returncode))
+        # Accept exit 0, 1 (missing args), or 2 (usage) as valid
+        if result.returncode not in (0, 1, 2):
+            failures.append(crate)
             continue
-        print(f"  sender: {crate}")
+        logger.info("  sender: {}", crate)
+        verified.append(crate)
 
     if failures:
-        print(f"FAIL: {len(failures)} senders broken:", file=sys.stderr)
-        for name, code in failures:
-            print(f"  {name} (exit {code})", file=sys.stderr)
+        logger.error("{} senders broken:", len(failures))
+        for failed_crate in failures:
+            logger.error("  {}", failed_crate)
         sys.exit(1)
+
+    return verified
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("DEPLOY NORNIR SENDERS")
-    print("=" * 60)
-
     build_senders()
-    ensure_symlinks()
+    linked = ensure_symlinks()
+    verified = verify()
 
-    print()
-    print("Verifying...")
-    verify()
-
-    print()
-    print("=" * 60)
-    print("DEPLOY COMPLETE")
-    print("=" * 60)
-    print(f"  Sender binaries: {NORNIR_DIR / 'target' / 'release'}")
-    print(f"  Sender symlinks: {TOOLS_BIN}")
-    print(f"  Senders:         {len(SENDER_CRATES)}")
+    logger.info(
+        "DEPLOY COMPLETE: {} senders built, {} symlinked to {}",
+        len(verified), linked, TOOLS_BIN,
+    )
