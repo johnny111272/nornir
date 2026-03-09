@@ -52,7 +52,8 @@ nornir/
 ├── Cargo.lock              # Dependency lock
 ├── NORNIR_NAMING.md        # Naming conventions (READ FIRST)
 ├── NORNIR_ORGANIZATION.md  # This file
-├── MANDATORY_READ_BEFORE_CODING.md  # Compliance gate
+├── NORNIR_BUILDING_AND_COMPOSITION.md  # How to build things correctly
+├── MANDATORY_READ_BEFORE_CODING.md  # Compliance gate (references all three)
 ├── QUICKSTART.md           # Feature overview and usage
 ├── CLAUDE.md               # Session instructions
 ├── PLAN.md                 # Current development roadmap

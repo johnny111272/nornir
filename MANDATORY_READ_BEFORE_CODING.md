@@ -18,6 +18,7 @@ Before writing ANY code in nornir, you MUST read:
 
 1. **`NORNIR_NAMING.md`** — Naming conventions for binaries, crates, directories, schemas
 2. **`NORNIR_ORGANIZATION.md`** — Directory structure, dependency tiers, deploy scripts, templates
+3. **`NORNIR_BUILDING_AND_COMPOSITION.md`** — How to build things correctly: binary structure, composition patterns, dependency rules, testing requirements
 
 These are in the nornir root directory (`~/.ai/smidja/nornir/`).
 
@@ -26,13 +27,17 @@ These are in the nornir root directory (`~/.ai/smidja/nornir/`).
 Before writing code, you MUST state to the user:
 
 ```
-I have read NORNIR_NAMING.md and NORNIR_ORGANIZATION.md.
+I have read NORNIR_NAMING.md, NORNIR_ORGANIZATION.md, and
+NORNIR_BUILDING_AND_COMPOSITION.md.
 I understand and will comply with:
 - Verb-prefix naming for all binaries
 - Directory name = package name = binary name
 - Three-tier dependency model (core → capability → binary)
 - Workspace dependencies for all shared crates
 - Deploy script integration for all new binaries
+- Compose from existing crates, do not reimplement
+- process::exit only in main, helpers return Result
+- Pure logic extracted and tested
 
 If I encounter a situation where compliance is unclear, I will ask
 before proceeding.
@@ -67,7 +72,7 @@ Every binary category has a deploy script. If your crate doesn't fit an existing
 
 Before writing any new crate or modifying an existing one:
 
-- [ ] Read `NORNIR_NAMING.md` and `NORNIR_ORGANIZATION.md`
+- [ ] Read `NORNIR_NAMING.md`, `NORNIR_ORGANIZATION.md`, and `NORNIR_BUILDING_AND_COMPOSITION.md`
 - [ ] Stated compliance declaration to user
 - [ ] Identified which category directory the crate belongs in
 - [ ] Verified the name follows verb-prefix convention
@@ -75,6 +80,9 @@ Before writing any new crate or modifying an existing one:
 - [ ] Identified which deploy script to add the crate to
 - [ ] Checked that dependencies use workspace versions where available
 - [ ] Confirmed internal dependencies follow the tier model
+- [ ] Checked existing crates for reusable logic before writing new code
+- [ ] Confirmed no `process::exit()` outside of `main()`
+- [ ] Pure logic is testable (takes parameters, returns Result)
 
 ## What Goes Wrong Without This
 
