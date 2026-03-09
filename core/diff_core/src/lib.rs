@@ -104,6 +104,50 @@ pub fn classify_priority(new_system: &[Value], new_tools: &[Value]) -> Priority 
     }
 }
 
+// =============================================================================
+// Payload cleaning — strip noise before datagram emission
+// =============================================================================
+
+/// Remove `signature` and `cache_control` fields from an object.
+fn strip_fields(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("signature");
+        obj.remove("cache_control");
+    }
+}
+
+/// Clean a message for datagram payload.
+/// - Strip `signature` and `cache_control` from the message and all content blocks
+/// - Drop `type: tool_use` content blocks entirely
+fn clean_message(msg: &Value) -> Value {
+    let mut msg = msg.clone();
+    strip_fields(&mut msg);
+
+    if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
+        content.retain(|block| {
+            let block_type = block.get("type").and_then(|t| t.as_str());
+            block_type != Some("tool_use") && block_type != Some("tool_result")
+        });
+        for block in content.iter_mut() {
+            strip_fields(block);
+        }
+    }
+
+    msg
+}
+
+/// Clean a list of messages for datagram payload.
+fn clean_messages(messages: &[Value]) -> Vec<Value> {
+    messages.iter().map(clean_message).collect()
+}
+
+/// Clean a system block for datagram payload.
+fn clean_system_block(block: &Value) -> Value {
+    let mut block = block.clone();
+    strip_fields(&mut block);
+    block
+}
+
 /// Construct a datagram from diff results.
 pub fn build_datagram(
     new_messages: &[Value],
@@ -115,10 +159,12 @@ pub fn build_datagram(
     let mut payload = serde_json::Map::new();
 
     if !new_messages.is_empty() {
-        payload.insert("messages".into(), Value::Array(new_messages.to_vec()));
+        let cleaned = clean_messages(new_messages);
+        payload.insert("messages".into(), Value::Array(cleaned));
     }
     if !new_system.is_empty() {
-        payload.insert("system".into(), Value::Array(new_system.to_vec()));
+        let cleaned: Vec<Value> = new_system.iter().map(clean_system_block).collect();
+        payload.insert("system".into(), Value::Array(cleaned));
     }
     if !new_tools.is_empty() {
         payload.insert("tools".into(), Value::Array(new_tools.to_vec()));
@@ -369,6 +415,75 @@ mod tests {
         assert!(payload.get("messages").is_some());
         assert!(payload.get("system").is_none()); // empty, not included
         assert!(payload.get("tools").is_none());
+    }
+
+    // --- clean_message ---
+
+    #[test]
+    fn clean_strips_signature_from_message() {
+        let msg = json!({
+            "role": "assistant",
+            "signature": "abc123",
+            "content": [{"type": "text", "text": "hello"}]
+        });
+        let cleaned = clean_message(&msg);
+        assert!(cleaned.get("signature").is_none());
+        assert_eq!(cleaned["role"], "assistant");
+    }
+
+    #[test]
+    fn clean_strips_cache_control_from_content_blocks() {
+        let msg = json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "there"}
+            ]
+        });
+        let cleaned = clean_message(&msg);
+        let content = cleaned["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert!(content[0].get("cache_control").is_none());
+        assert_eq!(content[0]["text"], "hi");
+    }
+
+    #[test]
+    fn clean_drops_tool_use_blocks() {
+        let msg = json!({
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me read that."},
+                {"type": "tool_use", "id": "toolu_xxx", "name": "Read", "input": {"file_path": "/foo"}},
+                {"type": "text", "text": "Done."}
+            ]
+        });
+        let cleaned = clean_message(&msg);
+        let content = cleaned["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["text"], "Let me read that.");
+        assert_eq!(content[1]["text"], "Done.");
+    }
+
+    #[test]
+    fn clean_drops_tool_result_blocks() {
+        let msg = json!({
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_xxx", "content": "huge file contents here..."},
+                {"type": "text", "text": "User message after tool result."}
+            ]
+        });
+        let cleaned = clean_message(&msg);
+        let content = cleaned["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["text"], "User message after tool result.");
+    }
+
+    #[test]
+    fn clean_handles_string_content() {
+        let msg = json!({"role": "user", "content": "plain string"});
+        let cleaned = clean_message(&msg);
+        assert_eq!(cleaned["content"], "plain string");
     }
 
     #[test]
