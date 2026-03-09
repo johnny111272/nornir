@@ -8,3 +8,6 @@ name = "diff_core"
 crate-type = ["rlib"]
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+socket_emit = { path = "../../capability/socket_emit" }
