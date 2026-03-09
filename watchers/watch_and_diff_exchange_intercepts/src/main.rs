@@ -1,5 +1,7 @@
 use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, Exchange};
 use socket_emit::emit;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -10,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[derive(Debug, PartialEq)]
 enum Mode {
     Replay,
+    Watch,
 }
 
 #[derive(Debug)]
@@ -19,6 +22,8 @@ struct Config {
     workspace: String,
     pace: Option<(u64, u64)>, // min_ms, max_ms
 }
+
+const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 // =============================================================================
 // Arg parsing
@@ -35,6 +40,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         match args[i].as_str() {
             "--replay" => {
                 mode = Some(Mode::Replay);
+            }
+            "--watch" => {
+                mode = Some(Mode::Watch);
             }
             "--jsonl-path" => {
                 i += 1;
@@ -64,7 +72,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         i += 1;
     }
 
-    let mode = mode.ok_or("--replay is required (only mode currently supported)")?;
+    let mode = mode.ok_or("--replay or --watch is required")?;
     let jsonl_path = jsonl_path.ok_or("--jsonl-path is required")?;
 
     let workspace = workspace.unwrap_or_else(|| workspace_from_path(&jsonl_path));
@@ -118,8 +126,52 @@ fn workspace_from_path(path: &str) -> String {
 
 fn print_usage() {
     eprintln!(
-        "Usage: watch_and_diff_exchange_intercepts --replay --jsonl-path <path> [--workspace <name>] [--pace min:max]"
+        "Usage: watch_and_diff_exchange_intercepts (--replay|--watch) --jsonl-path <path> [--workspace <name>] [--pace min:max]"
     );
+}
+
+// =============================================================================
+// Diff engine — shared between replay and watch
+// =============================================================================
+
+/// Diff a new exchange against the previous one. Emit datagram if changed.
+/// Returns true if a datagram was emitted.
+fn diff_and_emit(
+    previous: &Option<Exchange>,
+    current: &Exchange,
+    workspace: &str,
+) -> bool {
+    match previous {
+        None => {
+            let new_messages = current.messages.clone();
+            if !new_messages.is_empty() {
+                let dg = build_datagram(
+                    &new_messages,
+                    &[],
+                    &[],
+                    workspace,
+                    socket_emit::Priority::Low,
+                );
+                emit(&dg);
+                return true;
+            }
+            false
+        }
+        Some(prev) => {
+            let new_messages = diff_messages(&prev.messages, &current.messages);
+            let new_system = diff_system_blocks(&prev.system, &current.system);
+            let new_tools = diff_tools(&prev.tools, &current.tools);
+
+            if new_messages.is_empty() && new_system.is_empty() && new_tools.is_empty() {
+                return false;
+            }
+
+            let priority = classify_priority(&new_system, &new_tools);
+            let dg = build_datagram(&new_messages, &new_system, &new_tools, workspace, priority);
+            emit(&dg);
+            true
+        }
+    }
 }
 
 // =============================================================================
@@ -127,7 +179,6 @@ fn print_usage() {
 // =============================================================================
 
 /// Process a JSONL file from start to end, diffing consecutive exchanges.
-/// For each pair: parse → split → diff → classify → construct → emit.
 fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<String, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -136,7 +187,6 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
     let mut line_number = 0u64;
     let mut datagrams_emitted = 0u64;
 
-    // Seed PRNG from system time nanoseconds
     let mut rng_seed: u64 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -155,38 +205,8 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
 
         let current = split_exchange(&value);
 
-        match &previous {
-            None => {
-                // First exchange: emit messages as baseline, no system/tool diff
-                let new_messages = current.messages.clone();
-                if !new_messages.is_empty() {
-                    let dg = build_datagram(
-                        &new_messages,
-                        &[],
-                        &[],
-                        workspace,
-                        socket_emit::Priority::Low,
-                    );
-                    emit(&dg);
-                    datagrams_emitted += 1;
-                }
-            }
-            Some(prev) => {
-                let new_messages = diff_messages(&prev.messages, &current.messages);
-                let new_system = diff_system_blocks(&prev.system, &current.system);
-                let new_tools = diff_tools(&prev.tools, &current.tools);
-
-                // Skip if nothing changed
-                if new_messages.is_empty() && new_system.is_empty() && new_tools.is_empty() {
-                    previous = Some(current);
-                    continue;
-                }
-
-                let priority = classify_priority(&new_system, &new_tools);
-                let dg = build_datagram(&new_messages, &new_system, &new_tools, workspace, priority);
-                emit(&dg);
-                datagrams_emitted += 1;
-            }
+        if diff_and_emit(&previous, &current, workspace) {
+            datagrams_emitted += 1;
         }
 
         previous = Some(current);
@@ -199,6 +219,95 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
     Ok(format!(
         "Replay complete: {line_number} exchanges processed, {datagrams_emitted} datagrams emitted"
     ))
+}
+
+// =============================================================================
+// Watch
+// =============================================================================
+
+/// Tail a JSONL file, diffing new exchanges as they appear.
+/// Seeks to end of file (or start if file doesn't exist yet), polls for new lines.
+fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
+    let mut previous: Option<Exchange> = None;
+    let mut datagrams_emitted = 0u64;
+    let mut exchanges_processed = 0u64;
+    let mut partial_line = String::new();
+
+    // Wait for file to exist
+    while !path.exists() {
+        eprintln!("Waiting for {} ...", path.display());
+        std::thread::sleep(Duration::from_secs(2));
+    }
+
+    let mut file = File::open(path)
+        .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+
+    // Seek to end — only process new lines
+    file.seek(SeekFrom::End(0))
+        .map_err(|e| format!("Failed to seek {}: {e}", path.display()))?;
+
+    let mut reader = BufReader::new(file);
+
+    eprintln!(
+        "Watching {} (workspace: {workspace})",
+        path.display()
+    );
+
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                // EOF — no new data, poll
+                std::thread::sleep(WATCH_POLL_INTERVAL);
+                continue;
+            }
+            Ok(_) => {
+                // Accumulate partial lines (incomplete JSON from mid-write)
+                partial_line.push_str(&line);
+
+                if !partial_line.ends_with('\n') {
+                    // Line not complete yet, wait for more
+                    continue;
+                }
+
+                let trimmed = partial_line.trim();
+                if trimmed.is_empty() {
+                    partial_line.clear();
+                    continue;
+                }
+
+                let value: serde_json::Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Skipping malformed line: {e}");
+                        partial_line.clear();
+                        continue;
+                    }
+                };
+
+                partial_line.clear();
+                exchanges_processed += 1;
+
+                let current = split_exchange(&value);
+
+                if diff_and_emit(&previous, &current, workspace) {
+                    datagrams_emitted += 1;
+                }
+
+                previous = Some(current);
+
+                if exchanges_processed % 50 == 0 {
+                    eprintln!(
+                        "Watch: {exchanges_processed} exchanges, {datagrams_emitted} datagrams"
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Read error: {e}");
+                std::thread::sleep(WATCH_POLL_INTERVAL);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -219,6 +328,7 @@ fn main() {
 
     let result = match config.mode {
         Mode::Replay => run_replay(Path::new(&config.jsonl_path), &config.workspace, config.pace),
+        Mode::Watch => run_watch(Path::new(&config.jsonl_path), &config.workspace),
     };
 
     match result {
@@ -285,9 +395,16 @@ mod tests {
         let a = args(&["--jsonl-path", "/tmp/session.jsonl"]);
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("--replay"),
-            "error should mention --replay: {err}"
+            err.contains("--replay") || err.contains("--watch"),
+            "error should mention mode flags: {err}"
         );
+    }
+
+    #[test]
+    fn parse_args_watch_mode() {
+        let a = args(&["--watch", "--jsonl-path", "/tmp/session.jsonl"]);
+        let config = parse_args(&a).unwrap();
+        assert_eq!(config.mode, Mode::Watch);
     }
 
     #[test]
