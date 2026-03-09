@@ -64,7 +64,7 @@ Core crates are pure Rust libraries with no I/O side effects. They contain the f
 | `saga_core` | SanityReport + Issue types, .qa sidecar generation, directory walker |
 | `gleipnir_core` | Tree-sitter AST guardrail engine |
 | `diff_core` | Line-level diff and TOML block extraction |
-| `report_render` | QA report grouping, formatting, serialization for consumers |
+| `report_render_core` | QA report grouping, formatting, serialization for consumers |
 
 **The `_core` suffix is mandatory.** It signals "this is a pure library, safe to depend on from anywhere."
 

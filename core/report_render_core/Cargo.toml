@@ -1,10 +1,10 @@
 [package]
-name = "report_render"
+name = "report_render_core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "report_render"
+name = "report_render_core"
 crate-type = ["rlib"]
 
 [dependencies]

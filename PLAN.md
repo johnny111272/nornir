@@ -1,7 +1,7 @@
 # Nornir Build Plan — Syn Quality Pipeline
 
 **Created:** 2026-03-05
-**Status:** Phase 0 DONE, Phase 1 DONE (syn rewrite + report_render extraction), Phase 2 IN PROGRESS
+**Status:** Phase 0 DONE, Phase 1 DONE (syn rewrite + report_render_core extraction), Phase 2 IN PROGRESS
 
 ---
 
@@ -13,7 +13,7 @@ If starting a new session or recovering from compaction, read these files in ord
 2. This file (`PLAN.md`) — execution plan and task status
 3. `core/format_core/src/lib.rs` — format_core (JSON, YAML, TOML, TOON, TOMLX — 74 tests)
 4. `core/saga_core/src/lib.rs` — saga library (SanityReport + Issue types, directory walker — 21 tests)
-5. `core/report_render/src/lib.rs` — QA report grouping/formatting for consumers — 38 tests
+5. `core/report_render_core/src/lib.rs` — QA report grouping/formatting for consumers — 38 tests
 6. `cli/syn/src/main.rs` — syn CLI (478 lines, filter engine + orchestration — 43 tests)
 7. `Cargo.toml` — workspace members list
 
@@ -148,10 +148,10 @@ Filters (report mode only, rejected in gate mode):
 **Prerequisite:** Phase 0 complete (format_core with TOON support) ✓
 
 ### CRITICAL DECISIONS MADE (don't re-derive):
-- **qa_core and qa_report are deleted.** Grouping/formatting/severity logic extracted to `core/report_render/` (38 tests). syn, svalinn, and future QA consumers import from report_render.
+- **qa_core and qa_report are deleted.** Grouping/formatting/severity logic extracted to `core/report_render_core/` (38 tests). syn, svalinn, and future QA consumers import from report_render_core.
   - saga_core's `SanityReport` and `Issue` are the canonical types
   - saga_core provides shared directory walking (`walk_files`, `find_files`)
-  - report_render provides `group_issues`, `format_output`, `severity_rank`, `OutputMode`
+  - report_render_core provides `group_issues`, `format_output`, `severity_rank`, `OutputMode`
 - **jaq-interpret 1.5 + jaq-parse 1.0** (stable, NOT beta jaq-core 3.0)
   - Core-only (no jaq-std needed) — handles `==`, `or`, `and`, field access
   - API: `ParseCtx::new(Vec::new())` → `jaq_parse::parse(expr, jaq_parse::main())` → `defs.compile(filter)` → `filter.run((Ctx::new([], &inputs), Val::from(json_value)))`
@@ -161,9 +161,9 @@ Filters (report mode only, rejected in gate mode):
 
 ### What exists NOW:
 - `cli/syn/src/main.rs` — 478 lines, fully functional report + gate modes, 43 tests
-- `cli/syn/Cargo.toml` — deps: saga_core, report_render, socket_emit, jaq-interpret, jaq-parse
+- `cli/syn/Cargo.toml` — deps: saga_core, report_render_core, socket_emit, jaq-interpret, jaq-parse
 - `cli/syn/SYN_DESIGN.md` — full design spec
-- `core/report_render/src/lib.rs` — extracted grouping/formatting library, 38 tests
+- `core/report_render_core/src/lib.rs` — extracted grouping/formatting library, 38 tests
 
 ### Phase 1 COMPLETE — syn rewrite done:
 
@@ -271,7 +271,7 @@ Write as one cohesive binary with these components:
 | 0.7 | Backward compat | **done** (all gate checkers build) |
 | 1.1 | jaq deps | **done** (jaq-interpret 1.5 + jaq-parse 1.0) |
 | 1.2-1.8 | Rewrite syn main.rs | **done** (478 lines, 43 tests) |
-| 1.9 | Extract report_render | **done** (38 tests, shared with svalinn) |
+| 1.9 | Extract report_render_core | **done** (38 tests, shared with svalinn) |
 | 1.10 | Orphan .qa cleanup in saga | **done** (removes stale sidecars before regeneration) |
 | 2.1 | Deploy | **done** (saga + syn in deploy_tools.py) |
 | 2.2 | E2E testing | **partial** (report mode tested, gate ratchet not yet) |
@@ -284,7 +284,7 @@ Write as one cohesive binary with these components:
 
 - [x] saga_core library — generates .qa reports from file path or content
 - [x] saga CLI — deployed to ~/.ai/tools/bin/saga
-- [x] ~~qa_core library~~ — **DELETED**, code extracted to report_render
+- [x] ~~qa_core library~~ — **DELETED**, code extracted to report_render_core
 - [x] socket_emit — fire-and-forget Hlidskjalf broadcast
 - [x] Hlidskjalf watchtower — receives and displays events
 - [x] hook_io — all hooks emit to Hlidskjalf
@@ -294,7 +294,7 @@ Write as one cohesive binary with these components:
 - [x] error_core — YamlParse, ToonParse, TomlxParse, Educational variants (10 tests)
 - [x] jaq proof of concept — jaq-interpret 1.5 core-only handles all filter patterns
 - [x] syn rewrite — 478 lines, report + gate modes, jq filtering, Hlidskjalf broadcast (43 tests)
-- [x] report_render extraction — grouping, formatting, severity for QA consumers (38 tests)
+- [x] report_render_core extraction — grouping, formatting, severity for QA consumers (38 tests)
 - [x] qa_core/qa_report deleted, saga orphan cleanup added
 - [x] process::exit refactored out of all helpers (15+ crates)
 - [x] Hook shared code extracted to hook_io::rules

@@ -121,15 +121,15 @@ Simple senders are ~25-line binaries that construct a datagram and call `socket_
 
 **The socket path `/tmp/hlidskjalf.sock` lives ONLY in socket_emit.** Never hardcode it in a binary.
 
-### QA Report Consumers (report_render)
+### QA Report Consumers (report_render_core)
 
-Any code that groups, formats, or renders QA reports imports from `report_render`:
+Any code that groups, formats, or renders QA reports imports from `report_render_core`:
 
 ```rust
-use report_render::{group_issues, format_output, OutputMode};
+use report_render_core::{group_issues, format_output, OutputMode};
 ```
 
-saga_core generates reports. report_render presents them. syn, svalinn, and future consumers import report_render. Do NOT duplicate grouping or formatting logic in consumer binaries.
+saga_core generates reports. report_render_core presents them. syn, svalinn, and future consumers import report_render_core. Do NOT duplicate grouping or formatting logic in consumer binaries.
 
 ### Directory Walking (saga_core)
 
@@ -162,7 +162,7 @@ Before adding a dependency or writing logic, check:
 | Path existence checks | `path_verify` |
 | Atomic file writes with schema validation | `write_core` |
 | QA report generation | `saga_core` |
-| QA report grouping/formatting | `report_render` |
+| QA report grouping/formatting | `report_render_core` |
 | AST guardrails | `gleipnir_core` |
 | Line-level diffing | `diff_core` |
 | Hook stdin/stdout/decision contract | `hook_io` |
@@ -263,7 +263,7 @@ Tests verify that tool definition equals tool behavior. "Does `severity_rank("er
 |---|---|
 | Any file I/O | Does write_core or saga_core handle this? |
 | Any validation | Does a schema exist in schemas/? |
-| Any formatting | Does report_render or format_core handle this? |
+| Any formatting | Does report_render_core or format_core handle this? |
 | Any directory walk | Does saga_core::walk_files handle this? |
 | Any datagram | Does socket_emit handle this? |
 | Any hook logic | Does hook_io handle the contract? |

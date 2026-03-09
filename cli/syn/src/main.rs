@@ -25,7 +25,7 @@ use std::process;
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use saga_core::SanityReport;
 
-use report_render::{CheckGroup, OutputMode, group_issues, total_issues, groups_to_json, format_output, severity_rank};
+use report_render_core::{CheckGroup, OutputMode, group_issues, total_issues, groups_to_json, format_output, severity_rank};
 
 // =============================================================================
 // Filter engine (jaq-interpret)
@@ -762,7 +762,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "warn filter .tool==gleipnir should show only gleipnir issues");
         assert_eq!(result.warn_groups[0].tool, "gleipnir");
     }
@@ -894,7 +894,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "CLI --tool ruff should show only ruff issues (2), ignoring warn filter");
         for group in &result.warn_groups {
             assert_eq!(group.tool, "ruff", "all visible groups should be ruff");
@@ -915,7 +915,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "CLI --tool all should show all issues");
     }
 
@@ -938,7 +938,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "level filter 'error' should show error+blocked (severity >= error)");
     }
 
@@ -957,7 +957,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "level filter 'blocked' should show only blocked issues");
     }
 
@@ -978,7 +978,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "custom filter .code==E501 should show only E501 issue");
         assert_eq!(result.warn_groups[0].code, "E501");
     }
@@ -1043,7 +1043,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 3, "should see 3 gleipnir issues across 2 reports (ruff excluded)");
         assert_eq!(result.deny_issues, 2, "2 blocked gleipnir issues");
         assert_eq!(result.decision, "deny", "gate mode with blocked → deny");
@@ -1090,7 +1090,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "gate mode ignores CLI overrides, uses config warn filter");
         assert_eq!(result.warn_groups[0].tool, "gleipnir");
     }
@@ -1112,7 +1112,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 3, "pass-all warn filter should show all issues");
     }
 
@@ -1172,7 +1172,7 @@ mod tests {
         ];
 
         let result = apply_filters(&reports, &config, &args);
-        let total = report_render::total_issues(&result.warn_groups);
+        let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "only ruff+error should pass both tool and level filters");
     }
 }

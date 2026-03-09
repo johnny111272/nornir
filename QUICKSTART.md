@@ -49,7 +49,7 @@ Rust workspace with 78 member crates in three tiers:
 Tier 1: CORE (9 pure libraries, no I/O)
     error_core, format_core, schema_core, path_core,
     write_core, saga_core, gleipnir_core, diff_core,
-    report_render
+    report_render_core
 
 Tier 2: CAPABILITY (8 feature libraries, may have I/O)
     schemas_embedded, path_verify, io_filter, io_check,

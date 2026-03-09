@@ -24,7 +24,7 @@ Nornir currently produces:
 Tier 1: CORE (pure libraries, no I/O)
     error_core, format_core, schema_core, path_core,
     write_core, saga_core, gleipnir_core, diff_core,
-    report_render
+    report_render_core
 
          │
          ▼
@@ -76,7 +76,7 @@ nornir/
 │   ├── saga_core/          # SanityReport types, .qa sidecar generation, directory walker
 │   ├── gleipnir_core/      # Tree-sitter AST guardrail engine
 │   ├── diff_core/          # Line-level diff + block extraction
-│   └── report_render/      # QA report grouping, formatting, serialization for consumers
+│   └── report_render_core/      # QA report grouping, formatting, serialization for consumers
 │
 ├── capability/             # Tier 2: Feature libraries (may have I/O)
 │   ├── schemas_embedded/   # All schemas via include_str!()
@@ -192,7 +192,7 @@ Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function 
 ### Pure/Impure Separation
 
 - saga_core generates reports (pure types + impure generation)
-- report_render formats/groups reports (pure — used by syn, svalinn, future consumers)
+- report_render_core formats/groups reports (pure — used by syn, svalinn, future consumers)
 - socket_emit emits datagrams (impure — used by all senders, syn, hooks)
 - saga_core provides shared directory walking (`walk_files`, `find_files`)
 
@@ -204,7 +204,7 @@ Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function 
 |------|-------|-------|
 | Core | gleipnir_core | 134 |
 | Core | format_core | 74 |
-| Core | report_render | 38 |
+| Core | report_render_core | 38 |
 | Core | saga_core | 21 |
 | Core | split_jsonl_batches | 17 |
 | Core | write_core | 11 |

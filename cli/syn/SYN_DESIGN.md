@@ -320,7 +320,7 @@ On session initialization or other trigger events:
 - **TOMLX parser** — 7 files, 42 tests
 - **error_core** — educational error types (10 tests)
 - **saga_core** — generates .qa reports, canonical SanityReport/Issue types, directory walker (21 tests)
-- **report_render** — grouping, formatting, severity ordering for QA consumers (38 tests)
+- **report_render_core** — grouping, formatting, severity ordering for QA consumers (38 tests)
 - **socket_emit** — fire-and-forget Hlidskjalf broadcast
 - **jaq-interpret 1.5** — embedded jq filter evaluation
 
@@ -328,8 +328,8 @@ On session initialization or other trigger events:
 - Report mode: working (filter, format, broadcast) — 43 tests
 - Gate mode: filtering works, decision logic works, **ratchet comparison NOT YET IMPLEMENTED**
 - Deployed to `~/.ai/tools/bin/syn`
-- Pure rendering logic extracted to `core/report_render/` (38 tests) — shared with svalinn
-- syn is 478 lines (down from 909 after report_render extraction)
+- Pure rendering logic extracted to `core/report_render_core/` (38 tests) — shared with svalinn
+- syn is 478 lines (down from 909 after report_render_core extraction)
 - hook_post_llm_tool wired: saga → syn pipeline operational
 
 ### Remaining

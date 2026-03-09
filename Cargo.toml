@@ -67,7 +67,7 @@ members = [
     "hooks/hook_post_llm_tool",
     "core/gleipnir_core",
     "core/saga_core",
-    "core/report_render",
+    "core/report_render_core",
     "cli/saga",
     "cli/syn",
     "senders/send_heartbeat",
