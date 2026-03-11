@@ -35,7 +35,7 @@ pub struct Violation {
 }
 
 /// Per-file check configuration. Thresholds derived from FileKind,
-/// exception lists from .gleipnir/exceptions.toml (OUTSIDE files only).
+/// exception lists from .gleipnir/user.toml (OUTSIDE files only).
 #[derive(Debug, Clone)]
 pub struct CheckConfig {
     pub unsafe_files: Vec<String>,
@@ -53,7 +53,7 @@ pub struct CheckConfig {
 
 impl CheckConfig {
     /// Build config with thresholds appropriate for a file kind.
-    pub fn for_kind(kind: FileKind, exceptions: Option<&ExceptionsConfig>) -> Self {
+    pub fn for_kind(kind: FileKind, user_config: Option<&UserConfig>) -> Self {
         let max_function_lines = match kind {
             FileKind::UnsafeImpure
             | FileKind::UnsafePure
@@ -63,13 +63,13 @@ impl CheckConfig {
         };
 
         let (unsafe_files, boundary_files, allowed_pyright, supp_whitelist, supp_blacklist) =
-            match exceptions {
-                Some(exc) => (
-                    exc.quarantine.unsafe_files.clone(),
-                    exc.quarantine.boundary_files.clone(),
-                    exc.pyright_ignore.allowed.clone(),
-                    exc.pyright_ignore.whitelist.clone(),
-                    exc.pyright_ignore.blacklist.clone(),
+            match user_config {
+                Some(uc) => (
+                    uc.quarantine.unsafe_files.clone(),
+                    uc.quarantine.boundary_files.clone(),
+                    uc.pyright_ignore.allowed.clone(),
+                    uc.pyright_ignore.whitelist.clone(),
+                    uc.pyright_ignore.blacklist.clone(),
                 ),
                 None => (vec![], vec![], vec![], vec![], vec![]),
             };
@@ -110,10 +110,10 @@ pub struct CheckEntry {
 }
 
 // -------------------------------------------------------------------------
-// Exceptions config (from .gleipnir/exceptions.toml)
+// User config (from .gleipnir/user.toml)
 // -------------------------------------------------------------------------
 
-/// Quarantine section of exceptions.toml.
+/// Quarantine section of user.toml.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct QuarantineConfig {
     #[serde(default)]
@@ -122,7 +122,7 @@ pub struct QuarantineConfig {
     pub boundary_files: Vec<String>,
 }
 
-/// Pyright ignore section of exceptions.toml.
+/// Pyright ignore section of user.toml.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct PyrightIgnoreConfig {
     #[serde(default)]
@@ -133,10 +133,10 @@ pub struct PyrightIgnoreConfig {
     pub blacklist: Vec<String>,
 }
 
-/// Typed representation of .gleipnir/exceptions.toml.
+/// Typed representation of .gleipnir/user.toml.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExceptionsConfig {
+pub struct UserConfig {
     #[serde(default)]
     pub quarantine: QuarantineConfig,
     #[serde(default)]

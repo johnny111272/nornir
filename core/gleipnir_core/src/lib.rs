@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use structures::{
-    CheckConfig, CheckMessages, ExceptionsConfig, FileKind, ParsedSource, Severity, Violation,
+    CheckConfig, CheckMessages, FileKind, ParsedSource, Severity, UserConfig, Violation,
 };
 
 // Embedded messages, parsed once on first access.
@@ -39,7 +39,7 @@ pub fn messages(check_name: &str) -> CheckMessages {
 pub fn run_checks(
     file_path: &str,
     source: &[u8],
-    exceptions: Option<&ExceptionsConfig>,
+    user_config: Option<&UserConfig>,
 ) -> Vec<Violation> {
     let first_line = source
         .split(|&b| b == b'\n')
@@ -48,7 +48,7 @@ pub fn run_checks(
         .unwrap_or("");
 
     let kind = classify::classify_file(file_path, first_line);
-    let config = CheckConfig::for_kind(kind, exceptions);
+    let config = CheckConfig::for_kind(kind, user_config);
     let entries = matrix::checks_for_kind(kind);
 
     let parsed = parsing::build_parsed_source(file_path, source);

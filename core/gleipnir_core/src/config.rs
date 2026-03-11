@@ -1,4 +1,4 @@
-//! Exceptions config loading from .gleipnir/exceptions.toml.
+//! User config loading from .gleipnir/user.toml.
 //!
 //! Only needed for FileKind::Outside files when violations are found
 //! in excusable checks (no_any_types, no_unsafe_imports, no_model_dump,
@@ -6,18 +6,18 @@
 
 use std::path::Path;
 
-use crate::structures::ExceptionsConfig;
+use crate::structures::UserConfig;
 
-/// Walk up from file looking for .gleipnir/exceptions.toml.
+/// Walk up from file looking for .gleipnir/user.toml.
 /// Returns None if not found.
-pub fn load_exceptions(file_path: &Path) -> Option<ExceptionsConfig> {
+pub fn load_user_config(file_path: &Path) -> Option<UserConfig> {
     let mut dir = file_path.parent()?;
 
     loop {
-        let candidate = dir.join(".gleipnir").join("exceptions.toml");
+        let candidate = dir.join(".gleipnir").join("user.toml");
         if candidate.exists() {
             let content = std::fs::read_to_string(&candidate).ok()?;
-            let config: ExceptionsConfig = toml::from_str(&content).ok()?;
+            let config: UserConfig = toml::from_str(&content).ok()?;
             return Some(config);
         }
 

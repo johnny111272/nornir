@@ -62,7 +62,7 @@ canary = "LLM creates type aliases to hide Any behind clean names, dispersing ty
 [no_unsafe_imports]
 detail = "Importing from the quarantine zone without permission."
 signal = "Pure code must not reach into quarantine zones; the boundary is the contract."
-direction = "Move the import target to a pure module or add the file to unsafe_files in exceptions.toml."
+direction = "Move the import target to a pure module or add the file to unsafe_files in user.toml."
 canary = "LLM pulls in unsafe/impure helpers directly to shortcut implementation."
 
 [impure_module_quarantine]

@@ -276,7 +276,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
 ];
 
 static OUTSIDE_CHECKS: &[MatrixEntry] = &[
-    // TYPE SAFETY (lazy — excusable via exceptions.toml)
+    // TYPE SAFETY (lazy — excusable via user.toml)
     error("no_any_types", type_safety::check_no_any_types),
     error("no_any_type_aliases", type_safety::check_no_any_type_aliases),
     error("no_object", type_safety::check_no_object),
