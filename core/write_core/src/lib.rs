@@ -11,7 +11,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process;
 
 use schema_core::EmbeddedValidator;
 
@@ -235,7 +234,8 @@ fn resolve_output_path(
 // --help output
 // =============================================================================
 
-fn print_help(config: &WriterConfig) {
+fn format_help(config: &WriterConfig) -> String {
+    let mut lines = Vec::new();
     let format_str = match config.format {
         OutputFormat::Jsonl => "jsonl (append)",
         OutputFormat::Json => "json (write new file)",
@@ -257,46 +257,48 @@ fn print_help(config: &WriterConfig) {
     let needs_arg = !matches!(config.output, OutputPath::FixedFile(_));
     let arg_str = if needs_arg { " <name>" } else { "" };
 
-    println!("{name} — Validated enforcement output tool\n", name = config.name);
-    println!("HARDCODED CONFIGURATION:");
-    println!("  Schema:      {} (embedded)", config.schema.schema_name());
-    println!("  Schema path: {}", config.schema_source_path);
-    println!("  Format:      {}", format_str);
-    println!("  Output:      {}", output_str);
-    println!("  Frequency:   {}", freq_str);
+    lines.push(format!("{} — Validated enforcement output tool\n", config.name));
+    lines.push("HARDCODED CONFIGURATION:".into());
+    lines.push(format!("  Schema:      {} (embedded)", config.schema.schema_name()));
+    lines.push(format!("  Schema path: {}", config.schema_source_path));
+    lines.push(format!("  Format:      {}", format_str));
+    lines.push(format!("  Output:      {}", output_str));
+    lines.push(format!("  Frequency:   {}", freq_str));
     if let Some(max) = config.batch_size {
-        println!("  Max batch:   {} records", max);
+        lines.push(format!("  Max batch:   {} records", max));
     }
 
-    println!();
-    println!("USAGE:");
-    println!("  echo '<json>' | {}{}", config.name, arg_str);
-    println!();
-    println!("  For data with quotes or apostrophes, use heredoc:");
-    println!("  cat <<'RECORD' | {}{}", config.name, arg_str);
-    println!("  {{\"uid\":\"...\",\"assessment\":\"...\"}}");
-    println!("  RECORD");
+    lines.push(String::new());
+    lines.push("USAGE:".into());
+    lines.push(format!("  echo '<json>' | {}{}", config.name, arg_str));
+    lines.push(String::new());
+    lines.push("  For data with quotes or apostrophes, use heredoc:".into());
+    lines.push(format!("  cat <<'RECORD' | {}{}", config.name, arg_str));
+    lines.push("  {\"uid\":\"...\",\"assessment\":\"...\"}".into());
+    lines.push("  RECORD".into());
 
-    println!();
-    println!("INSPECT:");
-    println!("  {} --dump-schema    Print embedded JSON Schema to stdout", config.name);
+    lines.push(String::new());
+    lines.push("INSPECT:".into());
+    lines.push(format!("  {} --dump-schema    Print embedded JSON Schema to stdout", config.name));
 
-    println!();
-    println!("OUTPUT:");
+    lines.push(String::new());
+    lines.push("OUTPUT:".into());
     match config.frequency {
         WriteFrequency::Record => {
-            println!("  OK              Record written successfully");
+            lines.push("  OK              Record written successfully".into());
         }
         WriteFrequency::Batch => {
-            println!("  OK:<count>      Records written successfully");
+            lines.push("  OK:<count>      Records written successfully".into());
         }
     }
-    println!("  FAIL:<reason>   Validation or write failed — see reason");
+    lines.push("  FAIL:<reason>   Validation or write failed — see reason".into());
 
-    println!();
-    println!("EXIT CODES:");
-    println!("  0  success");
-    println!("  1  failure");
+    lines.push(String::new());
+    lines.push("EXIT CODES:".into());
+    lines.push("  0  success".into());
+    lines.push("  1  failure".into());
+
+    lines.join("\n")
 }
 
 // =============================================================================
@@ -363,20 +365,17 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), WriteError> {
 /// Returns `Ok(message)` on success or `Err(message)` on failure.
 /// The caller is responsible for printing and calling `process::exit`.
 ///
-/// Note: `--help` and `--dump-schema` print directly and call `process::exit(0)`.
 pub fn run(config: &WriterConfig) -> Result<String, String> {
     let args: Vec<String> = std::env::args().collect();
 
     // --help
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        print_help(config);
-        process::exit(0);
+        return Ok(format_help(config));
     }
 
-    // --dump-schema: print embedded schema JSON to stdout
+    // --dump-schema: return embedded schema JSON
     if args.iter().any(|a| a == "--dump-schema") {
-        println!("{}", config.schema.schema_json());
-        process::exit(0);
+        return Ok(config.schema.schema_json().to_string());
     }
 
     // CLI arg (filename component) if needed

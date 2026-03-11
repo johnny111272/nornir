@@ -161,7 +161,7 @@ Filters (report mode only, rejected in gate mode):
 
 ### What exists NOW:
 - `cli/syn/src/main.rs` — 478 lines, fully functional report + gate modes, 43 tests
-- `cli/syn/Cargo.toml` — deps: saga_core, report_render_core, socket_emit, jaq-interpret, jaq-parse
+- `cli/syn/Cargo.toml` — deps: saga_core, report_render_core, datagram, jaq-interpret, jaq-parse
 - `cli/syn/SYN_DESIGN.md` — full design spec
 - `core/report_render_core/src/lib.rs` — extracted grouping/formatting library, 38 tests
 
@@ -212,7 +212,7 @@ Write as one cohesive binary with these components:
 - TTY auto-detect: check if stdout is a terminal
 
 **Broadcast:**
-- socket_emit::emit() ON by default
+- datagram::emit() ON by default
 - --silent suppresses
 - Payload: JSON with decision, issues, groups, workspace
 
@@ -285,7 +285,7 @@ Write as one cohesive binary with these components:
 - [x] saga_core library — generates .qa reports from file path or content
 - [x] saga CLI — deployed to ~/.ai/tools/bin/saga
 - [x] ~~qa_core library~~ — **DELETED**, code extracted to report_render_core
-- [x] socket_emit — fire-and-forget Hlidskjalf broadcast
+- [x] datagram — fire-and-forget Hlidskjalf broadcast
 - [x] Hlidskjalf watchtower — receives and displays events
 - [x] hook_io — all hooks emit to Hlidskjalf
 - [x] deploy_tools.py — automated release build + symlink

@@ -277,7 +277,7 @@ Located in `.syn/` discovered by walking up the directory tree.
 - **JSON** (`--output json`) — machine-readable
 
 **Hlidskjalf broadcast** (independent side channel):
-- ON by default — emits JSON to Hlidskjalf unix socket via socket_emit
+- ON by default — emits JSON to Hlidskjalf unix socket via datagram
 - `--silent` to suppress
 - Fire-and-forget: no cost if Hlidskjalf isn't listening
 - Payload includes: issues, ratchet comparison, decision, workspace
@@ -321,7 +321,7 @@ On session initialization or other trigger events:
 - **error_core** — educational error types (10 tests)
 - **saga_core** — generates .qa reports, canonical SanityReport/Issue types, directory walker (21 tests)
 - **report_render_core** — grouping, formatting, severity ordering for QA consumers (38 tests)
-- **socket_emit** — fire-and-forget Hlidskjalf broadcast
+- **datagram** — fire-and-forget Hlidskjalf broadcast
 - **jaq-interpret 1.5** — embedded jq filter evaluation
 
 ### Current State (Phase 1 DONE)

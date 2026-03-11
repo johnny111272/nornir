@@ -53,7 +53,7 @@ Tier 1: CORE (9 pure libraries, no I/O)
 
 Tier 2: CAPABILITY (8 feature libraries, may have I/O)
     schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, socket_emit, intercept_io
+    gate_io, hook_io, datagram, intercept_io
 
 Tier 3: BINARIES (62 executables and Python extensions)
     gates/*, cli/*, writers/*, hooks/*, senders/*,
@@ -125,7 +125,7 @@ echo '{"key":"value"}' | append_raw_jsonl traffic-log
 
 ## Senders (Hlidskjalf Datagrams)
 
-Fire-and-forget messages to the Hlidskjalf Unix socket via `socket_emit`:
+Fire-and-forget messages to the Hlidskjalf Unix socket via `datagram`:
 
 ```bash
 send_alert --source saga --detail "Quality regression detected"

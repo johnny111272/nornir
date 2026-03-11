@@ -79,6 +79,19 @@ fn decide_with_map(
         None => return HookDecision::Allow, // Grep/Glob with no path = cwd
     };
 
+    // Reject path traversal before prefix check — ".." can escape any prefix
+    if target.contains("..") {
+        return HookDecision::Deny {
+            category: "path".into(),
+            event: format!("blocked {} path traversal attempt", tool_name),
+            reason: format!(
+                "'{}' contains path traversal (..) which is not allowed.\n\
+                 Use absolute paths without '..' components.",
+                target
+            ),
+        };
+    }
+
     for prefix in allowed {
         if target.starts_with(prefix.as_str()) {
             return HookDecision::Allow;
@@ -299,17 +312,26 @@ mod tests {
     // ── Path traversal attack ─────────────────────────────────────
 
     #[test]
-    fn path_traversal_attempt_handled() {
+    fn path_traversal_denied() {
         let map = make_tool_map();
-        // This path starts_with "/schemas/" so it would match —
-        // but traversal to escape is a concern. The hook checks prefix only,
-        // which is correct because the filesystem resolves the path.
         let input = make_input("Read", "/schemas/../../etc/passwd");
-        // starts_with("/schemas/") is true, so this would Allow.
-        // This is by design — the hook validates prefixes, not resolved paths.
         match decide_with_map(&input, &map) {
-            HookDecision::Allow => {} // prefix match
-            _ => {}
+            HookDecision::Deny { category, .. } => {
+                assert_eq!(category, "path");
+            }
+            _ => panic!("Path traversal with .. must be denied"),
+        }
+    }
+
+    #[test]
+    fn path_traversal_mid_path_denied() {
+        let map = make_tool_map();
+        let input = make_input("Read", "/schemas/foo/../../../etc/shadow");
+        match decide_with_map(&input, &map) {
+            HookDecision::Deny { category, .. } => {
+                assert_eq!(category, "path");
+            }
+            _ => panic!("Path traversal with .. must be denied"),
         }
     }
 

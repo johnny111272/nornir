@@ -115,11 +115,11 @@ fn decide(input: &HookInput) -> HookDecision {
 
 **Shared rule parsing** lives in `hook_io::rules`. If your hook uses pattern-based rules embedded in TOML, use `parse_toml_table()` and `parse_rule_array()` — do not reimplement TOML parsing in the hook binary.
 
-### Senders (thin wrappers on socket_emit)
+### Senders (thin wrappers on datagram)
 
-Simple senders are ~25-line binaries that construct a datagram and call `socket_emit::emit()`. The socket path, serialization, and fire-and-forget behavior are all in socket_emit.
+Simple senders are ~25-line binaries that construct a datagram and call `datagram::emit()`. The socket path, serialization, and fire-and-forget behavior are all in datagram.
 
-**The socket path `/tmp/hlidskjalf.sock` lives ONLY in socket_emit.** Never hardcode it in a binary.
+**The socket path `/tmp/ai_logger.sock` lives ONLY in datagram.** Never hardcode it in a binary.
 
 ### QA Report Consumers (report_render_core)
 
@@ -168,7 +168,7 @@ Before adding a dependency or writing logic, check:
 | Hook stdin/stdout/decision contract | `hook_io` |
 | Hook rule parsing from TOML | `hook_io::rules` |
 | Gate I/O orchestration | `gate_io` |
-| Datagram emission to Hlidskjalf | `socket_emit` |
+| Datagram emission to Hlidskjalf | `datagram` |
 | Schema constants | `schemas_embedded` |
 | stdin-validate-stdout filtering | `io_filter` |
 | File-arg diagnostic CLI contract | `io_check` |
@@ -265,7 +265,7 @@ Tests verify that tool definition equals tool behavior. "Does `severity_rank("er
 | Any validation | Does a schema exist in schemas/? |
 | Any formatting | Does report_render_core or format_core handle this? |
 | Any directory walk | Does saga_core::walk_files handle this? |
-| Any datagram | Does socket_emit handle this? |
+| Any datagram | Does datagram handle this? |
 | Any hook logic | Does hook_io handle the contract? |
 | Any process::exit | Is this in main()? If not, return Result instead. |
 | Any duplicated code | Should this be in a core/capability crate? |

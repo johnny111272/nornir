@@ -103,7 +103,7 @@ Returns `Some(message)` to inject into LLM context, `None` for no-op.
 ### Side effects (all hooks)
 
 All hooks that produce Warn/Deny/Assessment results also:
-- Emit a datagram to Hlidskjalf via `socket_emit`
+- Emit a datagram to Hlidskjalf via `datagram`
 - Send macOS notification via `terminal-notifier`
 - Append to `~/.claude/intercept.log`
 

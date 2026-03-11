@@ -97,7 +97,7 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 - `report_render_core` handles QA report grouping, formatting, and rendering
 - `hook_io` handles the hook stdin/stdout/decision contract
 - `hook_io::rules` handles TOML-based rule parsing for hooks
-- `socket_emit` handles datagram emission (owns the socket path)
+- `datagram` handles datagram emission (owns the socket path)
 - `format_core` handles JSON/YAML/TOML/TOON conversion
 - `schema_core` + `schemas_embedded` handle schema validation
 

@@ -80,7 +80,7 @@ Capability crates provide specific features and may have I/O side effects. No ma
 | `io_check` | File-arg diagnostic output contract |
 | `gate_io` | Gate I/O orchestration (read/validate/write) |
 | `hook_io` | Hook input parsing, response formatting, shared rule types |
-| `socket_emit` | Fire-and-forget Unix socket datagram emission |
+| `datagram` | Dual-transport datagram emission (Unix stream + UDP multicast) |
 | `intercept_io` | PyO3 module: json_to_toml + append_jsonl_line for bifrost |
 
 ### Gate Modules (`gates/`)

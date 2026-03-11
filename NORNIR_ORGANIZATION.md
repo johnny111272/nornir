@@ -30,7 +30,7 @@ Tier 1: CORE (pure libraries, no I/O)
          ▼
 Tier 2: CAPABILITY (feature libraries, may have I/O)
     schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, socket_emit, intercept_io
+    gate_io, hook_io, datagram, intercept_io
          │
          ▼
 Tier 3: BINARIES (executables and Python extensions)
@@ -85,7 +85,7 @@ nornir/
 │   ├── io_check/           # File-arg diagnostic output contract
 │   ├── gate_io/            # Gate orchestration (read/validate/write)
 │   ├── hook_io/            # Hook input parsing + response format + shared rule types
-│   ├── socket_emit/        # Fire-and-forget Unix socket datagram
+│   ├── datagram/        # Dual-transport datagram emission
 │   └── intercept_io/       # PyO3 module: json_to_toml + append_jsonl_line for bifrost
 │
 ├── gates/                  # Tier 3: PyO3 pipeline gate modules
@@ -193,7 +193,7 @@ Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function 
 
 - saga_core generates reports (pure types + impure generation)
 - report_render_core formats/groups reports (pure — used by syn, svalinn, future consumers)
-- socket_emit emits datagrams (impure — used by all senders, syn, hooks)
+- datagram emits datagrams (impure — used by all senders, syn, hooks)
 - saga_core provides shared directory walking (`walk_files`, `find_files`)
 
 ## Test Coverage
@@ -242,7 +242,7 @@ Zero-test Tier 3 crates are trivial delegation (~16–25 lines): declarative wri
 | **workspace dep** | A dependency declared in the root `Cargo.toml` `[workspace.dependencies]`. All crates reference these with `{ workspace = true }` to ensure uniform versions. |
 | **schema** | A JSON Schema file in `schemas/`. The single source of truth for data validation. Embedded in binaries at compile time. |
 | **pipeline stage** | One step in the agent definition composition pipeline. Raw definition → paths resolved → sections reduced/merged → includes merged → permissions resolved → universal format → universal render → anthropic render. |
-| **datagram** | A JSON message sent to the hlidskjalf Unix socket at `/tmp/hlidskjalf.sock`. Fields: timestamp, source, type, priority, workspace, detail, speech, payload. |
+| **datagram** | A JSON message sent to the hlidskjalf Unix socket at `/tmp/ai_logger.sock`. Fields: timestamp, source, type, priority, workspace, detail, speech, payload. |
 
 ## Workspace Cargo.toml
 
