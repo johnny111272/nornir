@@ -410,7 +410,7 @@ fn apply_filters(
 // Hlidskjalf broadcast
 // =============================================================================
 
-fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
+fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize, workspace: String) {
     let payload = groups_to_json(groups);
 
     let datagram = datagram::Datagram {
@@ -423,7 +423,7 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
             "warn" => datagram::Priority::Normal,
             _ => datagram::Priority::Low,
         },
-        workspace: datagram::workspace_name(),
+        workspace,
         detail: Some(format!(
             "{} issues, {} deny, decision: {}",
             total_issues(groups), deny_count, decision
@@ -477,7 +477,8 @@ fn run(args: &Args) -> Result<i32, String> {
     }
 
     if !args.silent {
-        broadcast(&result.warn_groups, result.decision, result.deny_issues);
+        let workspace = datagram::workspace_from_path(&project_dir);
+        broadcast(&result.warn_groups, result.decision, result.deny_issues, workspace);
     }
 
     match result.decision {

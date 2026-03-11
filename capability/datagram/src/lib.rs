@@ -143,6 +143,7 @@ pub fn now() -> f64 {
 }
 
 /// Get the workspace name from CLAUDE_PROJECT_DIR env var.
+/// Prefer `workspace_from_path()` when you know the directory being operated on.
 pub fn workspace_name() -> String {
     std::env::var("CLAUDE_PROJECT_DIR")
         .ok()
@@ -152,4 +153,70 @@ pub fn workspace_name() -> String {
                 .map(|n| n.to_string_lossy().to_string())
         })
         .unwrap_or_default()
+}
+
+/// Derive workspace identity from a filesystem path.
+///
+/// Paths under `~/.ai/` become `@{relative}` (e.g. `@smidja/nornir`).
+/// Paths outside `~/.ai/` or when no path is meaningful: `@`.
+pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
+    let ai_base = ai_base_dir();
+
+    let resolved = scan_dir.canonicalize().unwrap_or_else(|_| scan_dir.to_path_buf());
+    let path_str = resolved.to_string_lossy();
+
+    if let Some(relative) = path_str.strip_prefix(&ai_base) {
+        let trimmed = relative.trim_end_matches('/');
+        if trimmed.is_empty() {
+            "@".to_string()
+        } else {
+            format!("@{trimmed}")
+        }
+    } else {
+        "@".to_string()
+    }
+}
+
+fn ai_base_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    format!("{home}/.ai/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn workspace_from_path_under_ai() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{home}/.ai/smidja/nornir");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja/nornir");
+    }
+
+    #[test]
+    fn workspace_from_path_nested() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{home}/.ai/spaces/bragi");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@spaces/bragi");
+    }
+
+    #[test]
+    fn workspace_from_path_ai_root() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{home}/.ai/");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@");
+    }
+
+    #[test]
+    fn workspace_from_path_outside_ai() {
+        assert_eq!(workspace_from_path(Path::new("/tmp/something")), "@");
+    }
+
+    #[test]
+    fn workspace_from_path_trailing_slash() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{home}/.ai/smidja/nornir/");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja/nornir");
+    }
 }
