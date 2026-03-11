@@ -1,8 +1,9 @@
 //! Datagram types and transport for the Hlidskjalf messaging protocol.
 //!
-//! Two emit paths:
-//!   `emit()`           — fire-and-forget, no validation (hardcoded senders)
-//!   `emit_validated()` — schema-validated, rejects malformed datagrams (dynamic payloads)
+//! Three emit paths:
+//!   `emit()`                  — fire-and-forget, no validation (hardcoded senders)
+//!   `emit_validated()`        — schema-validated, returns Err on malformed (caller handles)
+//!   `emit_validated_or_alert()` — schema-validated, emits alert on failure (autonomous callers)
 //!
 //! Dual transport:
 //!   1. Unix stream socket → record_datagrams daemon (persistent archive)
@@ -86,6 +87,37 @@ pub fn emit_validated(datagram: &Datagram) -> Result<(), String> {
 
     emit(datagram);
     Ok(())
+}
+
+/// Validate and emit, alerting on failure. For autonomous callers (watchers, syn)
+/// where no human sees stderr. Returns true if emitted, false if validation failed.
+///
+/// On validation failure:
+///   1. Emits a high-priority alert datagram (via emit(), bypasses validation)
+///   2. The alert includes the validation error and the source that tried to emit
+///   3. Returns false so callers can track accurate counts
+pub fn emit_validated_or_alert(datagram: &Datagram, caller: &str) -> bool {
+    match emit_validated(datagram) {
+        Ok(()) => true,
+        Err(e) => {
+            let alert = Datagram {
+                timestamp: now(),
+                source: caller.into(),
+                kind: DatagramKind::Alert,
+                classifier: None,
+                priority: Priority::High,
+                workspace: datagram.workspace.clone(),
+                detail: Some(format!("Schema validation failed: {e}")),
+                speech: Some(format!(
+                    "WARNING: {} emitted a malformed datagram. Schema validation failed.",
+                    caller
+                )),
+                payload: None,
+            };
+            emit(&alert);
+            false
+        }
+    }
 }
 
 fn try_emit(datagram: &Datagram) -> Result<(), Box<dyn std::error::Error>> {

@@ -399,9 +399,7 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
         speech: None,
         payload: Some(payload),
     };
-    if let Err(e) = datagram::emit_validated(&datagram) {
-        eprintln!("datagram validation failed: {e}");
-    }
+    datagram::emit_validated_or_alert(&datagram, "syn");
 }
 
 // =============================================================================

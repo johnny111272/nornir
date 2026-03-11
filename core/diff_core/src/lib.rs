@@ -349,7 +349,7 @@ pub fn build_datagram(
     let system_injection = has_platform_injection(&payload);
     let exchange_kind = classify_exchange_kind(&payload, is_startup);
 
-    payload.insert("exchange_kind".into(), Value::String(exchange_kind.into()));
+    payload.insert("traffic_kind".into(), Value::String(exchange_kind.into()));
     payload.insert("system_injection".into(), Value::Bool(system_injection));
 
     payload.insert("source".into(), Value::String(source_ref.into()));
@@ -778,7 +778,7 @@ mod tests {
 
         let payload = dg.payload.unwrap();
         assert_eq!(payload["user"], "hi");
-        assert_eq!(payload["exchange_kind"], "conversation");
+        assert_eq!(payload["traffic_kind"], "conversation");
         assert_eq!(payload["system_injection"], false);
         assert!(payload.get("tools_added").is_none());
         assert!(payload.get("instructions").is_none());
@@ -828,10 +828,10 @@ mod tests {
         let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "test.jsonl:1", true);
 
         let payload = dg.payload.unwrap();
-        assert_eq!(payload["exchange_kind"], "startup");
+        assert_eq!(payload["traffic_kind"], "startup");
     }
 
-    // --- exchange_kind classification ---
+    // --- traffic_kind classification ---
 
     #[test]
     fn kind_conversation_with_user() {
@@ -840,7 +840,7 @@ mod tests {
             json!({"role": "assistant", "content": [{"type": "text", "text": "hi"}]}),
         ];
         let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
-        assert_eq!(dg.payload.unwrap()["exchange_kind"], "conversation");
+        assert_eq!(dg.payload.unwrap()["traffic_kind"], "conversation");
     }
 
     #[test]
@@ -854,7 +854,7 @@ mod tests {
             ]}),
         ];
         let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
-        assert_eq!(dg.payload.unwrap()["exchange_kind"], "tool");
+        assert_eq!(dg.payload.unwrap()["traffic_kind"], "tool");
     }
 
     #[test]
@@ -865,7 +865,7 @@ mod tests {
             ]}),
         ];
         let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
-        assert_eq!(dg.payload.unwrap()["exchange_kind"], "subagent");
+        assert_eq!(dg.payload.unwrap()["traffic_kind"], "subagent");
     }
 
     #[test]
@@ -876,7 +876,7 @@ mod tests {
             ]}),
         ];
         let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
-        assert_eq!(dg.payload.unwrap()["exchange_kind"], "planning");
+        assert_eq!(dg.payload.unwrap()["traffic_kind"], "planning");
     }
 
     // --- system_injection detection ---

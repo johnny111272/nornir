@@ -1,5 +1,5 @@
 use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, Exchange};
-use datagram::emit_validated;
+use datagram::emit_validated_or_alert;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -156,8 +156,8 @@ fn diff_and_emit(
                     true, // startup — first exchange
                 );
                 let payload = dg.payload.clone();
-                if let Err(e) = emit_validated(&dg) {
-                    eprintln!("datagram validation failed: {e}");
+                if !emit_validated_or_alert(&dg, "bifrost_watcher") {
+                    return None;
                 }
                 return payload;
             }
@@ -183,8 +183,8 @@ fn diff_and_emit(
                 false,
             );
             let payload = dg.payload.clone();
-            if let Err(e) = emit_validated(&dg) {
-                eprintln!("datagram validation failed: {e}");
+            if !emit_validated_or_alert(&dg, "bifrost_watcher") {
+                return None;
             }
             payload
         }
