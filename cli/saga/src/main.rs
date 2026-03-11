@@ -5,8 +5,8 @@
 //! Usage:
 //!   saga <file.py>                          — run tools, JSON to stdout
 //!   saga <file.py> --sidecar                — run tools, write .qa sidecar
-//!   saga <dir>                              — generate missing .qa sidecars
-//!   saga <dir> --force                      — regenerate all .qa sidecars
+//!   saga <dir>                              — remove orphaned .qa, generate missing
+//!   saga <dir> --force                      — remove orphaned .qa, regenerate all
 //!   echo "content" | saga --stdin <file.py> — run tools on stdin content
 //!
 //! File vs directory is auto-detected from the path.
@@ -76,8 +76,8 @@ FILE:
     saga <file.py> --sidecar    Run tools, write .qa sidecar
 
 DIRECTORY:
-    saga <dir>                  Generate .qa for files missing sidecars
-    saga <dir> --force          Regenerate all .qa sidecars
+    saga <dir>                  Remove orphaned .qa, generate missing sidecars
+    saga <dir> --force          Remove orphaned .qa, regenerate all sidecars
 
 OPTIONS:
     --project-dir <dir>    Project root (for relative paths)

@@ -1,13 +1,14 @@
-//! Tree-sitter parsing primitives for Python source analysis.
+//! Tree-sitter parsing primitives for source analysis.
 //!
-//! These are the building blocks all checks use. Direct translations
-//! of the Python gleipnir parsing helpers.
+//! These are the building blocks all checks use.
+//! Grammar-specific parsers (Python, Rust) live here.
+//! Helper functions (find_nodes_by_type, node_text, etc.) are grammar-agnostic.
 
 use crate::structures::ParsedSource;
 use tree_sitter::{Node, Parser, Tree};
 
 /// Parse Python source bytes into a tree-sitter Tree.
-pub fn parse_source(source_bytes: &[u8]) -> Tree {
+pub fn parse_python(source_bytes: &[u8]) -> Tree {
     let mut parser = Parser::new();
     let language = tree_sitter_python::LANGUAGE;
     parser
@@ -18,9 +19,36 @@ pub fn parse_source(source_bytes: &[u8]) -> Tree {
         .expect("tree-sitter parse failed")
 }
 
-/// Build a ParsedSource from file path and source content.
+/// Parse Rust source bytes into a tree-sitter Tree.
+pub fn parse_rust(source_bytes: &[u8]) -> Tree {
+    let mut parser = Parser::new();
+    let language = tree_sitter_rust::LANGUAGE;
+    parser
+        .set_language(&language.into())
+        .expect("failed to set Rust language");
+    parser
+        .parse(source_bytes, None)
+        .expect("tree-sitter parse failed")
+}
+
+/// Build a ParsedSource from file path and source content (Python).
 pub fn build_parsed_source<'a>(file_path: &'a str, source: &'a [u8]) -> ParsedSource<'a> {
-    let tree = parse_source(source);
+    let tree = parse_python(source);
+    let lines = std::str::from_utf8(source)
+        .unwrap_or("")
+        .lines()
+        .collect();
+    ParsedSource {
+        file_path,
+        source_bytes: source,
+        lines,
+        tree,
+    }
+}
+
+/// Build a ParsedSource from file path and source content (Rust).
+pub fn build_parsed_source_rust<'a>(file_path: &'a str, source: &'a [u8]) -> ParsedSource<'a> {
+    let tree = parse_rust(source);
     let lines = std::str::from_utf8(source)
         .unwrap_or("")
         .lines()

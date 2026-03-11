@@ -40,6 +40,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("no_cast", prohibited::check_no_cast),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
+    blocked("no_relative_imports", imports::check_no_relative_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_parent_imports", imports::check_no_parent_imports),
     // PROHIBITED

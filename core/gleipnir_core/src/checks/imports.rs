@@ -123,6 +123,26 @@ pub fn check_no_unsafe_imports(source: &ParsedSource, config: &CheckConfig) -> V
 }
 
 // -------------------------------------------------------------------------
+// no_relative_imports (scripts only — enforces standalone discipline)
+// -------------------------------------------------------------------------
+
+pub fn check_no_relative_imports(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for node in find_nodes_by_type(source.tree.root_node(), "import_from_statement") {
+        let (_, level) = extract_module_info(node, source.source_bytes);
+        if level > 0 {
+            violations.push(violation(
+                node_line(node),
+                "relative import in standalone script".to_string(),
+            ));
+        }
+    }
+
+    violations
+}
+
+// -------------------------------------------------------------------------
 // impure_module_quarantine
 // -------------------------------------------------------------------------
 
@@ -396,6 +416,33 @@ mod tests {
         let violations = check_impure_module_quarantine(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("cross-zone"));
+    }
+
+    // -- no_relative_imports --
+
+    #[test]
+    fn relative_import_caught() {
+        let code = "from .sibling import helper\n";
+        let parsed = parse(code);
+        let violations = check_no_relative_imports(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("relative import"));
+    }
+
+    #[test]
+    fn absolute_import_ok_for_relative_check() {
+        let code = "from pydantic import BaseModel\n";
+        let parsed = parse(code);
+        let violations = check_no_relative_imports(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn parent_relative_import_caught() {
+        let code = "from ..parent import thing\n";
+        let parsed = parse(code);
+        let violations = check_no_relative_imports(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
     }
 
     // -- no_unsafe_imports --

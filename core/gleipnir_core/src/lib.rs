@@ -4,6 +4,7 @@
 //! library returns violations. Used by saga_core as a direct dependency.
 
 pub mod checks;
+pub mod checks_rust;
 pub mod classify;
 pub mod config;
 pub mod matrix;
@@ -63,6 +64,45 @@ pub fn run_checks(
                 viol.check_name = entry.name.to_string();
             }
             viol.severity = entry.severity;
+            if viol.detail.is_empty() {
+                viol.detail = msgs.detail.clone();
+            }
+            if viol.signal.is_empty() {
+                viol.signal = msgs.signal.clone();
+            }
+            if viol.direction.is_empty() {
+                viol.direction = msgs.direction.clone();
+            }
+            if viol.canary.is_empty() {
+                viol.canary = msgs.canary.clone();
+            }
+        }
+        violations.extend(check_violations);
+    }
+    violations
+}
+
+/// Run all applicable gleipnir checks on a Rust source file.
+///
+/// Parses with tree-sitter-rust, runs Rust-specific checks, returns violations.
+/// Skips test modules and #[test] functions for panic-on-failure checks.
+pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
+    let parsed = parsing::build_parsed_source_rust(file_path, source);
+    let config = CheckConfig::for_kind(structures::FileKind::Outside, None);
+
+    let rust_checks: &[(&str, Severity, fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>)] = &[
+        ("no_unwrap", Severity::Error, checks_rust::prohibited::check_no_unwrap),
+    ];
+
+    let mut violations = Vec::new();
+    for &(name, severity, check_fn) in rust_checks {
+        let mut check_violations = check_fn(&parsed, &config);
+        let msgs = messages(name);
+        for viol in &mut check_violations {
+            if viol.check_name.is_empty() {
+                viol.check_name = name.to_string();
+            }
+            viol.severity = severity;
             if viol.detail.is_empty() {
                 viol.detail = msgs.detail.clone();
             }
