@@ -22,7 +22,7 @@ use std::time::Duration;
 // Constants
 // =============================================================================
 
-const DEFAULT_SOCKET_PATH: &str = "/tmp/ai_logger.sock";
+const DEFAULT_SOCKET_PATH: &str = datagram::SOCKET_PATH;
 const DEFAULT_LOG_DIR: &str = ".ai/intercept/datagrams";
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 

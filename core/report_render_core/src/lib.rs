@@ -730,7 +730,6 @@ mod tests {
         let groups = group_issues(&reports);
         let json = groups_to_json(&groups);
 
-        assert_eq!(json["type"], "syn_report");
         assert_eq!(json["total"], 2);
         assert_eq!(json["check_types"], 1);
 

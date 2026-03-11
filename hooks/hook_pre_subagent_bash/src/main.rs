@@ -13,9 +13,22 @@
 
 use std::collections::HashMap;
 use std::process::ExitCode;
+use std::sync::LazyLock;
 
 use hook_io::{HookDecision, HookInput};
 use regex::Regex;
+
+static HEREDOC_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^cat\s+<<'([A-Z_]+)'\s*\|\s*(\S+)(?:\s+(\S+))?\s*$").unwrap()
+});
+
+static ECHO_PIPE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^echo\s+'[^']*'\s*\|\s*(\S+)(?:\s+(\S+))?$").unwrap()
+});
+
+static PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(/\S+)").unwrap()
+});
 
 fn main() -> ExitCode {
     hook_io::run_hook(decide)
@@ -57,9 +70,13 @@ fn parse_args() -> Config {
 
 /// Characters that indicate shell chaining.
 fn has_chain_chars(s: &str) -> bool {
-    // Check for ;  |  &  ` outside of normal pipe usage
+    // Check for ;  |  &  `  $() outside of normal pipe usage
     // We explicitly allow a single | for the heredoc-pipe pattern
-    s.contains(';') || s.contains('`') || s.contains("&&") || s.contains("||")
+    s.contains(';')
+        || s.contains('`')
+        || s.contains("&&")
+        || s.contains("||")
+        || s.contains("$(")
 }
 
 /// Validate that a name arg is a bare filename (no path parts).
@@ -79,8 +96,7 @@ fn is_bare_name(s: &str) -> bool {
 /// Returns (delimiter, writer_name, optional_name_arg) or None.
 fn parse_heredoc_header(first_line: &str) -> Option<(String, String, Option<String>)> {
     // Match: cat <<'DELIM' | writer_name [name_arg]
-    let re = Regex::new(r"^cat\s+<<'([A-Z_]+)'\s*\|\s*(\S+)(?:\s+(\S+))?\s*$").unwrap();
-    let caps = re.captures(first_line)?;
+    let caps = HEREDOC_RE.captures(first_line)?;
     Some((
         caps.get(1).unwrap().as_str().to_string(),
         caps.get(2).unwrap().as_str().to_string(),
@@ -102,8 +118,7 @@ fn validate_writer(command: &str, writers: &[String]) -> HookDecision {
     }
 
     // Also allow: echo '...' | writer_name [name_arg]
-    let echo_re = Regex::new(r"^echo\s+'[^']*'\s*\|\s*(\S+)(?:\s+(\S+))?$").unwrap();
-    if let Some(caps) = echo_re.captures(command) {
+    if let Some(caps) = ECHO_PIPE_RE.captures(command) {
         let writer_name = caps.get(1).unwrap().as_str();
         let name_arg = caps.get(2).map(|m| m.as_str());
         return check_writer_and_name(writer_name, name_arg, writers);
@@ -163,9 +178,20 @@ fn validate_inspect(command: &str, _cmd_name: &str, allowed_path: &str) -> HookD
     }
 
     // Extract all absolute paths from the command
-    let path_re = Regex::new(r"(/\S+)").unwrap();
-    for m in path_re.find_iter(command) {
+    for m in PATH_RE.find_iter(command) {
         let path = m.as_str();
+        // Reject path traversal before prefix check — ".." can escape any prefix
+        if path.contains("..") {
+            return HookDecision::Deny {
+                category: "path".into(),
+                event: format!("blocked path traversal attempt in '{}'", path),
+                reason: format!(
+                    "'{}' contains path traversal (..) which is not allowed.\n\
+                     Use absolute paths without '..' components.",
+                    path
+                ),
+            };
+        }
         if !path.starts_with(allowed_path) {
             return HookDecision::Deny {
                 category: "bash".into(),
@@ -307,6 +333,16 @@ mod tests {
     #[test]
     fn has_chain_chars_simple_path_false() {
         assert!(!has_chain_chars("ls -la /path"));
+    }
+
+    #[test]
+    fn has_chain_chars_command_substitution() {
+        assert!(has_chain_chars("echo $(cat /etc/passwd)"));
+    }
+
+    #[test]
+    fn has_chain_chars_nested_subshell() {
+        assert!(has_chain_chars("ls $(whoami)"));
     }
 
     #[test]
@@ -593,6 +629,52 @@ mod tests {
                 assert_eq!(category, "chaining");
             }
             _ => panic!("Chaining must Deny"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_path_traversal_denied() {
+        let decision = validate_inspect(
+            "ls /allowed/path/../../etc/passwd",
+            "ls",
+            "/allowed/path/",
+        );
+        match decision {
+            HookDecision::Deny { category, reason, .. } => {
+                assert_eq!(category, "path");
+                assert!(reason.contains("path traversal"));
+            }
+            _ => panic!("Path traversal with .. must be denied"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_path_traversal_mid_path_denied() {
+        let decision = validate_inspect(
+            "find /allowed/foo/../../../etc/shadow",
+            "find",
+            "/allowed/",
+        );
+        match decision {
+            HookDecision::Deny { category, .. } => {
+                assert_eq!(category, "path");
+            }
+            _ => panic!("Path traversal with .. must be denied"),
+        }
+    }
+
+    #[test]
+    fn validate_inspect_command_substitution_denied() {
+        let decision = validate_inspect(
+            "ls $(cat /etc/passwd)",
+            "ls",
+            "/allowed/",
+        );
+        match decision {
+            HookDecision::Deny { category, .. } => {
+                assert_eq!(category, "chaining");
+            }
+            _ => panic!("Command substitution must be denied"),
         }
     }
 

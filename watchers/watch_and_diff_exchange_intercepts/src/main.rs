@@ -154,6 +154,7 @@ fn diff_and_emit(
                     datagram::Priority::Low,
                     source_ref,
                     true, // startup — first exchange
+                    datagram::now(),
                 );
                 let payload = dg.payload.clone();
                 if !emit_validated_or_alert(&dg, "bifrost_watcher") {
@@ -181,6 +182,7 @@ fn diff_and_emit(
                 priority,
                 source_ref,
                 false,
+                datagram::now(),
             );
             let payload = dg.payload.clone();
             if !emit_validated_or_alert(&dg, "bifrost_watcher") {

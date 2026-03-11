@@ -268,3 +268,89 @@ detail = "Parameter name too short to be meaningful."
 signal = "Abbreviated parameter names force callers to look up what each argument means."
 direction = "Use full descriptive names for parameters."
 canary = "LLM abbreviates parameter names for brevity rather than clarity."
+
+# =========================================================================
+# RUST: PROHIBITED
+# =========================================================================
+
+[no_unwrap]
+detail = ".unwrap() and .expect() panic on failure. Propagate the error with ? instead."
+signal = "Every unwrap is a panic site. In production code, panics crash the process instead of allowing graceful error handling."
+direction = "Replace .unwrap() with ? (for Result/Option in functions that return Result/Option). For Option in non-Result functions, use match, if let, or .unwrap_or(). Never use .expect() outside tests."
+canary = "LLM uses .unwrap() to avoid thinking about error paths, treating Rust like a language without error propagation."
+
+[no_println]
+detail = "println!(), eprintln!(), and dbg!() are debug output. Use structured logging or remove."
+signal = "Print macros are debug artifacts that pollute stdout/stderr in production binaries."
+direction = "Remove the print/debug macro. Use eprintln! only in CLI tools for user-facing messages, not for debugging."
+canary = "LLM adds println! for debugging and leaves it in production code."
+
+[no_clone_spam]
+detail = ".clone() copies data. Consider borrowing or restructuring ownership."
+signal = "Each .clone() is a heap allocation and copy. LLMs clone everything to satisfy the borrow checker instead of designing proper ownership."
+direction = "Use references (&T) where possible. If you need owned data, take ownership at the call site. Clone is sometimes necessary but should be a conscious design choice, not a borrow checker escape hatch."
+canary = "LLM calls .clone() to silence borrow checker errors instead of understanding ownership."
+
+[no_string_abuse]
+detail = "String allocation from literal is wasteful. Use &str or const."
+signal = "\"literal\".to_string() and String::from(\"literal\") allocate heap memory for data that could live in static memory."
+direction = "Use &str for string parameters and return types where possible. Use const or static for fixed strings. Only allocate String when you need owned, mutable string data."
+canary = "LLM defaults to String and .to_string() from training data where &str would be more efficient and correct."
+
+[no_pub_overuse]
+detail = "Every function is pub. Design module boundaries instead of making everything public."
+signal = "When every function is pub, the module has no encapsulation. This usually means the LLM made everything public to avoid unused-code warnings."
+direction = "Only expose functions that form the module's public API. Internal helpers should be private (no pub). Use pub(crate) for crate-internal sharing."
+canary = "LLM marks all functions pub to avoid dead_code warnings instead of designing module boundaries."
+
+[no_suppression_comments_rs]
+detail = "#[allow(...)] suppresses compiler feedback. Fix the underlying issue instead."
+signal = "Each #[allow(dead_code)], #[allow(unused)], or #[allow(clippy::...)] is a known defect being intentionally ignored."
+direction = "Remove unused code instead of allowing dead_code. Use the value instead of allowing unused_variables. Fix the clippy lint instead of suppressing it."
+canary = "LLM adds #[allow(...)] to make compiler warnings disappear instead of fixing the code."
+
+# =========================================================================
+# RUST: STYLE
+# =========================================================================
+
+[function_length_rs]
+detail = "Function too long. Break it down."
+signal = "Long functions accumulate responsibilities and become difficult to reason about."
+direction = "Extract the functional primitive — the one thing this function does — and separate the rest."
+canary = "LLM generates long functions because training data rewards completeness over decomposition."
+
+[param_count_rs]
+detail = "Too many parameters. Simplify the interface."
+signal = "Functions with many parameters have complex call sites and are hard to test."
+direction = "Group related parameters into a struct or split the function."
+canary = "LLM passes every piece of state as a separate parameter instead of designing data structures."
+
+[nesting_depth_rs]
+detail = "Excessive nesting. Flatten the logic."
+signal = "Deep nesting makes control flow hard to follow and indicates tangled logic."
+direction = "Use early returns, extract helper functions, or restructure the conditions."
+canary = "LLM nests conditionals and loops rather than using guard clauses and early returns."
+
+[no_underscore_prefix_rs]
+detail = "Underscore-prefixed names suppress unused warnings. Fix the unused item instead."
+signal = "Prefixing with underscore tells the compiler to suppress unused warnings — it does not make the name better."
+direction = "Remove the underscore prefix. If the item is truly unused, delete it. If it is used, give it a proper name."
+canary = "LLM adds underscore prefixes to silence unused-variable warnings instead of using or removing the variable."
+
+[no_single_letter_names_rs]
+detail = "Single-letter variable names lack meaning."
+signal = "Single-letter names force readers to hold context in their head rather than reading it from code."
+direction = "Use descriptive names that communicate the variable's purpose."
+canary = "LLM uses short variable names from mathematical notation or terse coding style."
+
+[no_numbered_suffixes_rs]
+detail = "Numbered suffixes indicate copy-paste rather than design."
+signal = "Names like result1, result2 suggest the function is doing too many things."
+direction = "Give each variable a name that describes what makes it distinct."
+canary = "LLM creates numbered variants when it needs multiple similar variables."
+
+[short_param_names_rs]
+detail = "Parameter name too short to be meaningful."
+signal = "Abbreviated parameter names force callers to look up what each argument means."
+direction = "Use full descriptive names for parameters."
+canary = "LLM abbreviates parameter names for brevity rather than clarity."

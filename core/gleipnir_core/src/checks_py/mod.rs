@@ -1,4 +1,4 @@
-//! Guardrail check implementations.
+//! Guardrail check implementations for Python source files.
 //!
 //! Each submodule contains checks for one concern area.
 //! All checks share the signature: fn(&ParsedSource, &CheckConfig) -> Vec<Violation>

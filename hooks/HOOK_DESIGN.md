@@ -190,7 +190,7 @@ hook_post_llm_tool
 ### Runner separation principle
 
 Post hook runners shell out to external tools. They do NOT link against
-analysis libraries (saga_core, syn internals). This maintains the decoupled
+analysis libraries (saga_runner, syn internals). This maintains the decoupled
 intermediate-file architecture:
 
 - saga writes .qa AND emits JSON to stdout

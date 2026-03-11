@@ -3,8 +3,8 @@
 //! Pure computation library. No I/O — caller provides source bytes,
 //! library returns violations. Used by saga_core as a direct dependency.
 
-pub mod checks;
-pub mod checks_rust;
+pub mod checks_py;
+pub mod checks_rs;
 pub mod classify;
 pub mod config;
 pub mod matrix;
@@ -90,8 +90,24 @@ pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
     let parsed = parsing::build_parsed_source_rust(file_path, source);
     let config = CheckConfig::for_kind(structures::FileKind::Outside, None);
 
-    let rust_checks: &[(&str, Severity, fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>)] = &[
-        ("no_unwrap", Severity::Error, checks_rust::prohibited::check_no_unwrap),
+    type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
+    let rust_checks: &[(&str, Severity, CheckFn)] = &[
+        // PROHIBITED
+        ("no_unwrap", Severity::Error, checks_rs::prohibited::check_no_unwrap),
+        ("no_println", Severity::Error, checks_rs::prohibited::check_no_println),
+        ("no_clone_spam", Severity::Warning, checks_rs::prohibited::check_no_clone_spam),
+        ("no_string_abuse", Severity::Warning, checks_rs::prohibited::check_no_string_abuse),
+        ("no_pub_overuse", Severity::Warning, checks_rs::prohibited::check_no_pub_overuse),
+        // SUPPRESSION
+        ("no_suppression_comments_rs", Severity::Error, checks_rs::suppression::check_no_suppression_comments),
+        // STYLE
+        ("function_length_rs", Severity::Warning, checks_rs::style::check_function_length),
+        ("param_count_rs", Severity::Warning, checks_rs::style::check_param_count),
+        ("nesting_depth_rs", Severity::Warning, checks_rs::style::check_nesting_depth),
+        ("no_underscore_prefix_rs", Severity::Warning, checks_rs::style::check_no_underscore_prefix),
+        ("no_single_letter_names_rs", Severity::Warning, checks_rs::style::check_no_single_letter_names),
+        ("no_numbered_suffixes_rs", Severity::Warning, checks_rs::style::check_no_numbered_suffixes),
+        ("short_param_names_rs", Severity::Warning, checks_rs::style::check_short_param_names),
     ];
 
     let mut violations = Vec::new();

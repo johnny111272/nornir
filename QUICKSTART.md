@@ -46,14 +46,15 @@ Deploy scripts build release binaries, create symlinks in `~/.ai/tools/bin/`, an
 Rust workspace with 78 member crates in three tiers:
 
 ```
-Tier 1: CORE (9 pure libraries, no I/O)
+Tier 1: CORE (10 pure libraries, no I/O)
     error_core, format_core, schema_core, path_core,
-    write_core, saga_core, gleipnir_core, diff_core,
-    report_render_core
+    saga_core, gleipnir_core, diff_core, datagram_types,
+    report_render_core, compaction_inject_core
 
-Tier 2: CAPABILITY (8 feature libraries, may have I/O)
+Tier 2: CAPABILITY (10 feature libraries, may have I/O)
     schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, datagram, intercept_io
+    gate_io, hook_io, datagram, intercept_io,
+    write_core, saga_runner
 
 Tier 3: BINARIES (62 executables and Python extensions)
     gates/*, cli/*, writers/*, hooks/*, senders/*,
@@ -164,7 +165,7 @@ Exit codes: 0 = valid, 1 = invalid, 2 = operational error.
 
 ## Test Coverage
 
-564 tests across 20 crates, all passing. Security-critical hooks have dual-direction testing: every detection rule verified for true positives AND true negatives.
+576 tests across 21 crates, all passing. Security-critical hooks have dual-direction testing: every detection rule verified for true positives AND true negatives.
 
 Run tests: `cargo test -p {crate_name}` (avoid full workspace `cargo test` due to PyO3 gate linker requirements).
 

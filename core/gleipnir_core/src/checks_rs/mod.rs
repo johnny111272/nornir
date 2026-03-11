@@ -4,3 +4,5 @@
 //! All checks share the signature: fn(&ParsedSource, &CheckConfig) -> Vec<Violation>
 
 pub mod prohibited;
+pub mod style;
+pub mod suppression;

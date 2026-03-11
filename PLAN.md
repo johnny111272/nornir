@@ -9,15 +9,17 @@
 
 If starting a new session or recovering from compaction, read these files in order:
 
-1. `cli/syn/SYN_DESIGN.md` — full syn design spec
+1. `cli/syn_cli/SYN_DESIGN.md` — full syn design spec
 2. This file (`PLAN.md`) — execution plan and task status
 3. `core/format_core/src/lib.rs` — format_core (JSON, YAML, TOML, TOON, TOMLX — 74 tests)
-4. `core/saga_core/src/lib.rs` — saga library (SanityReport + Issue types, directory walker — 21 tests)
-5. `core/report_render_core/src/lib.rs` — QA report grouping/formatting for consumers — 38 tests
-6. `cli/syn/src/main.rs` — syn CLI (478 lines, filter engine + orchestration — 43 tests)
-7. `Cargo.toml` — workspace members list
+4. `core/saga_core/src/lib.rs` — saga library (SanityReport + Issue pure types — 6 tests)
+5. `capability/saga_runner/src/lib.rs` — saga I/O (report generation, directory walker, sidecar I/O)
+6. `core/report_render_core/src/lib.rs` — QA report grouping/formatting for consumers — 38 tests
+7. `cli/syn_cli/src/main.rs` — syn CLI (478 lines, filter engine + orchestration — 43 tests)
+8. `Cargo.toml` — workspace members list
 
 **Key design decisions (don't re-derive these):**
+- saga_core is pure types only (SanityReport, Issue, path functions). I/O lives in capability/saga_runner.
 - syn uses `--mode [report|gate]` not subcommands. Default: report.
 - Gate mode is fully deterministic — rejects --tool/--level/--filter flags
 - Output: TOON default (LLM), --colored (tty auto-detect), --json (machine)
@@ -149,8 +151,8 @@ Filters (report mode only, rejected in gate mode):
 
 ### CRITICAL DECISIONS MADE (don't re-derive):
 - **qa_core and qa_report are deleted.** Grouping/formatting/severity logic extracted to `core/report_render_core/` (38 tests). syn, svalinn, and future QA consumers import from report_render_core.
-  - saga_core's `SanityReport` and `Issue` are the canonical types
-  - saga_core provides shared directory walking (`walk_files`, `find_files`)
+  - saga_core's `SanityReport` and `Issue` are the canonical pure types
+  - saga_runner provides shared directory walking (`walk_files`, `find_files`) and all I/O
   - report_render_core provides `group_issues`, `format_output`, `severity_rank`, `OutputMode`
 - **jaq-interpret 1.5 + jaq-parse 1.0** (stable, NOT beta jaq-core 3.0)
   - Core-only (no jaq-std needed) — handles `==`, `or`, `and`, field access
@@ -160,9 +162,9 @@ Filters (report mode only, rejected in gate mode):
 - **syn added to workspace members** in root Cargo.toml
 
 ### What exists NOW:
-- `cli/syn/src/main.rs` — 478 lines, fully functional report + gate modes, 43 tests
-- `cli/syn/Cargo.toml` — deps: saga_core, report_render_core, datagram, jaq-interpret, jaq-parse
-- `cli/syn/SYN_DESIGN.md` — full design spec
+- `cli/syn_cli/src/main.rs` — 478 lines, fully functional report + gate modes, 43 tests
+- `cli/syn_cli/Cargo.toml` — deps: saga_runner, report_render_core, datagram, jaq-interpret, jaq-parse
+- `cli/syn_cli/SYN_DESIGN.md` — full design spec
 - `core/report_render_core/src/lib.rs` — extracted grouping/formatting library, 38 tests
 
 ### Phase 1 COMPLETE — syn rewrite done:
@@ -282,7 +284,8 @@ Write as one cohesive binary with these components:
 
 ## Already Complete
 
-- [x] saga_core library — generates .qa reports from file path or content
+- [x] saga_core library — pure types (SanityReport, Issue, path functions)
+- [x] saga_runner library — generates .qa reports, directory walker, sidecar I/O
 - [x] saga CLI — deployed to ~/.ai/tools/bin/saga
 - [x] ~~qa_core library~~ — **DELETED**, code extracted to report_render_core
 - [x] datagram — fire-and-forget Hlidskjalf broadcast
@@ -298,5 +301,5 @@ Write as one cohesive binary with these components:
 - [x] qa_core/qa_report deleted, saga orphan cleanup added
 - [x] process::exit refactored out of all helpers (15+ crates)
 - [x] Hook shared code extracted to hook_io::rules
-- [x] 564 tests across 20 crates, all passing
+- [x] 576 tests across 21 crates, all passing
 - [x] Full audit remediation (naming, organization, code quality)

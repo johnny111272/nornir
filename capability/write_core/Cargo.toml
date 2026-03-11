@@ -1,5 +1,5 @@
 [package]
-name = "saga_core"
+name = "write_core"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,6 @@ edition = "2021"
 crate-type = ["rlib"]
 
 [dependencies]
-serde = { workspace = true }
 serde_json = { workspace = true }
+error_core = { path = "../../core/error_core" }
+schema_core = { path = "../../core/schema_core" }

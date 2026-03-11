@@ -3,7 +3,7 @@
 //! Source of truth: GLEIPNIR_PROCESSING.md check matrix.
 //! Individual checks never inspect file paths. The matrix decides dispatch.
 
-use crate::checks::{architecture, imports, prohibited, style, suppression, type_safety};
+use crate::checks_py::{architecture, imports, prohibited, style, suppression, type_safety};
 use crate::structures::{CheckEntry, CheckFn, FileKind, Severity};
 
 /// A check identifier with its function and severity.

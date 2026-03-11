@@ -51,7 +51,7 @@ members = [
     "cli/check_universal_format",
     "cli/check_universal_render",
     "cli/check_anthropic_render",
-    "core/write_core",
+    "capability/write_core",
     "writers/append_truth_qc_report_record",
     "writers/write_truth_glossary_record",
     "writers/append_embedding_normalize_batch_20",
@@ -68,8 +68,8 @@ members = [
     "core/gleipnir_core",
     "core/saga_core",
     "core/report_render_core",
-    "cli/saga",
-    "cli/syn",
+    "cli/saga_cli",
+    "cli/syn_cli",
     "senders/send_heartbeat",
     "senders/send_notification",
     "senders/send_warning",
@@ -78,10 +78,12 @@ members = [
     "watchers/watch_and_diff_exchange_intercepts",
     "converters/convert_json_to_toml",
     "rewriters/rewrite_compaction_summary",
+    "core/datagram_types",
     "core/diff_core",
     "core/compaction_inject_core",
     "interceptors/traffic_interceptor_rewriter",
     "daemons/record_datagrams",
+    "capability/saga_runner",
 ]
 resolver = "2"
 

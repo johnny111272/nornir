@@ -634,8 +634,17 @@ dependencies = [
 name = "datagram"
 version = "0.1.0"
 dependencies = [
+ "datagram_types",
  "libc",
  "schemas_embedded",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "datagram_types"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
@@ -653,7 +662,7 @@ dependencies = [
 name = "diff_core"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_types",
  "serde",
  "serde_json",
 ]
@@ -2328,6 +2337,7 @@ dependencies = [
 name = "record_datagrams"
 version = "0.1.0"
 dependencies = [
+ "datagram",
  "serde_json",
 ]
 
@@ -2503,7 +2513,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "saga_cli"
 version = "0.1.0"
 dependencies = [
- "saga_core",
+ "saga_runner",
  "serde",
  "serde_json",
 ]
@@ -2512,7 +2522,16 @@ dependencies = [
 name = "saga_core"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "saga_runner"
+version = "0.1.0"
+dependencies = [
  "gleipnir_core",
+ "saga_core",
  "serde",
  "serde_json",
  "sha2",
@@ -2812,7 +2831,7 @@ dependencies = [
  "jaq-interpret",
  "jaq-parse",
  "report_render_core",
- "saga_core",
+ "saga_runner",
  "serde",
  "serde_json",
  "toml",

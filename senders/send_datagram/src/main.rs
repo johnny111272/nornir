@@ -36,7 +36,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     while i < args.len() {
         match args[i].as_str() {
             "--source" => { i += 1; source = Some(args.get(i).ok_or("--source requires a value")?.clone()); }
-            "--type" => { i += 1; dtype_str = Some(args.get(i).ok_or("--type requires a value")?.clone()); }
+            "--kind" => { i += 1; dtype_str = Some(args.get(i).ok_or("--kind requires a value")?.clone()); }
             "--priority" => { i += 1; priority_str = Some(args.get(i).ok_or("--priority requires a value")?.clone()); }
             "--workspace" => { i += 1; workspace = Some(args.get(i).ok_or("--workspace requires a value")?.clone()); }
             "--detail" => { i += 1; detail = Some(args.get(i).ok_or("--detail requires a value")?.clone()); }
@@ -52,7 +52,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     }
 
     let source = source.ok_or("--source is required")?;
-    let dtype_str = dtype_str.ok_or("--type is required")?;
+    let dtype_str = dtype_str.ok_or("--kind is required")?;
     let priority_str = priority_str.ok_or("--priority is required")?;
 
     let kind = match dtype_str.as_str() {
@@ -61,7 +61,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         "canary" => DatagramKind::Canary,
         "notify" => DatagramKind::Notify,
         "traffic" => DatagramKind::Traffic,
-        other => return Err(format!("Unknown --type: {other} (expected: alert, quality, canary, notify, traffic)")),
+        other => return Err(format!("Unknown --kind: {other} (expected: alert, quality, canary, notify, traffic)")),
     };
 
     let priority = match priority_str.as_str() {
@@ -92,7 +92,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
 
 fn print_usage() {
     eprintln!(
-        "Usage: send_datagram --source <s> --type <t> --priority <p> [--classifier <c>] [--workspace <w>] [--detail <d>] [--speech <s>] [--payload <json>] [--payload-file <path>]"
+        "Usage: send_datagram --source <s> --kind <k> --priority <p> [--classifier <c>] [--workspace <w>] [--detail <d>] [--speech <s>] [--payload <json>] [--payload-file <path>]"
     );
 }
 
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn parse_args_all_required() {
-        let a = args(&["--source", "saga", "--type", "alert", "--priority", "high"]);
+        let a = args(&["--source", "saga", "--kind", "alert", "--priority", "high"]);
         let config = parse_args(&a).unwrap();
         assert_eq!(config.source, "saga");
         assert_eq!(config.kind, DatagramKind::Alert);
@@ -183,7 +183,7 @@ mod tests {
     fn parse_args_all_flags() {
         let a = args(&[
             "--source", "hook",
-            "--type", "quality",
+            "--kind", "quality",
             "--priority", "normal",
             "--workspace", "odinn",
             "--detail", "something happened",
@@ -206,21 +206,21 @@ mod tests {
 
     #[test]
     fn parse_args_missing_source() {
-        let a = args(&["--type", "alert", "--priority", "high"]);
+        let a = args(&["--kind", "alert", "--priority", "high"]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--source"), "error should mention --source: {err}");
     }
 
     #[test]
-    fn parse_args_missing_type() {
+    fn parse_args_missing_kind() {
         let a = args(&["--source", "saga", "--priority", "high"]);
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--type"), "error should mention --type: {err}");
+        assert!(err.contains("--kind"), "error should mention --kind: {err}");
     }
 
     #[test]
     fn parse_args_missing_priority() {
-        let a = args(&["--source", "saga", "--type", "alert"]);
+        let a = args(&["--source", "saga", "--kind", "alert"]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--priority"), "error should mention --priority: {err}");
     }
@@ -230,15 +230,15 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn parse_args_invalid_type() {
-        let a = args(&["--source", "s", "--type", "bogus", "--priority", "high"]);
+    fn parse_args_invalid_kind() {
+        let a = args(&["--source", "s", "--kind", "bogus", "--priority", "high"]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("bogus"), "error should mention the bad value: {err}");
     }
 
     #[test]
     fn parse_args_invalid_priority() {
-        let a = args(&["--source", "s", "--type", "alert", "--priority", "mega"]);
+        let a = args(&["--source", "s", "--kind", "alert", "--priority", "mega"]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("mega"), "error should mention the bad value: {err}");
     }
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&["--source", "s", "--type", "alert", "--priority", "high", "--banana"]);
+        let a = args(&["--source", "s", "--kind", "alert", "--priority", "high", "--banana"]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--banana"), "error should mention unknown flag: {err}");
     }
@@ -267,9 +267,9 @@ mod tests {
             ("notify", DatagramKind::Notify),
             ("traffic", DatagramKind::Traffic),
         ] {
-            let a = args(&["--source", "s", "--type", name, "--priority", "low"]);
+            let a = args(&["--source", "s", "--kind", name, "--priority", "low"]);
             let config = parse_args(&a).unwrap();
-            assert_eq!(config.kind, expected, "kind mismatch for --type {name}");
+            assert_eq!(config.kind, expected, "kind mismatch for --kind {name}");
         }
     }
 
@@ -286,7 +286,7 @@ mod tests {
             ("low", Priority::Low),
             ("trace", Priority::Trace),
         ] {
-            let a = args(&["--source", "s", "--type", "alert", "--priority", name]);
+            let a = args(&["--source", "s", "--kind", "alert", "--priority", name]);
             let config = parse_args(&a).unwrap();
             assert_eq!(config.priority, expected, "priority mismatch for --priority {name}");
         }
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn parse_args_optional_detail_speech() {
-        let a = args(&["--source", "s", "--type", "alert", "--priority", "low"]);
+        let a = args(&["--source", "s", "--kind", "alert", "--priority", "low"]);
         let config = parse_args(&a).unwrap();
         assert!(config.detail.is_none());
         assert!(config.speech.is_none());

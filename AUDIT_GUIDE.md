@@ -20,7 +20,7 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 
 **Recent example:** syn (the QA report viewer) contained ~450 lines of pure rendering logic — grouping issues by check, severity ranking, adaptive line wrapping, line number collapsing. All pure functions, zero I/O. They lived in syn because syn was the first consumer. When svalinn needed the same rendering, the logic was trapped. Extraction to `report_render_core` was a full session of work that wouldn't have been necessary if the logic had been placed correctly from the start.
 
-**What correct looks like:** Binary crates are thin. They handle CLI args, call into core/capability crates, and format output. The binary is orchestration; the logic is elsewhere. Writers are ~16 lines. Simple senders are ~25 lines. Even complex tools like saga keep their pure logic in saga_core and their binary is orchestration.
+**What correct looks like:** Binary crates are thin. They handle CLI args, call into core/capability crates, and format output. The binary is orchestration; the logic is elsewhere. Writers are ~16 lines. Simple senders are ~25 lines. Even complex tools like saga keep their pure types in saga_core, their I/O in saga_runner, and their binary is orchestration.
 
 **Questions to ask while reading a binary:**
 - If I deleted this binary, would any reusable logic disappear with it?
@@ -93,7 +93,7 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 
 **Key crates to know about:**
 - `write_core` handles all atomic file writes with schema validation
-- `saga_core` handles QA report generation and directory walking
+- `saga_runner` handles QA report generation and directory walking
 - `report_render_core` handles QA report grouping, formatting, and rendering
 - `hook_io` handles the hook stdin/stdout/decision contract
 - `hook_io::rules` handles TOML-based rule parsing for hooks
@@ -104,7 +104,7 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 If you see logic in a binary that overlaps with any of these crates, that's a violation.
 
 **Questions to ask:**
-- Is this binary doing its own file writing instead of using write_core? Its own directory walking instead of saga_core? Its own JSON-to-TOML conversion instead of format_core?
+- Is this binary doing its own file writing instead of using write_core? Its own directory walking instead of saga_runner? Its own JSON-to-TOML conversion instead of format_core?
 - Does this binary contain a function that looks like it belongs in one of the crates listed above? Even if the implementation differs slightly, the intent may overlap.
 - Are two binaries doing similar things in different ways? That usually means both should be using a shared core function that doesn't exist yet.
 
@@ -120,7 +120,7 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 **The invariant:** Names in nornir carry architectural meaning. They are not labels — they are contracts.
 
 - Binary names use verb prefixes that encode their category: `check_`, `gate_`, `hook_`, `send_`, `append_`, `convert_`, `rewrite_`, `split_`, `watch_`
-- Core crate names use `_core` suffix: `saga_core`, `write_core`, `report_render_core`, `format_core`
+- Core crate names use `_core` suffix: `saga_core`, `report_render_core`, `format_core`, `datagram_types`
 - Directory name = package name = binary name. Always. No aliases, no mismatches.
 - The crate's category directory tells you its tier and deploy script.
 
@@ -187,7 +187,62 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 
 ---
 
-## Priority 8: Orphaned Artifacts
+## Priority 8: Stale Tests After Contract Changes
+
+**The invariant:** When a data contract changes — a schema field is renamed, a struct gains or loses a field, a function signature changes, an output format evolves — every test that touches that contract must be fully re-evaluated. Not tweaked. Re-evaluated.
+
+**Why it matters:** This is the most common and most dangerous LLM test failure mode. A schema changes `type` to `kind`. A test asserts `json["type"] == "syn_report"`. The test fails. The LLM sees a failing test and a one-line fix: add `"type": "syn_report"` back to the function output. The test passes. The code is now wrong — it emits a field that nothing consumes, the test verifies a phantom contract, and the actual current contract remains untested.
+
+**What makes this catastrophic:** The LLM "fixed" the test by making the code match the test instead of making the test match the code. This inverts the entire purpose of testing. The test is now a lie — it passes, it looks correct, and it verifies nothing real. Worse, it actively blocks detection of actual bugs because the test suite is green.
+
+**The correct response to a failing test after a contract change:**
+
+1. **Stop.** Do not touch the test or the code yet.
+2. **Find the contract change.** What actually changed? A field rename? A structural reorganization? A removed concept?
+3. **Read the test's assertions.** Each assertion is a claim about the contract. Which claims are still true? Which are stale? Which are testing something that no longer exists?
+4. **Decide: update or rewrite.** If most assertions are still valid and only one is stale, remove the stale assertion. If the contract changed substantially, delete the test and write a new one that verifies the current contract. Do not patch — the patch preserves the old mental model.
+5. **Never make the code match the test.** If the test expects a field and the code doesn't produce it, the test is wrong. Adding the field to the code to satisfy the test is backwards.
+
+**Questions to ask:**
+- When was this test last meaningfully updated? If the answer is "when it was first written" and the code has evolved since, the test is likely stale.
+- Does this test verify the current data contract, or a previous version of it? Compare test assertions against the actual struct definitions, schema files, and function signatures.
+- Are there tests that pass but verify fields, types, or structures that no consumer actually uses? Those tests are verifying ghosts.
+- After a schema or struct change, were the tests rewritten or just tweaked to pass? Tweaked tests inherit the old mental model with a thin patch over the change point.
+
+**Common drift patterns:**
+- A field is renamed in a struct and schema (`type` → `kind`, `exchange_kind` → `traffic_kind`). Tests are updated with find-and-replace on the field name but the test's structural assumptions aren't re-examined. The test now checks the new field name but still assumes the old structure around it.
+- A function's return shape changes (adds a wrapper, removes a field, nests differently). Tests are "fixed" by adding `.unwrap()` or indexing into the new structure, but the test logic still reflects the old shape. The test passes but tests nothing meaningful.
+- A concept is removed entirely (a `type` discriminator field that the datagram envelope now handles). Tests still assert the removed concept exists. The LLM adds it back to make the test pass, creating dead code that persists indefinitely.
+- Batch test updates via search-and-replace change surface syntax but not test intent. Every test now uses the new name but still tests the old behavior.
+
+**The deeper principle:** Tests are not code to be maintained — they are specifications to be upheld. When the specification changes, the tests must be re-derived from the new specification, not patched to compile. A patched test is worse than no test: it provides false confidence.
+
+---
+
+## Priority 9: CLI Interface Consistency
+
+**The invariant:** CLI flag names, error messages, help text, and usage strings must use the same vocabulary as the types, struct fields, and wire format they operate on. When a concept is renamed in the type system, the rename must propagate through every string that references it.
+
+**Why it matters:** String-layer drift is invisible to every other audit check. The compiler catches type mismatches. Schema validation catches wire format mismatches. Tests catch behavioral regressions. But a CLI flag named `--type` that maps to a struct field named `kind` passes all of these — the code compiles, the tests pass, the schemas validate, and the interface silently lies about what it does.
+
+**What makes this invisible:** Three consecutive audits missed a `--type`/`--kind` mismatch in send_datagram because no priority area checks for agreement between user-facing strings and type-system names. P5 (naming) checks directory=package=binary alignment. P7 (schema-first) checks wire format. P8 (stale tests) checks test assertions against struct fields. The CLI flag string lives in a gap between all three — it's not a name in the Cargo sense, not a schema field, and not a test assertion target. It's a string in an arg parser that is semantically linked to a type name but mechanically independent of it.
+
+**What correct looks like:** If the Datagram struct has a field `kind: DatagramKind`, the CLI accepts `--kind`. If the field is renamed, the flag is renamed in the same change. Error messages say `--kind is required`, not `--type is required`. Help text shows `--kind <k>`. The vocabulary is consistent from the type definition through the CLI interface to the error output.
+
+**Questions to ask:**
+- For each CLI flag, does the flag name match the struct field or type it maps to? `--priority` mapping to `Config.priority` is correct. `--type` mapping to `Config.kind` is a mismatch.
+- After a type/field rename, were CLI strings updated? Search for the old name in flag parsing, error messages, help text, and usage strings — not just in struct definitions and tests.
+- Do error messages reference flag names that match the actual flags? An error that says `--type is required` when the flag is `--kind` will send users (and LLMs) searching for a flag that doesn't exist.
+- Is the help text generated from the actual config, or is it a hardcoded string that can drift? Hardcoded usage strings are orphaned artifacts waiting to happen.
+
+**Common drift patterns:**
+- A field is renamed in the type system (`type` → `kind`, `exchange_kind` → `traffic_kind`). The struct, schema, and wire format are all updated. The CLI flag string is missed because it's a literal `"--type"` in a match arm, not a symbol the compiler tracks.
+- Tests use the old flag name and pass because the code also uses the old flag name. The mismatch is between the CLI and the type system, not between the CLI and the tests. Internal consistency masks external inconsistency.
+- Help text and usage strings are written once and never updated. They reference flags, formats, or behaviors from the original implementation that have since changed. The help text becomes documentation for a program that no longer exists.
+
+---
+
+## Priority 10: Orphaned Artifacts
 
 **The invariant:** When files are renamed, moved, or deleted, their associated artifacts must be cleaned up.
 

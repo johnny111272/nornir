@@ -5,7 +5,7 @@
 //! When schema sources move, update the symlinks — not this file.
 //!
 //! agents/  — agent building checkpoint and definition validation (20 schemas)
-//! tools/   — read/write tools with schema based filter gates (5 schemas)
+//! tools/   — read/write tools with schema based filter gates (6 schemas)
 
 use schema_core::EmbeddedValidator;
 
@@ -118,7 +118,7 @@ pub static INCLUDE_GUARDRAILS_ANTI_PATTERNS: EmbeddedValidator =
     EmbeddedValidator::new(INCL_GUARD_ANTI_JSON, "include-guardrails-anti-patterns");
 
 // =============================================================================
-// Tool schemas (5)
+// Tool schemas (6)
 // =============================================================================
 
 static DATAGRAM_JSON: &str =

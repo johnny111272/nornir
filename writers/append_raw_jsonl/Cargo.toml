@@ -8,5 +8,5 @@ name = "append_raw_jsonl"
 path = "src/main.rs"
 
 [dependencies]
-write_core = { path = "../../core/write_core" }
+write_core = { path = "../../capability/write_core" }
 schemas_embedded = { path = "../../capability/schemas_embedded" }

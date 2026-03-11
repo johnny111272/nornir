@@ -1,11 +1,13 @@
 [package]
-name = "saga_core"
+name = "saga_cli"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-crate-type = ["rlib"]
+[[bin]]
+name = "saga"
+path = "src/main.rs"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+saga_runner = { path = "../../capability/saga_runner" }

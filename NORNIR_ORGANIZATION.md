@@ -16,21 +16,22 @@ Nornir currently produces:
 - 1 converter binary (`convert_*`)
 - 1 dispatcher binary (`split_*`)
 - 2 specialist tools (`saga`, `syn`)
-- 17 library crates (9 core + 8 capability)
+- 20 library crates (10 core + 10 capability)
 
 ## Architecture: Three-Tier Dependency Model
 
 ```
 Tier 1: CORE (pure libraries, no I/O)
     error_core, format_core, schema_core, path_core,
-    write_core, saga_core, gleipnir_core, diff_core,
-    report_render_core
+    saga_core, gleipnir_core, diff_core, datagram_types,
+    report_render_core, compaction_inject_core
 
          │
          ▼
 Tier 2: CAPABILITY (feature libraries, may have I/O)
     schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, datagram, intercept_io
+    gate_io, hook_io, datagram, intercept_io,
+    write_core, saga_runner
          │
          ▼
 Tier 3: BINARIES (executables and Python extensions)
@@ -72,11 +73,12 @@ nornir/
 │   ├── format_core/        # JSON/YAML/TOML/TOON conversion
 │   ├── schema_core/        # JSON Schema validation engine
 │   ├── path_core/          # Path field extraction from schema+data
-│   ├── write_core/         # Atomic write engine (config, fsync)
-│   ├── saga_core/          # SanityReport types, .qa sidecar generation, directory walker
+│   ├── saga_core/          # SanityReport + Issue types, pure path functions
 │   ├── gleipnir_core/      # Tree-sitter AST guardrail engine
 │   ├── diff_core/          # Line-level diff + block extraction
-│   └── report_render_core/      # QA report grouping, formatting, serialization for consumers
+│   ├── datagram_types/     # Datagram, DatagramKind, Priority types
+│   ├── report_render_core/ # QA report grouping, formatting, serialization for consumers
+│   └── compaction_inject_core/ # Compaction summary instructions injection
 │
 ├── capability/             # Tier 2: Feature libraries (may have I/O)
 │   ├── schemas_embedded/   # All schemas via include_str!()
@@ -85,8 +87,10 @@ nornir/
 │   ├── io_check/           # File-arg diagnostic output contract
 │   ├── gate_io/            # Gate orchestration (read/validate/write)
 │   ├── hook_io/            # Hook input parsing + response format + shared rule types
-│   ├── datagram/        # Dual-transport datagram emission
-│   └── intercept_io/       # PyO3 module: json_to_toml + append_jsonl_line for bifrost
+│   ├── datagram/           # Dual-transport datagram emission
+│   ├── intercept_io/       # PyO3 module: json_to_toml + append_jsonl_line for bifrost
+│   ├── write_core/         # Atomic write engine (config, fsync)
+│   └── saga_runner/        # QA report generation, directory walker, sidecar I/O
 │
 ├── gates/                  # Tier 3: PyO3 pipeline gate modules
 │   ├── gate_raw_definition_input/
@@ -103,8 +107,8 @@ nornir/
 │   ├── check_universal_format/
 │   ├── check_universal_render/
 │   ├── check_anthropic_render/
-│   ├── saga/               # Package: saga_cli, binary: saga
-│   └── syn/                # Package: syn_cli, binary: syn
+│   ├── saga_cli/            # Package: saga_cli, binary: saga
+│   └── syn_cli/             # Package: syn_cli, binary: syn
 │
 ├── writers/                # Tier 3: Schema-validated output writers
 │   ├── append_truth_qc_report_record/
@@ -139,6 +143,12 @@ nornir/
 ├── dispatchers/            # Tier 3: Batch processing
 │   └── split_jsonl_batches/
 │
+├── daemons/                # Tier 3: Background daemon binaries
+│   └── record_datagrams/
+│
+├── interceptors/           # Tier 3: Traffic interceptor binaries
+│   └── traffic_interceptor_rewriter/
+│
 ├── deploy_gates.py         # Builds + deploys CLI checks + PyO3 gates
 ├── deploy_hooks.py         # Builds + deploys hook binaries
 ├── deploy_writers.py       # Builds + deploys writer binaries
@@ -147,6 +157,8 @@ nornir/
 ├── deploy_converters.py    # Builds + deploys converter binaries
 ├── deploy_watchers.py      # Builds + deploys watcher binaries
 ├── deploy_dispatchers.py   # Builds + deploys dispatcher binaries
+├── deploy_interceptors.py  # Builds + deploys interceptor binaries
+├── deploy_daemons.py       # Builds + deploys daemon binaries
 ├── deploy_tools.py         # Builds + deploys specialist tools (saga, syn)
 └── generate_writer.py      # Helper: scaffolds new writer crates
 ```
@@ -191,34 +203,35 @@ Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function 
 
 ### Pure/Impure Separation
 
-- saga_core generates reports (pure types + impure generation)
+- saga_core defines pure types (SanityReport, Issue) and path functions (no I/O)
+- saga_runner generates reports, walks directories, manages sidecars (I/O — used by saga, syn)
 - report_render_core formats/groups reports (pure — used by syn, svalinn, future consumers)
+- datagram_types defines Datagram, DatagramKind, Priority (pure — used by diff_core)
 - datagram emits datagrams (impure — used by all senders, syn, hooks)
-- saga_core provides shared directory walking (`walk_files`, `find_files`)
 
 ## Test Coverage
 
-564 tests across 20 crates. All pass.
+576 tests across 21 crates. All pass.
 
 | Tier | Crate | Tests |
 |------|-------|-------|
 | Core | gleipnir_core | 134 |
 | Core | format_core | 74 |
 | Core | report_render_core | 38 |
-| Core | saga_core | 21 |
-| Core | split_jsonl_batches | 17 |
-| Core | write_core | 11 |
 | Core | error_core | 10 |
 | Core | schema_core | 9 |
-| Core | diff_core | 7 |
+| Core | diff_core | 40 |
 | Core | path_core | 7 |
+| Core | saga_core | 6 |
 | Capability | schemas_embedded | 26 |
 | Capability | hook_io | 18 |
+| Capability | write_core | 11 |
 | Capability | path_verify | 3 |
-| Tier 3 | hook_pre_subagent_bash | 53 |
-| Tier 3 | syn | 43 |
+| Tier 3 | hook_pre_subagent_bash | 58 |
+| Tier 3 | syn_cli | 43 |
 | Tier 3 | hook_pre_llm_bash | 37 |
 | Tier 3 | hook_pre_llm_tool | 24 |
+| Tier 3 | split_jsonl_batches | 17 |
 | Tier 3 | hook_pre_subagent_tool | 14 |
 | Tier 3 | rewrite_compaction_summary | 14 |
 | Tier 3 | send_datagram | 12 |
@@ -242,7 +255,7 @@ Zero-test Tier 3 crates are trivial delegation (~16–25 lines): declarative wri
 | **workspace dep** | A dependency declared in the root `Cargo.toml` `[workspace.dependencies]`. All crates reference these with `{ workspace = true }` to ensure uniform versions. |
 | **schema** | A JSON Schema file in `schemas/`. The single source of truth for data validation. Embedded in binaries at compile time. |
 | **pipeline stage** | One step in the agent definition composition pipeline. Raw definition → paths resolved → sections reduced/merged → includes merged → permissions resolved → universal format → universal render → anthropic render. |
-| **datagram** | A JSON message sent to the hlidskjalf Unix socket at `/tmp/ai_logger.sock`. Fields: timestamp, source, type, priority, workspace, detail, speech, payload. |
+| **datagram** | A JSON message sent to the hlidskjalf Unix socket at `/tmp/ai_logger.sock`. Fields: timestamp, source, kind, priority, workspace, detail, speech, payload. |
 
 ## Workspace Cargo.toml
 
@@ -287,6 +300,8 @@ Every binary category has a deploy script. Binaries are NOT deployed by running 
 | `deploy_converters.py` | `convert_*` binaries | `~/.ai/tools/bin/` |
 | `deploy_watchers.py` | `watch_*` binaries | `~/.ai/tools/bin/` |
 | `deploy_dispatchers.py` | `split_*` binaries | `~/.ai/tools/bin/` |
+| `deploy_interceptors.py` | Interceptor binaries | `~/.ai/tools/bin/` |
+| `deploy_daemons.py` | Daemon binaries | `~/.ai/tools/bin/` |
 | `deploy_tools.py` | `saga`, `syn` specialist tools | `~/.ai/tools/bin/` |
 
 **After adding a new crate:**

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
-use saga_core::SanityReport;
+use saga_runner::SanityReport;
 
 use report_render_core::{CheckGroup, OutputMode, group_issues, total_issues, groups_to_json, format_output, severity_rank};
 
@@ -46,7 +46,7 @@ fn compile_filter(expr: &str) -> Result<CompiledFilter, String> {
     Ok(filter)
 }
 
-fn matches_filter(issue: &saga_core::Issue, filter: &CompiledFilter) -> bool {
+fn matches_filter(issue: &saga_runner::Issue, filter: &CompiledFilter) -> bool {
     let json = match serde_json::to_value(issue) {
         Ok(v) => v,
         Err(_) => return false,
@@ -114,6 +114,13 @@ enum Target {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Kind {
+    Py,
+    Rs,
+    All,
+}
+
 struct Args {
     mode: Mode,
     output: OutputMode,
@@ -121,6 +128,7 @@ struct Args {
     stdin: bool,
     project_dir: Option<PathBuf>,
     target: Target,
+    kind: Kind,
     tool_filter: Option<String>,
     level_filter: Option<String>,
     custom_filter: Option<String>,
@@ -140,6 +148,7 @@ fn parse_args() -> Result<Args, String> {
     let mut stdin = false;
     let mut project_dir = None;
     let mut target = Target::Src;
+    let mut kind = Kind::All;
     let mut tool_filter = None;
     let mut level_filter = None;
     let mut custom_filter = None;
@@ -186,6 +195,16 @@ fn parse_args() -> Result<Args, String> {
                     }
                 };
             }
+            "--kind" => {
+                idx += 1;
+                kind = match raw.get(idx).map(|s| s.as_str()) {
+                    Some("py") => Kind::Py,
+                    Some("rs") => Kind::Rs,
+                    Some("all") => Kind::All,
+                    Some(other) => return Err(format!("[syn] unknown kind: {} (use py, rs, or all)", other)),
+                    None => return Err("[syn] --kind requires a value (py, rs, or all)".into()),
+                };
+            }
             "--tool" => {
                 idx += 1;
                 tool_filter = raw.get(idx).cloned();
@@ -218,7 +237,7 @@ fn parse_args() -> Result<Args, String> {
 
     let path = positional.first().map(PathBuf::from);
 
-    Ok(Args { mode, output, silent, stdin, project_dir, target, tool_filter, level_filter, custom_filter, path })
+    Ok(Args { mode, output, silent, stdin, project_dir, target, kind, tool_filter, level_filter, custom_filter, path })
 }
 
 fn print_usage() {
@@ -234,10 +253,11 @@ MODES:
                      Rejects --tool/--level/--filter.
 
 INPUT:
-    <path>           File (.py finds sidecar), directory, or omit for cwd
+    <path>           File (.py/.rs finds sidecar), directory, or omit for cwd
     --stdin          Read .qa JSON from stdin
     --project-dir    Project root
     --target         [src|tests|all] Subtree scope (default: src)
+    --kind           [py|rs|all] File types to include (default: all)
 
 OUTPUT:
     --output         [colored|json|toon] (default: colored on tty, toon on pipe)
@@ -254,13 +274,25 @@ FILTERS (report mode only):
 // Input discovery
 // =============================================================================
 
-fn find_qa_files(path: &Path, target: Target) -> Vec<PathBuf> {
+fn matches_kind(qa_name: &str, kind: Kind) -> bool {
+    match kind {
+        Kind::All => true,
+        Kind::Py => qa_name.ends_with(".py.qa"),
+        Kind::Rs => qa_name.ends_with(".rs.qa"),
+    }
+}
+
+fn find_qa_files(path: &Path, target: Target, kind: Kind) -> Vec<PathBuf> {
     if path.is_file() && path.extension().map_or(false, |e| e == "qa") {
-        return vec![path.to_path_buf()];
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if matches_kind(&name, kind) {
+            return vec![path.to_path_buf()];
+        }
+        return Vec::new();
     }
 
     if path.is_file() {
-        let sidecar = saga_core::qa_path(path);
+        let sidecar = saga_runner::qa_path(path);
         if sidecar.exists() {
             return vec![sidecar];
         }
@@ -274,10 +306,10 @@ fn find_qa_files(path: &Path, target: Target) -> Vec<PathBuf> {
         Target::All => None,
     };
     let extra_skip: Vec<&str> = skip.into_iter().collect();
-    saga_core::walk_files(
+    saga_runner::walk_files(
         path,
         &extra_skip,
-        &|name| name.ends_with(".qa") && name.starts_with('.'),
+        &|name| name.ends_with(".qa") && name.starts_with('.') && matches_kind(name, kind),
         &mut results,
     );
     results
@@ -416,12 +448,12 @@ fn run(args: &Args) -> Result<i32, String> {
         load_reports_from_stdin()?
     } else {
         let path = args.path.as_deref().unwrap_or_else(|| Path::new("."));
-        let qa_files = find_qa_files(path, args.target);
+        let qa_files = find_qa_files(path, args.target, args.kind);
         if qa_files.is_empty() {
             println!("{}", format_output(&[], args.output));
             return Ok(0);
         }
-        qa_files.iter().filter_map(|qf| saga_core::load_qa_file(qf)).collect()
+        qa_files.iter().filter_map(|qf| saga_runner::load_qa_file(qf)).collect()
     };
 
     if reports.is_empty() {
@@ -490,8 +522,8 @@ mod tests {
     // Test helpers
     // =========================================================================
 
-    fn make_issue(tool: &str, code: &str, severity: &str, line: usize) -> saga_core::Issue {
-        saga_core::Issue {
+    fn make_issue(tool: &str, code: &str, severity: &str, line: usize) -> saga_runner::Issue {
+        saga_runner::Issue {
             tool: tool.into(),
             code: code.into(),
             severity: severity.into(),
@@ -506,15 +538,15 @@ mod tests {
         }
     }
 
-    fn make_issue_fixable(tool: &str, code: &str, severity: &str, line: usize) -> saga_core::Issue {
-        saga_core::Issue {
+    fn make_issue_fixable(tool: &str, code: &str, severity: &str, line: usize) -> saga_runner::Issue {
+        saga_runner::Issue {
             fixable: true,
             ..make_issue(tool, code, severity, line)
         }
     }
 
-    fn make_report(path: &str, issues: Vec<saga_core::Issue>) -> saga_core::SanityReport {
-        saga_core::SanityReport {
+    fn make_report(path: &str, issues: Vec<saga_runner::Issue>) -> saga_runner::SanityReport {
+        saga_runner::SanityReport {
             file: path.into(),
             relative_path: path.into(),
             issues,
@@ -539,6 +571,7 @@ mod tests {
             stdin: false,
             project_dir: None,
             target: Target::Src,
+            kind: Kind::All,
             tool_filter: None,
             level_filter: None,
             custom_filter: None,
@@ -554,6 +587,7 @@ mod tests {
             stdin: false,
             project_dir: None,
             target: Target::Src,
+            kind: Kind::All,
             tool_filter: None,
             level_filter: None,
             custom_filter: None,
@@ -990,7 +1024,7 @@ mod tests {
     fn apply_filters_empty_reports_returns_allow() {
         let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
         let args = make_args_report();
-        let reports: Vec<saga_core::SanityReport> = vec![];
+        let reports: Vec<saga_runner::SanityReport> = vec![];
 
         let result = apply_filters(&reports, &config, &args);
         assert_eq!(result.decision, "allow");
@@ -1002,7 +1036,7 @@ mod tests {
     fn apply_filters_gate_empty_reports_returns_allow() {
         let config = make_config(r#".tool == "gleipnir""#, r#".severity == "blocked""#);
         let args = make_args_gate();
-        let reports: Vec<saga_core::SanityReport> = vec![];
+        let reports: Vec<saga_runner::SanityReport> = vec![];
 
         let result = apply_filters(&reports, &config, &args);
         assert_eq!(result.decision, "allow");

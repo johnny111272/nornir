@@ -12,57 +12,19 @@
 //! Both channels fire-and-forget. Either can fail silently.
 //! Protocol: compact JSON + newline (one datagram per line).
 
-use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-const SOCKET_PATH: &str = "/tmp/ai_logger.sock";
+// Re-export types from core crate — all consumers get them through this crate
+pub use datagram_types::{Datagram, DatagramKind, Priority};
+
+pub const SOCKET_PATH: &str = "/tmp/ai_logger.sock";
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 0, 0, 1);
 const MULTICAST_PORT: u16 = 9899;
-
-/// Content type — what this datagram IS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DatagramKind {
-    Alert,
-    Quality,
-    Canary,
-    Notify,
-    Traffic,
-}
-
-/// Severity level for threshold filtering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Priority {
-    Trace,
-    Low,
-    Normal,
-    High,
-    Critical,
-}
-
-/// A standardized datagram for the Hlidskjalf messaging protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Datagram {
-    pub timestamp: f64,
-    pub source: String,
-    pub kind: DatagramKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub classifier: Option<String>,
-    pub priority: Priority,
-    pub workspace: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speech: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<serde_json::Value>,
-}
 
 /// Send a datagram. Fire-and-forget — never panics, never blocks.
 /// No schema validation. Use for hardcoded senders with known-good shapes.

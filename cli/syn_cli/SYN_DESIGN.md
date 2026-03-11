@@ -319,7 +319,8 @@ On session initialization or other trigger events:
 - **format_core** — JSON, YAML, TOML, TOON parse/serialize/convert (74 tests)
 - **TOMLX parser** — 7 files, 42 tests
 - **error_core** — educational error types (10 tests)
-- **saga_core** — generates .qa reports, canonical SanityReport/Issue types, directory walker (21 tests)
+- **saga_core** — canonical SanityReport/Issue pure types (6 tests)
+- **saga_runner** — generates .qa reports, directory walker, sidecar I/O
 - **report_render_core** — grouping, formatting, severity ordering for QA consumers (38 tests)
 - **datagram** — fire-and-forget Hlidskjalf broadcast
 - **jaq-interpret 1.5** — embedded jq filter evaluation

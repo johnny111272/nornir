@@ -42,7 +42,7 @@ All binaries follow **verb-prefix** naming. The verb tells you what category the
 
 1. **Underscores only.** Never hyphens. Shell completion, grep, and import paths all break on hyphens.
 2. **Binary name = package name = directory name.** All three MUST match exactly. If the directory is `writers/append_raw_jsonl/`, the Cargo.toml `name` is `append_raw_jsonl`, and the `[[bin]] name` is `append_raw_jsonl`.
-3. **Exception: specialist tools.** `saga_cli` package produces `saga` binary. `syn_cli` package produces `syn` binary. The directory name matches the package name (`cli/saga/` contains `saga_cli`). These are the ONLY exceptions and exist because `saga` and `syn` are proper nouns.
+3. **Exception: specialist tools.** `saga_cli` package produces `saga` binary. `syn_cli` package produces `syn` binary. The directory name matches the package name (`cli/saga_cli/`, `cli/syn_cli/`). These are the ONLY exceptions and exist because `saga` and `syn` are proper nouns.
 
 ## Crate Names
 
@@ -60,11 +60,12 @@ Core crates are pure Rust libraries with no I/O side effects. They contain the f
 | `format_core` | JSON/YAML/TOML/TOON conversion with diagnostics |
 | `schema_core` | EmbeddedValidator with lazy-static schema loading |
 | `path_core` | Path field extraction from schema+data |
-| `write_core` | Config-driven atomic writes with fsync |
-| `saga_core` | SanityReport + Issue types, .qa sidecar generation, directory walker |
+| `saga_core` | SanityReport + Issue types, pure path functions |
 | `gleipnir_core` | Tree-sitter AST guardrail engine |
 | `diff_core` | Line-level diff and TOML block extraction |
+| `datagram_types` | Datagram, DatagramKind, Priority type definitions |
 | `report_render_core` | QA report grouping, formatting, serialization for consumers |
+| `compaction_inject_core` | Compaction summary instructions injection |
 
 **The `_core` suffix is mandatory.** It signals "this is a pure library, safe to depend on from anywhere."
 
@@ -82,6 +83,8 @@ Capability crates provide specific features and may have I/O side effects. No ma
 | `hook_io` | Hook input parsing, response formatting, shared rule types |
 | `datagram` | Dual-transport datagram emission (Unix stream + UDP multicast) |
 | `intercept_io` | PyO3 module: json_to_toml + append_jsonl_line for bifrost |
+| `write_core` | Config-driven atomic writes with fsync |
+| `saga_runner` | QA report generation, directory walker, sidecar I/O |
 
 ### Gate Modules (`gates/`)
 

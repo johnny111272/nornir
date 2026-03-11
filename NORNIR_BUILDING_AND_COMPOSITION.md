@@ -129,18 +129,18 @@ Any code that groups, formats, or renders QA reports imports from `report_render
 use report_render_core::{group_issues, format_output, OutputMode};
 ```
 
-saga_core generates reports. report_render_core presents them. syn, svalinn, and future consumers import report_render_core. Do NOT duplicate grouping or formatting logic in consumer binaries.
+saga_runner generates reports. report_render_core presents them. syn, svalinn, and future consumers import report_render_core. Do NOT duplicate grouping or formatting logic in consumer binaries.
 
-### Directory Walking (saga_core)
+### Directory Walking (saga_runner)
 
-saga_core provides `walk_files()` and `find_files()` with a predicate and skip-directory list. Use these instead of writing your own recursive walk.
+saga_runner provides `walk_files()` and `find_files()` with a predicate and skip-directory list. Use these instead of writing your own recursive walk.
 
 ```rust
 // Find all .py files, skipping __pycache__, node_modules, .venv, venv
-let py_files = saga_core::find_files(dir, &[], &|name| name.ends_with(".py"));
+let py_files = saga_runner::find_files(dir, &[], &|name| name.ends_with(".py"));
 
 // Find .qa sidecars with extra skip directories
-saga_core::walk_files(dir, &["extra_skip"], &|name| name.ends_with(".qa"), &mut results);
+saga_runner::walk_files(dir, &["extra_skip"], &|name| name.ends_with(".qa"), &mut results);
 ```
 
 ## Dependency Rules
@@ -161,7 +161,7 @@ Before adding a dependency or writing logic, check:
 | Path field extraction from schema | `path_core` |
 | Path existence checks | `path_verify` |
 | Atomic file writes with schema validation | `write_core` |
-| QA report generation | `saga_core` |
+| QA report generation | `saga_runner` |
 | QA report grouping/formatting | `report_render_core` |
 | AST guardrails | `gleipnir_core` |
 | Line-level diffing | `diff_core` |
@@ -172,7 +172,7 @@ Before adding a dependency or writing logic, check:
 | Schema constants | `schemas_embedded` |
 | stdin-validate-stdout filtering | `io_filter` |
 | File-arg diagnostic CLI contract | `io_check` |
-| Directory walking with skip logic | `saga_core::walk_files` |
+| Directory walking with skip logic | `saga_runner::walk_files` |
 
 ### Tier violations
 
@@ -261,10 +261,10 @@ Tests verify that tool definition equals tool behavior. "Does `severity_rank("er
 
 | Before writing... | Check... |
 |---|---|
-| Any file I/O | Does write_core or saga_core handle this? |
+| Any file I/O | Does write_core or saga_runner handle this? |
 | Any validation | Does a schema exist in schemas/? |
 | Any formatting | Does report_render_core or format_core handle this? |
-| Any directory walk | Does saga_core::walk_files handle this? |
+| Any directory walk | Does saga_runner::walk_files handle this? |
 | Any datagram | Does datagram handle this? |
 | Any hook logic | Does hook_io handle the contract? |
 | Any process::exit | Is this in main()? If not, return Result instead. |

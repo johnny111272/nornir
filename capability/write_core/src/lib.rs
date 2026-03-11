@@ -418,8 +418,11 @@ fn run_record(config: &WriterConfig, output_path: &Path, input: &str) -> Result<
     }
 
     // Re-serialize to compact JSON (normalized)
-    let data = result.data.unwrap();
-    let compact = serde_json::to_string(&data).unwrap();
+    let data = result.data.ok_or(WriteError::IoFailed(
+        "schema validation returned no data".to_string(),
+    ))?;
+    let compact = serde_json::to_string(&data)
+        .map_err(|e| WriteError::IoFailed(format!("re-serialization: {e}")))?;
 
     // Write based on format
     match config.format {
@@ -448,7 +451,8 @@ fn run_record(config: &WriterConfig, output_path: &Path, input: &str) -> Result<
                 }
             }
             // Pretty-print for json files
-            let pretty = serde_json::to_string_pretty(&data).unwrap();
+            let pretty = serde_json::to_string_pretty(&data)
+                .map_err(|e| WriteError::IoFailed(format!("re-serialization: {e}")))?;
             write_atomic(output_path, &pretty)?;
         }
     }
@@ -493,8 +497,13 @@ fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> Result<S
             )));
         }
 
-        let data = result.data.unwrap();
-        validated.push(serde_json::to_string(&data).unwrap());
+        let data = result.data.ok_or_else(|| {
+            WriteError::BatchLine(format!("FAIL:line {} — no data after validation", i + 1))
+        })?;
+        let compact = serde_json::to_string(&data).map_err(|e| {
+            WriteError::BatchLine(format!("FAIL:line {} — re-serialization: {e}", i + 1))
+        })?;
+        validated.push(compact);
     }
 
     // File must exist for jsonl append
@@ -541,9 +550,11 @@ fn run_batch(config: &WriterConfig, output_path: &Path, input: &str) -> Result<S
             }
             let values: Vec<serde_json::Value> = validated
                 .iter()
-                .map(|s| serde_json::from_str(s).unwrap())
-                .collect();
-            let pretty = serde_json::to_string_pretty(&values).unwrap();
+                .map(|s| serde_json::from_str(s))
+                .collect::<Result<_, _>>()
+                .map_err(|e| WriteError::IoFailed(format!("batch re-parse: {e}")))?;
+            let pretty = serde_json::to_string_pretty(&values)
+                .map_err(|e| WriteError::IoFailed(format!("batch re-serialization: {e}")))?;
             write_atomic(output_path, &pretty)?;
         }
     }

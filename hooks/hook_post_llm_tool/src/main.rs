@@ -1,6 +1,6 @@
 //! PostToolUse hook: quality assessment injection for file writes.
 //!
-//! When a tool writes a Python file, runs the quality pipeline:
+//! When a tool writes a Python or Rust file, runs the quality pipeline:
 //!   saga <file> --sidecar | syn --stdin
 //!
 //! If syn reports violations, injects the TOON assessment as a systemMessage.
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 fn assess(input: &PostHookInput) -> Option<String> {
     let file_path = extract_file_path(input)?;
     match classify_file(&file_path) {
-        FileKind::Python => assess_python(&file_path),
+        FileKind::Python | FileKind::Rust => assess_source(&file_path),
         FileKind::Other => None,
     }
 }
@@ -32,12 +32,14 @@ fn assess(input: &PostHookInput) -> Option<String> {
 
 enum FileKind {
     Python,
+    Rust,
     Other,
 }
 
 fn classify_file(path: &Path) -> FileKind {
     match path.extension().and_then(|e| e.to_str()) {
         Some("py") => FileKind::Python,
+        Some("rs") => FileKind::Rust,
         _ => FileKind::Other,
     }
 }
@@ -55,9 +57,9 @@ fn extract_file_path(input: &PostHookInput) -> Option<PathBuf> {
     }
 }
 
-// ── Python assessment ─────────────────────────────────────────────
+// ── Source assessment (Python + Rust) ────────────────────────────
 
-fn assess_python(file_path: &Path) -> Option<String> {
+fn assess_source(file_path: &Path) -> Option<String> {
     let file_str = file_path.to_str()?;
 
     let saga = Command::new(saga_bin())
@@ -112,15 +114,15 @@ mod tests {
     fn classify_python_file() {
         match classify_file(Path::new("/tmp/test.py")) {
             FileKind::Python => {} // correct
-            FileKind::Other => panic!(".py must classify as Python"),
+            _ => panic!(".py must classify as Python"),
         }
     }
 
     #[test]
-    fn classify_rust_file_as_other() {
+    fn classify_rust_file() {
         match classify_file(Path::new("/tmp/test.rs")) {
-            FileKind::Other => {} // correct
-            FileKind::Python => panic!(".rs must classify as Other"),
+            FileKind::Rust => {} // correct
+            _ => panic!(".rs must classify as Rust"),
         }
     }
 
@@ -128,7 +130,7 @@ mod tests {
     fn classify_no_extension_as_other() {
         match classify_file(Path::new("/tmp/Makefile")) {
             FileKind::Other => {} // correct
-            FileKind::Python => panic!("No extension must classify as Other"),
+            _ => panic!("No extension must classify as Other"),
         }
     }
 
@@ -136,7 +138,7 @@ mod tests {
     fn classify_javascript_as_other() {
         match classify_file(Path::new("/tmp/test.js")) {
             FileKind::Other => {} // correct
-            FileKind::Python => panic!(".js must classify as Other"),
+            _ => panic!(".js must classify as Other"),
         }
     }
 
@@ -145,7 +147,7 @@ mod tests {
         // .pyw is NOT .py — strict extension match
         match classify_file(Path::new("/tmp/test.pyw")) {
             FileKind::Other => {} // correct
-            FileKind::Python => panic!(".pyw must classify as Other"),
+            _ => panic!(".pyw must classify as Other"),
         }
     }
 

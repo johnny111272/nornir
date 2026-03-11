@@ -1,13 +1,14 @@
 [package]
-name = "saga_cli"
+name = "saga_runner"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "saga"
-path = "src/main.rs"
+[lib]
+crate-type = ["rlib"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 saga_core = { path = "../../core/saga_core" }
+gleipnir_core = { path = "../../core/gleipnir_core" }

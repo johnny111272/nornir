@@ -6,7 +6,7 @@
 //! Pure functions, no I/O.
 
 use serde_json::Value;
-use datagram::{Datagram, DatagramKind, Priority};
+use datagram_types::{Datagram, DatagramKind, Priority};
 
 /// The three components extracted from a Claude API exchange.
 #[derive(Debug, Clone)]
@@ -263,11 +263,11 @@ fn restructure_block(block: &Value, role: &str) -> Option<(String, Value)> {
 }
 
 // =============================================================================
-// Exchange kind classification
+// Traffic kind classification
 // =============================================================================
 
-/// Classify the exchange based on which semantic labels are present.
-pub fn classify_exchange_kind(payload: &serde_json::Map<String, Value>, is_startup: bool) -> &'static str {
+/// Classify the traffic kind based on which semantic labels are present.
+pub fn classify_traffic_kind(payload: &serde_json::Map<String, Value>, is_startup: bool) -> &'static str {
     if is_startup {
         return "startup";
     }
@@ -332,6 +332,7 @@ pub fn build_datagram(
     priority: Priority,
     source_ref: &str,
     is_startup: bool,
+    timestamp: f64,
 ) -> Datagram {
     let mut payload = if !new_messages.is_empty() {
         match restructure_messages(new_messages) {
@@ -367,18 +368,18 @@ pub fn build_datagram(
 
     // Derived metadata
     let system_injection = has_platform_injection(&payload);
-    let exchange_kind = classify_exchange_kind(&payload, is_startup);
+    let traffic_kind = classify_traffic_kind(&payload, is_startup);
 
-    payload.insert("traffic_kind".into(), Value::String(exchange_kind.into()));
+    payload.insert("traffic_kind".into(), Value::String(traffic_kind.into()));
     payload.insert("system_injection".into(), Value::Bool(system_injection));
 
     payload.insert("source".into(), Value::String(source_ref.into()));
 
     Datagram {
-        timestamp: datagram::now(),
+        timestamp,
         source: "bifrost".into(),
         kind: DatagramKind::Traffic,
-        classifier: Some(exchange_kind.into()),
+        classifier: Some(traffic_kind.into()),
         priority,
         workspace: workspace.into(),
         detail: None,
@@ -811,7 +812,7 @@ mod tests {
     fn datagram_has_correct_structure() {
         let msgs = vec![json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})];
 
-        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "test.jsonl:1", false, 0.0);
 
         assert_eq!(dg.source, "bifrost");
         assert_eq!(dg.kind, DatagramKind::Traffic);
@@ -831,7 +832,7 @@ mod tests {
         let msgs = vec![json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})];
         let system = vec![json!({"type": "text", "text": "New CLAUDE.md instruction"})];
 
-        let dg = build_datagram(&msgs, &system, &[], "odinn", Priority::Normal, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &system, &[], "odinn", Priority::Normal, "test.jsonl:1", false, 0.0);
 
         let payload = dg.payload.unwrap();
         assert_eq!(payload["instructions"], "New CLAUDE.md instruction");
@@ -846,7 +847,7 @@ mod tests {
             json!({"name": "Read", "description": "Read files", "input_schema": {"type": "object"}}),
         ];
 
-        let dg = build_datagram(&msgs, &[], &tools, "odinn", Priority::Normal, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &tools, "odinn", Priority::Normal, "test.jsonl:1", false, 0.0);
 
         let payload = dg.payload.unwrap();
         let added = payload["tools_added"].as_array().unwrap();
@@ -857,7 +858,7 @@ mod tests {
     fn datagram_source_ref() {
         let msgs = vec![json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})];
 
-        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "mainexch_abc.jsonl:42", false);
+        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "mainexch_abc.jsonl:42", false, 0.0);
 
         let payload = dg.payload.unwrap();
         assert_eq!(payload["source"], "mainexch_abc.jsonl:42");
@@ -867,7 +868,7 @@ mod tests {
     fn datagram_startup_kind() {
         let msgs = vec![json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})];
 
-        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "test.jsonl:1", true);
+        let dg = build_datagram(&msgs, &[], &[], "odinn", Priority::Low, "test.jsonl:1", true, 0.0);
 
         let payload = dg.payload.unwrap();
         assert_eq!(payload["traffic_kind"], "startup");
@@ -881,7 +882,7 @@ mod tests {
             json!({"role": "user", "content": [{"type": "text", "text": "hello"}]}),
             json!({"role": "assistant", "content": [{"type": "text", "text": "hi"}]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["traffic_kind"], "conversation");
     }
 
@@ -895,7 +896,7 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "t1", "content": "data"}
             ]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["traffic_kind"], "tool");
     }
 
@@ -906,7 +907,7 @@ mod tests {
                 {"type": "tool_use", "id": "t1", "name": "Task", "input": {"prompt": "explore"}}
             ]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["traffic_kind"], "subagent");
     }
 
@@ -917,7 +918,7 @@ mod tests {
                 {"type": "tool_use", "id": "t1", "name": "EnterPlanMode", "input": {}}
             ]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["traffic_kind"], "planning");
     }
 
@@ -931,7 +932,7 @@ mod tests {
                 {"type": "text", "text": "my message"}
             ]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["system_injection"], false);
     }
 
@@ -943,7 +944,7 @@ mod tests {
                 {"type": "text", "text": "my message"}
             ]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["system_injection"], true);
     }
 
@@ -952,7 +953,7 @@ mod tests {
         let msgs = vec![
             json!({"role": "user", "content": [{"type": "text", "text": "hello"}]}),
         ];
-        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false);
+        let dg = build_datagram(&msgs, &[], &[], "test", Priority::Low, "test.jsonl:1", false, 0.0);
         assert_eq!(dg.payload.unwrap()["system_injection"], false);
     }
 }
