@@ -1,4 +1,4 @@
-use socket_emit::{Datagram, DatagramKind, Priority, emit_datagram, now, workspace_name};
+use datagram::{Datagram, DatagramKind, Priority, emit, now, workspace_name};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -14,6 +14,7 @@ fn main() {
         timestamp: now(),
         source: source.clone(),
         kind: DatagramKind::Alert,
+        classifier: None,
         priority: Priority::High,
         workspace: workspace_name(),
         detail: Some(message.clone()),
@@ -21,5 +22,5 @@ fn main() {
         payload: None,
     };
 
-    emit_datagram(&datagram);
+    emit(&datagram);
 }

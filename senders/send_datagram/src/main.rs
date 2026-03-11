@@ -1,4 +1,4 @@
-use socket_emit::{Datagram, DatagramKind, Priority, emit_datagram, now, workspace_name};
+use datagram::{Datagram, DatagramKind, Priority, emit_validated, now, workspace_name};
 
 // =============================================================================
 // Types
@@ -8,6 +8,7 @@ use socket_emit::{Datagram, DatagramKind, Priority, emit_datagram, now, workspac
 struct Config {
     source: String,
     kind: DatagramKind,
+    classifier: Option<String>,
     priority: Priority,
     workspace: Option<String>,
     detail: Option<String>,
@@ -27,6 +28,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut workspace = None;
     let mut detail = None;
     let mut speech = None;
+    let mut classifier = None;
     let mut payload_file = None;
     let mut payload_str = None;
 
@@ -39,6 +41,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             "--workspace" => { i += 1; workspace = Some(args.get(i).ok_or("--workspace requires a value")?.clone()); }
             "--detail" => { i += 1; detail = Some(args.get(i).ok_or("--detail requires a value")?.clone()); }
             "--speech" => { i += 1; speech = Some(args.get(i).ok_or("--speech requires a value")?.clone()); }
+            "--classifier" => { i += 1; classifier = Some(args.get(i).ok_or("--classifier requires a value")?.clone()); }
             "--payload-file" => { i += 1; payload_file = Some(args.get(i).ok_or("--payload-file requires a value")?.clone()); }
             "--payload" => { i += 1; payload_str = Some(args.get(i).ok_or("--payload requires a value")?.clone()); }
             other => {
@@ -54,11 +57,11 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
 
     let kind = match dtype_str.as_str() {
         "alert" => DatagramKind::Alert,
-        "report" => DatagramKind::Report,
+        "quality" => DatagramKind::Quality,
         "canary" => DatagramKind::Canary,
         "notify" => DatagramKind::Notify,
-        "exchange" => DatagramKind::Exchange,
-        other => return Err(format!("Unknown --type: {other} (expected: alert, report, canary, notify, exchange)")),
+        "traffic" => DatagramKind::Traffic,
+        other => return Err(format!("Unknown --type: {other} (expected: alert, quality, canary, notify, traffic)")),
     };
 
     let priority = match priority_str.as_str() {
@@ -73,6 +76,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     Ok(Config {
         source,
         kind,
+        classifier,
         priority,
         workspace,
         detail,
@@ -88,7 +92,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
 
 fn print_usage() {
     eprintln!(
-        "Usage: send_datagram --source <s> --type <t> --priority <p> [--workspace <w>] [--detail <d>] [--speech <s>] [--payload <json>] [--payload-file <path>]"
+        "Usage: send_datagram --source <s> --type <t> --priority <p> [--classifier <c>] [--workspace <w>] [--detail <d>] [--speech <s>] [--payload <json>] [--payload-file <path>]"
     );
 }
 
@@ -113,6 +117,7 @@ fn run(config: Config) -> Result<(), String> {
         timestamp: now(),
         source: config.source,
         kind: config.kind,
+        classifier: config.classifier,
         priority: config.priority,
         workspace: config.workspace.unwrap_or_else(workspace_name),
         detail: config.detail,
@@ -120,19 +125,7 @@ fn run(config: Config) -> Result<(), String> {
         payload,
     };
 
-    // Validate against schema before sending
-    let json_str = serde_json::to_string(&datagram)
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let result = schemas_embedded::DATAGRAM.validate(&json_str)
-        .map_err(|e| format!("Schema validation error: {e}"))?;
-
-    if !result.valid {
-        return Err(result.message.clone());
-    }
-
-    emit_datagram(&datagram);
-    Ok(())
+    emit_validated(&datagram)
 }
 
 // =============================================================================
@@ -190,7 +183,7 @@ mod tests {
     fn parse_args_all_flags() {
         let a = args(&[
             "--source", "hook",
-            "--type", "report",
+            "--type", "quality",
             "--priority", "normal",
             "--workspace", "odinn",
             "--detail", "something happened",
@@ -199,7 +192,7 @@ mod tests {
         ]);
         let config = parse_args(&a).unwrap();
         assert_eq!(config.source, "hook");
-        assert_eq!(config.kind, DatagramKind::Report);
+        assert_eq!(config.kind, DatagramKind::Quality);
         assert_eq!(config.priority, Priority::Normal);
         assert_eq!(config.workspace.as_deref(), Some("odinn"));
         assert_eq!(config.detail.as_deref(), Some("something happened"));
@@ -269,10 +262,10 @@ mod tests {
     fn parse_args_all_datagram_kinds() {
         for (name, expected) in [
             ("alert", DatagramKind::Alert),
-            ("report", DatagramKind::Report),
+            ("quality", DatagramKind::Quality),
             ("canary", DatagramKind::Canary),
             ("notify", DatagramKind::Notify),
-            ("exchange", DatagramKind::Exchange),
+            ("traffic", DatagramKind::Traffic),
         ] {
             let a = args(&["--source", "s", "--type", name, "--priority", "low"]);
             let config = parse_args(&a).unwrap();

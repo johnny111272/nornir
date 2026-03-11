@@ -150,7 +150,7 @@ fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str) {
         .stderr(std::process::Stdio::null())
         .spawn();
 
-    // Voice alerts handled by Hlidskjalf (receives events via socket_emit)
+    // Voice alerts handled by Hlidskjalf (receives events via datagram)
 
     // Append to log file
     if let Ok(mut log) = std::fs::OpenOptions::new()
@@ -237,16 +237,17 @@ fn emit_to_watchtower(
         })
         .unwrap_or_else(|| "hook".to_string());
 
-    let datagram = socket_emit::Datagram {
-        timestamp: socket_emit::now(),
+    let datagram = datagram::Datagram {
+        timestamp: datagram::now(),
         source,
-        kind: socket_emit::DatagramKind::Alert,
+        kind: datagram::DatagramKind::Alert,
+        classifier: None,
         priority: match decision {
-            "deny" => socket_emit::Priority::High,
-            "warn" => socket_emit::Priority::Normal,
-            _ => socket_emit::Priority::Low,
+            "deny" => datagram::Priority::High,
+            "warn" => datagram::Priority::Normal,
+            _ => datagram::Priority::Low,
         },
-        workspace: socket_emit::workspace_name(),
+        workspace: datagram::workspace_name(),
         detail: Some(detail.to_string()),
         speech: if speech.is_empty() { None } else { Some(speech) },
         payload: Some(serde_json::json!({
@@ -257,7 +258,7 @@ fn emit_to_watchtower(
             "context_injected": context,
         })),
     };
-    socket_emit::emit_datagram(&datagram);
+    datagram::emit(&datagram);
 }
 
 // ── PostToolUse contract ─────────────────────────────────────────

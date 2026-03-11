@@ -10,7 +10,7 @@
 //!     record_datagrams --socket-path /tmp/ai_logger.sock --log-dir ~/.ai/intercept/datagrams
 //!
 //! Protocol: one JSON line per connection (connect, write line, disconnect).
-//! Same protocol as socket_emit's try_emit().
+//! Same protocol as datagram's try_emit().
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};

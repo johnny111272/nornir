@@ -1,8 +1,8 @@
 use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, Exchange};
-use socket_emit::emit;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::Path;
+use datagram::emit_validated;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // =============================================================================
@@ -135,12 +135,13 @@ fn print_usage() {
 // =============================================================================
 
 /// Diff a new exchange against the previous one. Emit datagram if changed.
-/// Returns true if a datagram was emitted.
+/// Returns the datagram payload if one was emitted, None otherwise.
 fn diff_and_emit(
     previous: &Option<Exchange>,
     current: &Exchange,
     workspace: &str,
-) -> bool {
+    source_ref: &str,
+) -> Option<serde_json::Value> {
     match previous {
         None => {
             let new_messages = current.messages.clone();
@@ -150,12 +151,17 @@ fn diff_and_emit(
                     &[],
                     &[],
                     workspace,
-                    socket_emit::Priority::Low,
+                    datagram::Priority::Low,
+                    source_ref,
+                    true, // startup — first exchange
                 );
-                emit(&dg);
-                return true;
+                let payload = dg.payload.clone();
+                if let Err(e) = emit_validated(&dg) {
+                    eprintln!("datagram validation failed: {e}");
+                }
+                return payload;
             }
-            false
+            None
         }
         Some(prev) => {
             let new_messages = diff_messages(&prev.messages, &current.messages);
@@ -163,13 +169,24 @@ fn diff_and_emit(
             let new_tools = diff_tools(&prev.tools, &current.tools);
 
             if new_messages.is_empty() && new_system.is_empty() && new_tools.is_empty() {
-                return false;
+                return None;
             }
 
             let priority = classify_priority(&new_system, &new_tools);
-            let dg = build_datagram(&new_messages, &new_system, &new_tools, workspace, priority);
-            emit(&dg);
-            true
+            let dg = build_datagram(
+                &new_messages,
+                &new_system,
+                &new_tools,
+                workspace,
+                priority,
+                source_ref,
+                false,
+            );
+            let payload = dg.payload.clone();
+            if let Err(e) = emit_validated(&dg) {
+                eprintln!("datagram validation failed: {e}");
+            }
+            payload
         }
     }
 }
@@ -182,6 +199,13 @@ fn diff_and_emit(
 fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<String, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+
+    let filename = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let transcript_path = transcript_path_for(path);
+    let mut transcript = open_transcript(&transcript_path)?;
 
     let mut previous: Option<Exchange> = None;
     let mut line_number = 0u64;
@@ -204,8 +228,10 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
             .map_err(|e| format!("Line {line_number}: invalid JSON: {e}"))?;
 
         let current = split_exchange(&value);
+        let source_ref = format!("{filename}:{line_number}");
 
-        if diff_and_emit(&previous, &current, workspace) {
+        if let Some(payload) = diff_and_emit(&previous, &current, workspace, &source_ref) {
+            append_transcript(&mut transcript, &payload);
             datagrams_emitted += 1;
         }
 
@@ -228,9 +254,17 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
 /// Tail a JSONL file, diffing new exchanges as they appear.
 /// Seeks to end of file (or start if file doesn't exist yet), polls for new lines.
 fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
+    let filename = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let transcript_path = transcript_path_for(path);
+    let mut transcript = open_transcript(&transcript_path)?;
+
     let mut previous: Option<Exchange> = None;
     let mut datagrams_emitted = 0u64;
     let mut exchanges_processed = 0u64;
+    let mut line_number = 0u64;
     let mut partial_line = String::new();
 
     // Wait for file to exist
@@ -242,6 +276,14 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
 
+    // Count existing lines to get correct line numbers for source refs
+    {
+        let reader = BufReader::new(&mut file);
+        for _ in reader.lines() {
+            line_number += 1;
+        }
+    }
+
     // Seek to end — only process new lines
     file.seek(SeekFrom::End(0))
         .map_err(|e| format!("Failed to seek {}: {e}", path.display()))?;
@@ -249,7 +291,7 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let mut reader = BufReader::new(file);
 
     eprintln!(
-        "Watching {} (workspace: {workspace})",
+        "Watching {} (workspace: {workspace}, starting at line {line_number})",
         path.display()
     );
 
@@ -257,16 +299,13 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
         let mut line = String::new();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                // EOF — no new data, poll
                 std::thread::sleep(WATCH_POLL_INTERVAL);
                 continue;
             }
             Ok(_) => {
-                // Accumulate partial lines (incomplete JSON from mid-write)
                 partial_line.push_str(&line);
 
                 if !partial_line.ends_with('\n') {
-                    // Line not complete yet, wait for more
                     continue;
                 }
 
@@ -286,11 +325,14 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
                 };
 
                 partial_line.clear();
+                line_number += 1;
                 exchanges_processed += 1;
 
                 let current = split_exchange(&value);
+                let source_ref = format!("{filename}:{line_number}");
 
-                if diff_and_emit(&previous, &current, workspace) {
+                if let Some(payload) = diff_and_emit(&previous, &current, workspace, &source_ref) {
+                    append_transcript(&mut transcript, &payload);
                     datagrams_emitted += 1;
                 }
 
@@ -307,6 +349,44 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
                 std::thread::sleep(WATCH_POLL_INTERVAL);
             }
         }
+    }
+}
+
+// =============================================================================
+// Transcript — per-session structured log
+// =============================================================================
+
+/// Derive transcript path from mainexch path.
+/// mainexch_abc123.jsonl → transcript_abc123.jsonl (same directory).
+fn transcript_path_for(mainexch_path: &Path) -> PathBuf {
+    let filename = mainexch_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let transcript_name = filename.replace("mainexch_", "transcript_");
+    let parent = mainexch_path.parent().unwrap_or(Path::new("."));
+    parent.join(transcript_name)
+}
+
+/// Open (or create) a transcript file for appending.
+fn open_transcript(path: &PathBuf) -> Result<File, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create transcript dir: {e}"))?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open transcript {}: {e}", path.display()))
+}
+
+/// Append a restructured payload to the transcript as a single JSON line.
+fn append_transcript(file: &mut File, payload: &serde_json::Value) {
+    if let Ok(mut json) = serde_json::to_vec(payload) {
+        json.push(b'\n');
+        let _ = file.write_all(&json);
     }
 }
 

@@ -8,7 +8,5 @@ name = "send_datagram"
 path = "src/main.rs"
 
 [dependencies]
-socket_emit = { path = "../../capability/socket_emit" }
-schemas_embedded = { path = "../../capability/schemas_embedded" }
-schema_core = { path = "../../core/schema_core" }
+datagram = { path = "../../capability/datagram" }
 serde_json = { workspace = true }

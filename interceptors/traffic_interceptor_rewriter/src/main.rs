@@ -14,7 +14,7 @@
 //! The caller (bifrost addon) checks stdout: if non-empty, set flow.request.content.
 
 use compaction_inject_core::inject_compaction_system_block;
-use socket_emit::{Datagram, DatagramKind, Priority};
+use datagram::{Datagram, DatagramKind, Priority};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -294,9 +294,10 @@ fn run(config: &Config) -> Result<(), String> {
             // Alert datagram
             let precompact_filename = format!("precomp_{}.jsonl", config.session_id);
             let dg = Datagram {
-                timestamp: socket_emit::now(),
-                source: "intercept".into(),
+                timestamp: datagram::now(),
+                source: "bifrost".into(),
                 kind: DatagramKind::Alert,
+                classifier: None,
                 priority: Priority::High,
                 workspace: config.workspace.clone(),
                 detail: Some(format!("Compaction detected in {}", config.workspace)),
@@ -306,7 +307,7 @@ fn run(config: &Config) -> Result<(), String> {
                     "line": line,
                 })),
             };
-            socket_emit::emit(&dg);
+            datagram::emit(&dg);
 
             // Inject compaction instructions
             inject_compaction_system_block(&mut value)?;

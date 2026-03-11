@@ -15,4 +15,4 @@ jaq-interpret = { workspace = true }
 jaq-parse = { workspace = true }
 saga_core = { path = "../../core/saga_core" }
 report_render_core = { path = "../../core/report_render_core" }
-socket_emit = { path = "../../capability/socket_emit" }
+datagram = { path = "../../capability/datagram" }

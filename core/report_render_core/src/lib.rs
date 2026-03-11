@@ -227,7 +227,6 @@ pub fn groups_to_json(groups: &[CheckGroup]) -> serde_json::Value {
         .collect();
 
     serde_json::json!({
-        "type": "syn_report",
         "total": total_issues(groups),
         "check_types": groups.len(),
         "groups": json_groups,

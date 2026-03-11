@@ -1,4 +1,8 @@
-//! Fire-and-forget event emitter for the datagram messaging system.
+//! Datagram types and transport for the Hlidskjalf messaging protocol.
+//!
+//! Two emit paths:
+//!   `emit()`           — fire-and-forget, no validation (hardcoded senders)
+//!   `emit_validated()` — schema-validated, rejects malformed datagrams (dynamic payloads)
 //!
 //! Dual transport:
 //!   1. Unix stream socket → record_datagrams daemon (persistent archive)
@@ -19,15 +23,15 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 0, 0, 1);
 const MULTICAST_PORT: u16 = 9899;
 
-/// Event class — what kind of datagram this is.
+/// Content type — what this datagram IS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DatagramKind {
     Alert,
-    Report,
+    Quality,
     Canary,
     Notify,
-    Exchange,
+    Traffic,
 }
 
 /// Severity level for threshold filtering.
@@ -46,8 +50,9 @@ pub enum Priority {
 pub struct Datagram {
     pub timestamp: f64,
     pub source: String,
-    #[serde(rename = "type")]
     pub kind: DatagramKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classifier: Option<String>,
     pub priority: Priority,
     pub workspace: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,14 +63,29 @@ pub struct Datagram {
     pub payload: Option<serde_json::Value>,
 }
 
-/// Send a datagram to Hlidskjalf. Fire-and-forget — never panics, never blocks.
+/// Send a datagram. Fire-and-forget — never panics, never blocks.
+/// No schema validation. Use for hardcoded senders with known-good shapes.
 pub fn emit(datagram: &Datagram) {
     let _ = try_emit(datagram);
 }
 
-/// Backward-compatible alias during migration.
-pub fn emit_datagram(datagram: &Datagram) {
+/// Send a datagram after validating against the compiled schema.
+/// Returns Err with validation message if the datagram is malformed.
+/// Use for dynamic payloads (Traffic, Quality) constructed at runtime.
+pub fn emit_validated(datagram: &Datagram) -> Result<(), String> {
+    let json_str = serde_json::to_string(datagram)
+        .map_err(|e| format!("serialization error: {e}"))?;
+
+    let result = schemas_embedded::DATAGRAM
+        .validate(&json_str)
+        .map_err(|e| format!("schema error: {e}"))?;
+
+    if !result.valid {
+        return Err(result.message);
+    }
+
     emit(datagram);
+    Ok(())
 }
 
 fn try_emit(datagram: &Datagram) -> Result<(), Box<dyn std::error::Error>> {

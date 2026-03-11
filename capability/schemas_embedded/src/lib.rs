@@ -122,7 +122,7 @@ pub static INCLUDE_GUARDRAILS_ANTI_PATTERNS: EmbeddedValidator =
 // =============================================================================
 
 static DATAGRAM_JSON: &str =
-    include_str!("../../../schemas/tools/datagram.schema.json");
+    include_str!("../../../schemas/tools/validate.datagram.schema.json");
 pub static DATAGRAM: EmbeddedValidator =
     EmbeddedValidator::new(DATAGRAM_JSON, "datagram");
 

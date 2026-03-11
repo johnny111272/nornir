@@ -11,4 +11,4 @@ path = "src/main.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 diff_core = { path = "../../core/diff_core" }
-socket_emit = { path = "../../capability/socket_emit" }
+datagram = { path = "../../capability/datagram" }

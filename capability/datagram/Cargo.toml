@@ -1,5 +1,5 @@
 [package]
-name = "socket_emit"
+name = "datagram"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,3 +10,4 @@ crate-type = ["rlib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 libc = "0.2"
+schemas_embedded = { path = "../schemas_embedded" }

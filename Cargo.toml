@@ -59,7 +59,7 @@ members = [
     "writers/append_raw_jsonl",
     "dispatchers/split_jsonl_batches",
     "capability/hook_io",
-    "capability/socket_emit",
+    "capability/datagram",
     "hooks/hook_pre_subagent_tool",
     "hooks/hook_pre_subagent_bash",
     "hooks/hook_pre_llm_tool",

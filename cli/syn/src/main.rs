@@ -381,16 +381,17 @@ fn apply_filters(
 fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
     let payload = groups_to_json(groups);
 
-    let datagram = socket_emit::Datagram {
-        timestamp: socket_emit::now(),
+    let datagram = datagram::Datagram {
+        timestamp: datagram::now(),
         source: "syn".to_string(),
-        kind: socket_emit::DatagramKind::Report,
+        kind: datagram::DatagramKind::Quality,
+        classifier: Some("directory".into()),
         priority: match decision {
-            "deny" => socket_emit::Priority::High,
-            "warn" => socket_emit::Priority::Normal,
-            _ => socket_emit::Priority::Low,
+            "deny" => datagram::Priority::High,
+            "warn" => datagram::Priority::Normal,
+            _ => datagram::Priority::Low,
         },
-        workspace: socket_emit::workspace_name(),
+        workspace: datagram::workspace_name(),
         detail: Some(format!(
             "{} issues, {} deny, decision: {}",
             total_issues(groups), deny_count, decision
@@ -398,7 +399,9 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize) {
         speech: None,
         payload: Some(payload),
     };
-    socket_emit::emit_datagram(&datagram);
+    if let Err(e) = datagram::emit_validated(&datagram) {
+        eprintln!("datagram validation failed: {e}");
+    }
 }
 
 // =============================================================================

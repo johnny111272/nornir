@@ -631,6 +631,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "datagram"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "schemas_embedded",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -643,9 +653,9 @@ dependencies = [
 name = "diff_core"
 version = "0.1.0"
 dependencies = [
+ "datagram",
  "serde",
  "serde_json",
- "socket_emit",
 ]
 
 [[package]]
@@ -1315,9 +1325,9 @@ checksum = "0a7763b98ba8a24f59e698bf9ab197e7676c640d6455d1580b4ce7dc560f0f0d"
 name = "hook_io"
 version = "0.1.0"
 dependencies = [
+ "datagram",
  "serde",
  "serde_json",
- "socket_emit",
  "toml",
 ]
 
@@ -2542,38 +2552,36 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "send_alert"
 version = "0.1.0"
 dependencies = [
- "socket_emit",
+ "datagram",
 ]
 
 [[package]]
 name = "send_datagram"
 version = "0.1.0"
 dependencies = [
- "schema_core",
- "schemas_embedded",
+ "datagram",
  "serde_json",
- "socket_emit",
 ]
 
 [[package]]
 name = "send_heartbeat"
 version = "0.1.0"
 dependencies = [
- "socket_emit",
+ "datagram",
 ]
 
 [[package]]
 name = "send_notification"
 version = "0.1.0"
 dependencies = [
- "socket_emit",
+ "datagram",
 ]
 
 [[package]]
 name = "send_warning"
 version = "0.1.0"
 dependencies = [
- "socket_emit",
+ "datagram",
 ]
 
 [[package]]
@@ -2731,15 +2739,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "socket_emit"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "split_jsonl_batches"
 version = "0.1.0"
 dependencies = [
@@ -2808,13 +2807,13 @@ dependencies = [
 name = "syn_cli"
 version = "0.1.0"
 dependencies = [
+ "datagram",
  "jaq-interpret",
  "jaq-parse",
  "report_render_core",
  "saga_core",
  "serde",
  "serde_json",
- "socket_emit",
  "toml",
 ]
 
@@ -3101,8 +3100,8 @@ name = "traffic_interceptor_rewriter"
 version = "0.1.0"
 dependencies = [
  "compaction_inject_core",
+ "datagram",
  "serde_json",
- "socket_emit",
 ]
 
 [[package]]
@@ -3359,10 +3358,10 @@ dependencies = [
 name = "watch_and_diff_exchange_intercepts"
 version = "0.1.0"
 dependencies = [
+ "datagram",
  "diff_core",
  "serde",
  "serde_json",
- "socket_emit",
 ]
 
 [[package]]

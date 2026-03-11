@@ -10,4 +10,4 @@ crate-type = ["rlib"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-socket_emit = { path = "../../capability/socket_emit" }
+datagram = { path = "../../capability/datagram" }

@@ -8,4 +8,4 @@ name = "send_warning"
 path = "src/main.rs"
 
 [dependencies]
-socket_emit = { path = "../../capability/socket_emit" }
+datagram = { path = "../../capability/datagram" }
