@@ -189,6 +189,22 @@ fn merge_into(map: &mut serde_json::Map<String, Value>, label: &str, value: Valu
     }
 }
 
+/// Extract text from a tool_result content field.
+/// Content is either a string or an array of content blocks.
+fn extract_tool_result_text(block: &Value) -> String {
+    match block.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(blocks)) => {
+            let texts: Vec<&str> = blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect();
+            texts.join("\n\n")
+        }
+        _ => String::new(),
+    }
+}
+
 /// Map a tool name to its semantic category.
 fn tool_label(name: &str) -> &str {
     match name {
@@ -235,8 +251,12 @@ fn restructure_block(block: &Value, role: &str) -> Option<(String, Value)> {
             Some((label, input))
         }
         "tool_result" => {
-            let content = block.get("content").cloned().unwrap_or(Value::Null);
-            Some(("tool_return".into(), content))
+            let text = extract_tool_result_text(block);
+            if text.is_empty() {
+                None
+            } else {
+                Some(("tool_return".into(), Value::String(text)))
+            }
         }
         _ => None,
     }
@@ -719,6 +739,28 @@ mod tests {
         let returns = result["tool_return"].as_str().unwrap();
         assert!(returns.contains("bash output"));
         assert!(returns.contains("agent findings"));
+    }
+
+    #[test]
+    fn restructure_tool_return_array_content() {
+        // Claude API tool_result content can be an array of content blocks
+        let messages = vec![
+            json!({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": [
+                    {"type": "text", "text": "Found 1 file\ncompile_schema.py"}
+                ]},
+                {"type": "tool_result", "tool_use_id": "t2", "content": [
+                    {"type": "text", "text": "line 1 match"},
+                    {"type": "text", "text": "line 2 match"}
+                ]}
+            ]}),
+        ];
+
+        let result = restructure_messages(&messages);
+        let returns = result["tool_return"].as_str().unwrap();
+        assert!(returns.contains("compile_schema.py"));
+        assert!(returns.contains("line 1 match"));
+        assert!(returns.contains("line 2 match"));
     }
 
     #[test]
