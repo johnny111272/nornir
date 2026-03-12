@@ -179,15 +179,18 @@ pub fn check_nesting_depth(source: &ParsedSource, config: &CheckConfig) -> Vec<V
 // no_underscore_prefix
 // -------------------------------------------------------------------------
 
-fn is_underscore_violation_rs(name: &str) -> bool {
-    if !name.starts_with('_') {
-        return false;
+fn has_underscore_prefix(name: &str) -> bool {
+    name.starts_with('_') && name != "_"
+}
+
+/// Check if a name appears as an identifier in a subtree.
+fn name_used_in_subtree(root: tree_sitter::Node, name: &str, source: &[u8]) -> bool {
+    for ident in find_nodes_by_type(root, "identifier") {
+        if node_text(ident, source) == name {
+            return true;
+        }
     }
-    // Single underscore is valid (unused binding)
-    if name == "_" {
-        return false;
-    }
-    true
+    false
 }
 
 pub fn check_no_underscore_prefix(
@@ -203,39 +206,68 @@ pub fn check_no_underscore_prefix(
             continue;
         }
 
-        if is_underscore_violation_rs(name) {
+        // Function names: always flagged (functions aren't "unused" in the compiler sense)
+        if has_underscore_prefix(name) {
             violations.push(violation(
                 node_line(func_node),
                 format!("function '{name}' uses underscore prefix"),
             ));
         }
 
-        // Check parameters
+        // Parameters: only flag if the name is actually used in the body
+        // (underscore is a lie — silencing the compiler instead of removing the param)
+        let body = func_node.child_by_field_name("body");
         for (line, pname) in rust_param_names(func_node, source.source_bytes) {
-            if is_underscore_violation_rs(pname) {
-                violations.push(violation(
-                    line,
-                    format!("parameter '{pname}' uses underscore prefix in {name}()"),
-                ));
+            if has_underscore_prefix(pname) {
+                if let Some(body_node) = body {
+                    if name_used_in_subtree(body_node, pname, source.source_bytes) {
+                        violations.push(violation(
+                            line,
+                            format!("parameter '{pname}' uses underscore prefix in {name}()"),
+                        ));
+                    }
+                }
             }
         }
     }
 
-    // Check let bindings at all levels
-    for node in find_nodes_by_type(source.tree.root_node(), "let_declaration") {
-        if in_test_context(node, source.source_bytes) {
+    // Let bindings: only flag if used after the binding (count > 1 in enclosing function)
+    for let_node in find_nodes_by_type(source.tree.root_node(), "let_declaration") {
+        if in_test_context(let_node, source.source_bytes) {
             continue;
         }
-        if let Some(pattern) = node.child_by_field_name("pattern") {
-            if pattern.kind() == "identifier" {
-                let var_name = node_text(pattern, source.source_bytes);
-                if is_underscore_violation_rs(var_name) {
+        let pattern = match let_node.child_by_field_name("pattern") {
+            Some(p) if p.kind() == "identifier" => p,
+            _ => continue,
+        };
+        let var_name = node_text(pattern, source.source_bytes);
+        if !has_underscore_prefix(var_name) {
+            continue;
+        }
+
+        // Find enclosing function body and count identifier matches
+        let mut ancestor = let_node.parent();
+        while let Some(node) = ancestor {
+            if node.kind() == "block" {
+                let mut count = 0;
+                for ident in find_nodes_by_type(node, "identifier") {
+                    if node_text(ident, source.source_bytes) == var_name {
+                        count += 1;
+                        if count > 1 {
+                            break;
+                        }
+                    }
+                }
+                if count > 1 {
+                    // Used beyond the binding — underscore is a lie
                     violations.push(violation(
-                        node_line(node),
+                        node_line(let_node),
                         format!("variable '{var_name}' uses underscore prefix"),
                     ));
                 }
+                break;
             }
+            ancestor = node.parent();
         }
     }
 
@@ -525,7 +557,7 @@ fn foo() {
     // -- no_underscore_prefix --
 
     #[test]
-    fn underscore_function_caught() {
+    fn underscore_function_always_caught() {
         let parsed = parse("fn _helper() {}");
         let violations = check_no_underscore_prefix(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
@@ -540,8 +572,36 @@ fn foo() {
     }
 
     #[test]
-    fn underscore_variable_caught() {
+    fn genuinely_unused_param_ok() {
+        // _config is never used in the body — underscore is correct
+        let parsed = parse("fn foo(_unused: i32) { let x = 1; }");
+        let violations = check_no_underscore_prefix(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn used_underscore_param_caught() {
+        // _used appears in the body — underscore is a lie
+        let code = "fn foo(_used: i32) { let x = _used + 1; }";
+        let parsed = parse(code);
+        let violations = check_no_underscore_prefix(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("_used"));
+    }
+
+    #[test]
+    fn genuinely_unused_let_ok() {
+        // _cache is bound but never read — underscore is correct
         let parsed = parse("fn foo() { let _cache = vec![]; }");
+        let violations = check_no_underscore_prefix(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn used_underscore_let_caught() {
+        // _cache is bound AND used — underscore is a lie
+        let code = "fn foo() { let _cache = vec![1]; let x = _cache.len(); }";
+        let parsed = parse(code);
         let violations = check_no_underscore_prefix(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("_cache"));

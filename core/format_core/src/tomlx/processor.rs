@@ -83,11 +83,10 @@ fn process_sections(
             continue;
         }
 
-        let section_data = get_section_mut(&mut data, section_path);
-        if section_data.is_none() {
-            continue;
-        }
-        let section_data = section_data.unwrap();
+        let section_data = match get_section_mut(&mut data, section_path) {
+            Some(data) => data,
+            None => continue,
+        };
 
         match &section.annotation {
             None => {}

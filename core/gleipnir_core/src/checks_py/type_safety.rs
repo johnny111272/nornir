@@ -162,7 +162,10 @@ pub fn check_no_any_type_aliases(source: &ParsedSource, _config: &CheckConfig) -
         }
 
         let name_node = type_children[0];
-        let value_node = *type_children.last().unwrap();
+        let value_node = match type_children.last() {
+            Some(node) => *node,
+            None => continue,
+        };
 
         let alias_name = name_node
             .named_child(0)

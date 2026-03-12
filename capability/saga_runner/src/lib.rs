@@ -203,6 +203,23 @@ pub fn run_rust_tools(file_path: &Path) -> Vec<Issue> {
     run_gleipnir_rust(file_path)
 }
 
+/// Run gleipnir Svelte/TypeScript checks on a file.
+pub fn run_gleipnir_svelte(file_path: &Path) -> Vec<Issue> {
+    let source = match std::fs::read(file_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Vec::new(),
+    };
+    gleipnir_core::run_checks_svelte(&file_path.to_string_lossy(), &source)
+        .into_iter()
+        .map(violation_to_issue)
+        .collect()
+}
+
+/// Run all Svelte quality tools on a file.
+pub fn run_svelte_tools(file_path: &Path) -> Vec<Issue> {
+    run_gleipnir_svelte(file_path)
+}
+
 // =============================================================================
 // Report generation
 // =============================================================================
@@ -216,6 +233,7 @@ pub fn generate_report(file_path: &Path, project_root: Option<&Path>) -> SanityR
     let start = Instant::now();
     let issues = match file_path.extension().and_then(|e| e.to_str()) {
         Some("rs") => run_rust_tools(&file_path),
+        Some("svelte") => run_svelte_tools(&file_path),
         _ => run_python_tools(&file_path),
     };
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -274,6 +292,7 @@ pub fn generate_report_from_content(
     let start = Instant::now();
     let issues = match file_path.extension().and_then(|e| e.to_str()) {
         Some("rs") => run_rust_tools(&tmp_file),
+        Some("svelte") => run_svelte_tools(&tmp_file),
         _ => run_python_tools(&tmp_file),
     };
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -397,7 +416,7 @@ pub fn find_files(
 // =============================================================================
 
 /// Directories always skipped during recursive file discovery.
-const SKIP_DIRS: &[&str] = &["__pycache__", "node_modules", ".venv", "venv"];
+const SKIP_DIRS: &[&str] = &["__pycache__", "node_modules", ".venv", "venv", "target"];
 
 fn hash_content(content: &str) -> String {
     use sha2::{Digest, Sha256};

@@ -151,7 +151,7 @@ fn validate_section_fields(
                                 location: issues.loc(ann.line),
                                 section_name: section_path.to_string(),
                                 base_name: base_name.clone(),
-                                original_line: path_registry.declared_at.unwrap(),
+                                original_line: path_registry.declared_at.unwrap_or(0),
                                 original_value: original_value.clone(),
                             });
                         }

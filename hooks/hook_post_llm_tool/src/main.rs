@@ -1,6 +1,6 @@
 //! PostToolUse hook: quality assessment injection for file writes.
 //!
-//! When a tool writes a Python or Rust file, runs the quality pipeline:
+//! When a tool writes a Python, Rust, or Svelte file, runs the quality pipeline:
 //!   saga <file> --sidecar | syn --stdin
 //!
 //! If syn reports violations, injects the TOON assessment as a systemMessage.
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 fn assess(input: &PostHookInput) -> Option<String> {
     let file_path = extract_file_path(input)?;
     match classify_file(&file_path) {
-        FileKind::Python | FileKind::Rust => assess_source(&file_path),
+        FileKind::Python | FileKind::Rust | FileKind::Svelte => assess_source(&file_path),
         FileKind::Other => None,
     }
 }
@@ -33,6 +33,7 @@ fn assess(input: &PostHookInput) -> Option<String> {
 enum FileKind {
     Python,
     Rust,
+    Svelte,
     Other,
 }
 
@@ -40,6 +41,7 @@ fn classify_file(path: &Path) -> FileKind {
     match path.extension().and_then(|e| e.to_str()) {
         Some("py") => FileKind::Python,
         Some("rs") => FileKind::Rust,
+        Some("svelte") => FileKind::Svelte,
         _ => FileKind::Other,
     }
 }
@@ -57,7 +59,7 @@ fn extract_file_path(input: &PostHookInput) -> Option<PathBuf> {
     }
 }
 
-// ── Source assessment (Python + Rust) ────────────────────────────
+// ── Source assessment (Python + Rust + Svelte) ───────────────────
 
 fn assess_source(file_path: &Path) -> Option<String> {
     let file_str = file_path.to_str()?;
@@ -123,6 +125,14 @@ mod tests {
         match classify_file(Path::new("/tmp/test.rs")) {
             FileKind::Rust => {} // correct
             _ => panic!(".rs must classify as Rust"),
+        }
+    }
+
+    #[test]
+    fn classify_svelte_file() {
+        match classify_file(Path::new("/tmp/App.svelte")) {
+            FileKind::Svelte => {} // correct
+            _ => panic!(".svelte must classify as Svelte"),
         }
     }
 

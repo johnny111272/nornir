@@ -3,11 +3,12 @@
 //! Runs quality tools on source files (Python, Rust), outputs .qa JSON report.
 //!
 //! Usage:
-//!   saga <file>                              — run tools, JSON to stdout
-//!   saga <file> --sidecar                    — run tools, write .qa sidecar
-//!   saga <dir> [--kind py|rs|all]            — remove orphaned .qa, generate missing
-//!   saga <dir> --force [--kind py|rs|all]    — remove orphaned .qa, regenerate all
-//!   echo "content" | saga --stdin <file>     — run tools on stdin content
+//!   saga <file>                                    — run tools, JSON to stdout
+//!   saga <file> --sidecar                          — run tools, write .qa sidecar
+//!   saga <dir> [--kind py|rs|svelte|all]           — remove orphaned .qa, generate missing
+//!   saga <dir> --force [--kind py|rs|svelte|all]   — remove orphaned .qa, regenerate all
+//!   saga <dir> --strip                             — remove ALL .qa sidecars recursively
+//!   echo "content" | saga --stdin <file>           — run tools on stdin content
 //!
 //! File vs directory is auto-detected from the path.
 
@@ -23,12 +24,14 @@ use std::process;
 enum Kind {
     Py,
     Rs,
+    Svelte,
     All,
 }
 
 struct Args {
     path: PathBuf,
     force: bool,
+    strip: bool,
     write_sidecar: bool,
     read_stdin: bool,
     project_dir: Option<PathBuf>,
@@ -39,6 +42,7 @@ fn parse_args() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
 
     let mut force = false;
+    let mut strip = false;
     let mut write_sidecar = false;
     let mut read_stdin = false;
     let mut project_dir = None;
@@ -49,6 +53,7 @@ fn parse_args() -> Result<Args, String> {
     while idx < raw.len() {
         match raw[idx].as_str() {
             "--force" => force = true,
+            "--strip" => strip = true,
             "--sidecar" => write_sidecar = true,
             "--stdin" => read_stdin = true,
             "--project-dir" => {
@@ -60,9 +65,10 @@ fn parse_args() -> Result<Args, String> {
                 kind = match raw.get(idx).map(|s| s.as_str()) {
                     Some("py") => Kind::Py,
                     Some("rs") => Kind::Rs,
+                    Some("svelte") => Kind::Svelte,
                     Some("all") => Kind::All,
-                    Some(other) => return Err(format!("[saga] unknown kind: {} (use py, rs, or all)", other)),
-                    None => return Err("[saga] --kind requires a value (py, rs, or all)".into()),
+                    Some(other) => return Err(format!("[saga] unknown kind: {} (use py, rs, svelte, or all)", other)),
+                    None => return Err(format!("[saga] --kind requires a value (py, rs, svelte, or all)")),
                 };
             }
             arg if arg.starts_with('-') => {
@@ -78,7 +84,7 @@ fn parse_args() -> Result<Args, String> {
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
 
-    Ok(Args { path, force, write_sidecar, read_stdin, project_dir, kind })
+    Ok(Args { path, force, strip, write_sidecar, read_stdin, project_dir, kind })
 }
 
 fn print_usage() {
@@ -87,7 +93,7 @@ fn print_usage() {
 
 USAGE:
     saga <file> [--sidecar] [--project-dir <dir>]
-    saga <dir> [--kind py|rs|all] [--force]
+    saga <dir> [--kind py|rs|svelte|all] [--force]
     echo \"content\" | saga --stdin <file>
 
 FILE:
@@ -97,12 +103,14 @@ FILE:
 DIRECTORY:
     saga <dir>                  Remove orphaned .qa, generate missing sidecars
     saga <dir> --force          Remove orphaned .qa, regenerate all sidecars
+    saga <dir> --strip          Remove ALL .qa sidecars recursively
 
 OPTIONS:
-    --kind <py|rs|all>     File types to process in directory mode (default: all)
+    --kind <py|rs|svelte|all>  File types to process in directory mode (default: all)
     --project-dir <dir>    Project root (for relative paths)
     --stdin                Read file content from stdin
-    --force                Regenerate even if .qa exists (directory only)"
+    --force                Regenerate even if .qa exists (directory only)
+    --strip                Remove all .qa sidecars (directory only)"
     );
 }
 
@@ -110,11 +118,12 @@ OPTIONS:
 // Directory mode
 // =============================================================================
 
-fn find_source_files(dir: &Path, kind: Kind) -> Vec<PathBuf> {
-    saga_runner::find_files(dir, &[], &|name| match kind {
+fn find_source_files(search_dir: &Path, kind: Kind) -> Vec<PathBuf> {
+    saga_runner::find_files(search_dir, &[], &|name| match kind {
         Kind::Py => name.ends_with(".py"),
         Kind::Rs => name.ends_with(".rs"),
-        Kind::All => name.ends_with(".py") || name.ends_with(".rs"),
+        Kind::Svelte => name.ends_with(".svelte"),
+        Kind::All => name.ends_with(".py") || name.ends_with(".rs") || name.ends_with(".svelte"),
     })
 }
 
@@ -122,12 +131,30 @@ fn kind_label(kind: Kind) -> &'static str {
     match kind {
         Kind::Py => ".py",
         Kind::Rs => ".rs",
-        Kind::All => ".py/.rs",
+        Kind::Svelte => ".svelte",
+        Kind::All => ".py/.rs/.svelte",
     }
 }
 
-fn run_directory(dir: &Path, force: bool, kind: Kind) -> Result<(), String> {
-    let project_root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+fn strip_sidecars(search_dir: &Path) -> Result<(), String> {
+    let resolved = search_dir.canonicalize().unwrap_or_else(|_| search_dir.to_path_buf());
+    let qa_files = saga_runner::find_files(&resolved, &[], &|name| {
+        name.ends_with(".qa") && name.starts_with('.')
+    });
+
+    let mut removed = 0usize;
+    for qa_file in &qa_files {
+        if std::fs::remove_file(qa_file).is_ok() {
+            removed += 1;
+        }
+    }
+
+    eprintln!("[saga] stripped {} .qa sidecars from {}", removed, search_dir.display());
+    Ok(())
+}
+
+fn run_directory(search_dir: &Path, force: bool, kind: Kind) -> Result<(), String> {
+    let project_root = search_dir.canonicalize().unwrap_or_else(|_| search_dir.to_path_buf());
 
     // Remove orphaned .qa sidecars before generation
     let orphans = saga_runner::remove_orphaned_sidecars(&project_root);
@@ -138,7 +165,7 @@ fn run_directory(dir: &Path, force: bool, kind: Kind) -> Result<(), String> {
     let files = find_source_files(&project_root, kind);
 
     if files.is_empty() {
-        eprintln!("[saga] no {} files found in {}", kind_label(kind), dir.display());
+        eprintln!("[saga] no {} files found in {}", kind_label(kind), search_dir.display());
         return Ok(());
     }
 
@@ -223,7 +250,13 @@ fn main() {
         }
     };
 
-    let result = if args.path.is_dir() {
+    let result = if args.strip {
+        if !args.path.is_dir() {
+            eprintln!("[saga] --strip requires a directory");
+            process::exit(2);
+        }
+        strip_sidecars(&args.path)
+    } else if args.path.is_dir() {
         run_directory(&args.path, args.force, args.kind)
     } else {
         run_file(&args)

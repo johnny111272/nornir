@@ -354,3 +354,69 @@ detail = "Parameter name too short to be meaningful."
 signal = "Abbreviated parameter names force callers to look up what each argument means."
 direction = "Use full descriptive names for parameters."
 canary = "LLM abbreviates parameter names for brevity rather than clarity."
+
+# =========================================================================
+# TYPESCRIPT/SVELTE: PROHIBITED
+# =========================================================================
+
+[no_console_log]
+detail = "console.log() and friends are debug output. Remove them."
+signal = "Console calls are debug artifacts that should not ship in Svelte components."
+direction = "Remove the console call. If you need runtime logging, use a structured logging utility."
+canary = "LLM adds console.log for debugging and leaves it in component code."
+
+# =========================================================================
+# TYPESCRIPT/SVELTE: SUPPRESSION
+# =========================================================================
+
+[no_ts_suppression]
+detail = "Suppression comments bypass TypeScript/ESLint checking. Fix the underlying issue."
+signal = "Each @ts-ignore or eslint-disable is a known defect being intentionally hidden."
+direction = "Fix the type error or lint violation instead of suppressing it."
+canary = "LLM adds @ts-ignore or eslint-disable to make warnings disappear instead of fixing the code."
+
+# =========================================================================
+# TYPESCRIPT/SVELTE: STYLE
+# =========================================================================
+
+[function_length_ts]
+detail = "Function too long. Break it down."
+signal = "Long functions accumulate responsibilities and become difficult to reason about."
+direction = "Extract the functional primitive — the one thing this function does — and separate the rest."
+canary = "LLM generates long functions because training data rewards completeness over decomposition."
+
+[param_count_ts]
+detail = "Too many parameters. Simplify the interface."
+signal = "Functions with many parameters have complex call sites and are hard to test."
+direction = "Group related parameters into an object or split the function."
+canary = "LLM passes every piece of state as a separate parameter instead of designing data structures."
+
+[nesting_depth_ts]
+detail = "Excessive nesting. Flatten the logic."
+signal = "Deep nesting makes control flow hard to follow and indicates tangled logic."
+direction = "Use early returns, extract helper functions, or restructure the conditions."
+canary = "LLM nests conditionals and loops rather than using guard clauses and early returns."
+
+[no_underscore_prefix_ts]
+detail = "Underscore-prefixed names are a code smell in TypeScript."
+signal = "Underscore prefix is a convention for 'private' that TypeScript access modifiers handle properly."
+direction = "Remove the underscore prefix. Use TypeScript private/readonly modifiers for encapsulation."
+canary = "LLM adds underscore prefixes from outdated JavaScript conventions."
+
+[no_single_letter_names_ts]
+detail = "Single-letter variable names lack meaning."
+signal = "Single-letter names force readers to hold context in their head rather than reading it from code."
+direction = "Use descriptive names that communicate the variable's purpose."
+canary = "LLM uses short variable names from mathematical notation or terse coding style."
+
+[no_numbered_suffixes_ts]
+detail = "Numbered suffixes indicate copy-paste rather than design."
+signal = "Names like result1, result2 suggest the function is doing too many things."
+direction = "Give each variable a name that describes what makes it distinct."
+canary = "LLM creates numbered variants when it needs multiple similar variables."
+
+[short_param_names_ts]
+detail = "Parameter name too short to be meaningful."
+signal = "Abbreviated parameter names force callers to look up what each argument means."
+direction = "Use full descriptive names for parameters."
+canary = "LLM abbreviates parameter names for brevity rather than clarity."

@@ -246,7 +246,7 @@ impl TomlxOutput {
             if let serde_json::Value::Object(ref mut map) = output {
                 map.insert(
                     "section_types".to_string(),
-                    serde_json::to_value(&self.section_types).unwrap(),
+                    serde_json::to_value(&self.section_types).unwrap_or_default(),
                 );
             }
         }
@@ -255,7 +255,7 @@ impl TomlxOutput {
             if let serde_json::Value::Object(ref mut map) = output {
                 map.insert(
                     "section_units".to_string(),
-                    serde_json::to_value(&self.section_units).unwrap(),
+                    serde_json::to_value(&self.section_units).unwrap_or_default(),
                 );
             }
         }
@@ -275,12 +275,12 @@ impl TomlxOutput {
                             "expand".to_string(),
                             serde_json::Value::String(v.expand.as_str().to_string()),
                         );
-                        (k.clone(), serde_json::to_value(section_map).unwrap())
+                        (k.clone(), serde_json::to_value(section_map).unwrap_or_default())
                     })
                     .collect();
                 map.insert(
                     "section_paths".to_string(),
-                    serde_json::to_value(paths_value).unwrap(),
+                    serde_json::to_value(paths_value).unwrap_or_default(),
                 );
             }
         }

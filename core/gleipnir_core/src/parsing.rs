@@ -61,6 +61,94 @@ pub fn build_parsed_source_rust<'a>(file_path: &'a str, source: &'a [u8]) -> Par
     }
 }
 
+/// Parse TypeScript source bytes into a tree-sitter Tree.
+pub fn parse_typescript(source_bytes: &[u8]) -> Tree {
+    let mut parser = Parser::new();
+    let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT;
+    parser
+        .set_language(&language.into())
+        .expect("failed to set TypeScript language");
+    parser
+        .parse(source_bytes, None)
+        .expect("tree-sitter parse failed")
+}
+
+/// Build a ParsedSource from file path and TypeScript source content.
+pub fn build_parsed_source_typescript<'a>(
+    file_path: &'a str,
+    source: &'a [u8],
+) -> ParsedSource<'a> {
+    let tree = parse_typescript(source);
+    let lines = std::str::from_utf8(source)
+        .unwrap_or("")
+        .lines()
+        .collect();
+    ParsedSource {
+        file_path,
+        source_bytes: source,
+        lines,
+        tree,
+    }
+}
+
+/// Extracted `<script>` block from a Svelte file.
+pub struct SvelteScript {
+    /// The TypeScript content inside the script tags.
+    pub content: String,
+    /// 0-indexed line number of the line AFTER `<script...>` in the original file.
+    /// Used to offset violation line numbers back to the .svelte file.
+    pub line_offset: usize,
+}
+
+/// Extract the primary `<script>` block content from a Svelte file.
+///
+/// Finds the first `<script>` or `<script lang="ts">` tag (excluding
+/// `<script context="module">` which is a separate concern) and returns
+/// the content between the opening and closing tags.
+///
+/// Returns None if no script block is found.
+pub fn extract_svelte_script(source: &str) -> Option<SvelteScript> {
+    let mut script_start = None;
+    let mut in_tag = false;
+
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+
+        if !in_tag {
+            // Look for <script> or <script lang="ts"> (not context="module")
+            if trimmed.starts_with("<script")
+                && !trimmed.contains("context=")
+            {
+                if trimmed.contains('>') {
+                    // Single-line opening tag: <script lang="ts">
+                    script_start = Some(line_num + 1);
+                } else {
+                    // Multi-line opening tag (rare)
+                    in_tag = true;
+                }
+            }
+        } else if trimmed.contains('>') {
+            script_start = Some(line_num + 1);
+            in_tag = false;
+        }
+
+        if script_start.is_some() && trimmed == "</script>" {
+            let start = script_start?;
+            let content: String = source
+                .lines()
+                .skip(start)
+                .take(line_num - start)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Some(SvelteScript {
+                content,
+                line_offset: start,
+            });
+        }
+    }
+    None
+}
+
 /// Depth-first walk of all nodes in a subtree (including the root).
 pub fn walk_tree<'a>(root: Node<'a>) -> Vec<Node<'a>> {
     let mut nodes = Vec::new();

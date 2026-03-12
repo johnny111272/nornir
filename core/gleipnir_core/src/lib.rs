@@ -1,10 +1,11 @@
-//! Gleipnir: guardrail checks for Python source files.
+//! Gleipnir: guardrail checks for Python, Rust, and TypeScript/Svelte source files.
 //!
 //! Pure computation library. No I/O — caller provides source bytes,
 //! library returns violations. Used by saga_core as a direct dependency.
 
 pub mod checks_py;
 pub mod checks_rs;
+pub mod checks_ts;
 pub mod classify;
 pub mod config;
 pub mod matrix;
@@ -115,6 +116,66 @@ pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
         let mut check_violations = check_fn(&parsed, &config);
         let msgs = messages(name);
         for viol in &mut check_violations {
+            if viol.check_name.is_empty() {
+                viol.check_name = name.to_string();
+            }
+            viol.severity = severity;
+            if viol.detail.is_empty() {
+                viol.detail = msgs.detail.clone();
+            }
+            if viol.signal.is_empty() {
+                viol.signal = msgs.signal.clone();
+            }
+            if viol.direction.is_empty() {
+                viol.direction = msgs.direction.clone();
+            }
+            if viol.canary.is_empty() {
+                viol.canary = msgs.canary.clone();
+            }
+        }
+        violations.extend(check_violations);
+    }
+    violations
+}
+
+/// Run all applicable gleipnir checks on a Svelte file.
+///
+/// Extracts the `<script>` block, parses with tree-sitter-typescript,
+/// runs TypeScript checks. Line numbers are offset to match the .svelte file.
+pub fn run_checks_svelte(file_path: &str, source: &[u8]) -> Vec<Violation> {
+    let source_str = std::str::from_utf8(source).unwrap_or("");
+    let script = match parsing::extract_svelte_script(source_str) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let script_bytes = script.content.as_bytes();
+    let parsed = parsing::build_parsed_source_typescript(file_path, script_bytes);
+    let config = CheckConfig::for_kind(structures::FileKind::Outside, None);
+
+    type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
+    let ts_checks: &[(&str, Severity, CheckFn)] = &[
+        // PROHIBITED
+        ("no_console_log", Severity::Error, checks_ts::prohibited::check_no_console_log),
+        // SUPPRESSION
+        ("no_ts_suppression", Severity::Error, checks_ts::suppression::check_no_ts_suppression),
+        // STYLE
+        ("function_length_ts", Severity::Warning, checks_ts::style::check_function_length),
+        ("param_count_ts", Severity::Warning, checks_ts::style::check_param_count),
+        ("nesting_depth_ts", Severity::Warning, checks_ts::style::check_nesting_depth),
+        ("no_underscore_prefix_ts", Severity::Warning, checks_ts::style::check_no_underscore_prefix),
+        ("no_single_letter_names_ts", Severity::Warning, checks_ts::style::check_no_single_letter_names),
+        ("no_numbered_suffixes_ts", Severity::Warning, checks_ts::style::check_no_numbered_suffixes),
+        ("short_param_names_ts", Severity::Warning, checks_ts::style::check_short_param_names),
+    ];
+
+    let mut violations = Vec::new();
+    for &(name, severity, check_fn) in ts_checks {
+        let mut check_violations = check_fn(&parsed, &config);
+        let msgs = messages(name);
+        for viol in &mut check_violations {
+            // Offset line numbers back to .svelte file coordinates
+            viol.line += script.line_offset;
             if viol.check_name.is_empty() {
                 viol.check_name = name.to_string();
             }

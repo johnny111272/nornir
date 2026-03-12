@@ -118,6 +118,7 @@ enum Target {
 enum Kind {
     Py,
     Rs,
+    Svelte,
     All,
 }
 
@@ -132,6 +133,7 @@ struct Args {
     tool_filter: Option<String>,
     level_filter: Option<String>,
     custom_filter: Option<String>,
+    narrow_filter: Option<String>,
     path: Option<PathBuf>,
 }
 
@@ -152,6 +154,7 @@ fn parse_args() -> Result<Args, String> {
     let mut tool_filter = None;
     let mut level_filter = None;
     let mut custom_filter = None;
+    let mut narrow_filter = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut idx = 0;
@@ -163,7 +166,7 @@ fn parse_args() -> Result<Args, String> {
                     Some("report") => mode = Mode::Report,
                     Some("gate") => mode = Mode::Gate,
                     _ => {
-                        return Err("[syn] --mode requires 'report' or 'gate'".to_string());
+                        return Err(format!("[syn] --mode requires 'report' or 'gate'"));
                     }
                 }
             }
@@ -174,7 +177,7 @@ fn parse_args() -> Result<Args, String> {
                     Some("json") => OutputMode::Json,
                     Some("toon") => OutputMode::Toon,
                     _ => {
-                        return Err("[syn] --output requires 'colored', 'json', or 'toon'".to_string());
+                        return Err(format!("[syn] --output requires 'colored', 'json', or 'toon'"));
                     }
                 });
             }
@@ -191,7 +194,7 @@ fn parse_args() -> Result<Args, String> {
                     Some("tests") => Target::Tests,
                     Some("all") => Target::All,
                     _ => {
-                        return Err("[syn] --target requires 'src', 'tests', or 'all'".to_string());
+                        return Err(format!("[syn] --target requires 'src', 'tests', or 'all'"));
                     }
                 };
             }
@@ -200,9 +203,10 @@ fn parse_args() -> Result<Args, String> {
                 kind = match raw.get(idx).map(|s| s.as_str()) {
                     Some("py") => Kind::Py,
                     Some("rs") => Kind::Rs,
+                    Some("svelte") => Kind::Svelte,
                     Some("all") => Kind::All,
-                    Some(other) => return Err(format!("[syn] unknown kind: {} (use py, rs, or all)", other)),
-                    None => return Err("[syn] --kind requires a value (py, rs, or all)".into()),
+                    Some(other) => return Err(format!("[syn] unknown kind: {} (use py, rs, svelte, or all)", other)),
+                    None => return Err(format!("[syn] --kind requires a value (py, rs, svelte, or all)")),
                 };
             }
             "--tool" => {
@@ -217,6 +221,10 @@ fn parse_args() -> Result<Args, String> {
                 idx += 1;
                 custom_filter = raw.get(idx).cloned();
             }
+            "--narrow" => {
+                idx += 1;
+                narrow_filter = raw.get(idx).cloned();
+            }
             arg if arg.starts_with('-') => {
                 return Err(format!("[syn] unknown flag: {}", arg));
             }
@@ -226,8 +234,8 @@ fn parse_args() -> Result<Args, String> {
     }
 
     if mode == Mode::Gate {
-        if tool_filter.is_some() || level_filter.is_some() || custom_filter.is_some() {
-            return Err("[syn] gate mode rejects --tool/--level/--filter (locked to config)".to_string());
+        if tool_filter.is_some() || level_filter.is_some() || custom_filter.is_some() || narrow_filter.is_some() {
+            return Err(format!("[syn] gate mode rejects --tool/--level/--filter/--narrow (locked to config)"));
         }
     }
 
@@ -237,7 +245,7 @@ fn parse_args() -> Result<Args, String> {
 
     let path = positional.first().map(PathBuf::from);
 
-    Ok(Args { mode, output, silent, stdin, project_dir, target, kind, tool_filter, level_filter, custom_filter, path })
+    Ok(Args { mode, output, silent, stdin, project_dir, target, kind, tool_filter, level_filter, custom_filter, narrow_filter, path })
 }
 
 fn print_usage() {
@@ -257,7 +265,7 @@ INPUT:
     --stdin          Read .qa JSON from stdin
     --project-dir    Project root
     --target         [src|tests|all] Subtree scope (default: src)
-    --kind           [py|rs|all] File types to include (default: all)
+    --kind           [py|rs|svelte|all] File types to include (default: all)
 
 OUTPUT:
     --output         [colored|json|toon] (default: colored on tty, toon on pipe)
@@ -266,7 +274,8 @@ OUTPUT:
 FILTERS (report mode only):
     --tool           [gleipnir|ruff|basedpyright|all]
     --level          [info|warning|error|blocked] and above
-    --filter         '<jq expression>'"
+    --filter         '<jq expression>'
+    --narrow         <check_code> Show only a specific check (e.g. no_unwrap)"
     );
 }
 
@@ -279,6 +288,7 @@ fn matches_kind(qa_name: &str, kind: Kind) -> bool {
         Kind::All => true,
         Kind::Py => qa_name.ends_with(".py.qa"),
         Kind::Rs => qa_name.ends_with(".rs.qa"),
+        Kind::Svelte => qa_name.ends_with(".svelte.qa"),
     }
 }
 
@@ -318,7 +328,7 @@ fn find_qa_files(path: &Path, target: Target, kind: Kind) -> Vec<PathBuf> {
 fn load_reports_from_stdin() -> Result<Vec<SanityReport>, String> {
     let mut buf = String::new();
     io::stdin().read_to_string(&mut buf)
-        .map_err(|_| "[syn] failed to read stdin".to_string())?;
+        .map_err(|_| format!("[syn] failed to read stdin"))?;
 
     if let Ok(report) = serde_json::from_str::<SanityReport>(&buf) {
         return Ok(vec![report]);
@@ -327,7 +337,7 @@ fn load_reports_from_stdin() -> Result<Vec<SanityReport>, String> {
         return Ok(reports);
     }
 
-    Err("[syn] stdin is not valid .qa JSON".to_string())
+    Err(format!("[syn] stdin is not valid .qa JSON"))
 }
 
 // =============================================================================
@@ -340,8 +350,42 @@ struct FilteredOutput {
     decision: &'static str,
 }
 
+fn is_visible(
+    issue: &saga_runner::Issue,
+    args: &Args,
+    config: &SynConfig,
+    has_cli_overrides: bool,
+    custom_compiled: &Option<CompiledFilter>,
+) -> bool {
+    if has_cli_overrides {
+        if let Some(ref tool) = args.tool_filter {
+            if tool != "all" && issue.tool != *tool {
+                return false;
+            }
+        }
+        if let Some(ref level) = args.level_filter {
+            if severity_rank(&issue.severity) < severity_rank(level) {
+                return false;
+            }
+        }
+        if let Some(ref f) = custom_compiled {
+            if !matches_filter(issue, f) {
+                return false;
+            }
+        }
+        if let Some(ref code) = args.narrow_filter {
+            if issue.code != *code {
+                return false;
+            }
+        }
+        true
+    } else {
+        matches_filter(issue, &config.warn_filter)
+    }
+}
+
 fn apply_filters(
-    reports: &[SanityReport],
+    reports: Vec<SanityReport>,
     config: &SynConfig,
     args: &Args,
 ) -> FilteredOutput {
@@ -349,48 +393,24 @@ fn apply_filters(
     let mut deny_count: usize = 0;
 
     let has_cli_overrides = args.mode == Mode::Report
-        && (args.tool_filter.is_some() || args.level_filter.is_some() || args.custom_filter.is_some());
+        && (args.tool_filter.is_some() || args.level_filter.is_some() || args.custom_filter.is_some() || args.narrow_filter.is_some());
 
     let custom_compiled = args.custom_filter.as_ref().and_then(|expr| compile_filter(expr).ok());
 
-    for report in reports {
-        let mut visible_issues = Vec::new();
-        for issue in &report.issues {
-            if has_cli_overrides {
-                if let Some(ref tool) = args.tool_filter {
-                    if tool != "all" && issue.tool != *tool {
-                        continue;
-                    }
-                }
-                if let Some(ref level) = args.level_filter {
-                    if severity_rank(&issue.severity) < severity_rank(level) {
-                        continue;
-                    }
-                }
-                if let Some(ref f) = custom_compiled {
-                    if !matches_filter(issue, f) {
-                        continue;
-                    }
-                }
-            } else {
-                if !matches_filter(issue, &config.warn_filter) {
-                    continue;
-                }
-            }
-            visible_issues.push(issue.clone());
+    for mut report in reports {
+        let visible_issues: Vec<_> = report.issues.into_iter().filter(|issue| {
+            is_visible(issue, args, config, has_cli_overrides, &custom_compiled)
+        }).collect();
 
+        for issue in &visible_issues {
             if matches_filter(issue, &config.deny_filter) {
                 deny_count += 1;
             }
         }
 
         if !visible_issues.is_empty() {
-            visible_reports.push(SanityReport {
-                file: report.file.clone(),
-                relative_path: report.relative_path.clone(),
-                issues: visible_issues,
-                ..Default::default()
-            });
+            report.issues = visible_issues;
+            visible_reports.push(report);
         }
     }
 
@@ -415,9 +435,9 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize, workspace
 
     let datagram = datagram::Datagram {
         timestamp: datagram::now(),
-        source: "syn".to_string(),
+        source: format!("syn"),
         kind: datagram::DatagramKind::Quality,
-        classifier: Some("directory".into()),
+        classifier: Some(format!("directory")),
         priority: match decision {
             "deny" => datagram::Priority::High,
             "warn" => datagram::Priority::Normal,
@@ -439,10 +459,16 @@ fn broadcast(groups: &[CheckGroup], decision: &str, deny_count: usize, workspace
 // =============================================================================
 
 fn run(args: &Args) -> Result<i32, String> {
-    let project_dir = args.project_dir.clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let default_dir;
+    let project_dir = match &args.project_dir {
+        Some(dir) => dir.as_path(),
+        None => {
+            default_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            default_dir.as_path()
+        }
+    };
 
-    let config = load_config(&project_dir)?;
+    let config = load_config(project_dir)?;
 
     let reports = if args.stdin {
         load_reports_from_stdin()?
@@ -461,7 +487,7 @@ fn run(args: &Args) -> Result<i32, String> {
         return Ok(0);
     }
 
-    let result = apply_filters(&reports, &config, args);
+    let result = apply_filters(reports, &config, args);
 
     let output = format_output(&result.warn_groups, args.output);
     if !output.is_empty() {
@@ -477,7 +503,7 @@ fn run(args: &Args) -> Result<i32, String> {
     }
 
     if !args.silent {
-        let workspace = datagram::workspace_from_path(&project_dir);
+        let workspace = datagram::workspace_from_path(project_dir);
         broadcast(&result.warn_groups, result.decision, result.deny_issues, workspace);
     }
 
@@ -576,6 +602,7 @@ mod tests {
             tool_filter: None,
             level_filter: None,
             custom_filter: None,
+            narrow_filter: None,
             path: None,
         }
     }
@@ -592,6 +619,7 @@ mod tests {
             tool_filter: None,
             level_filter: None,
             custom_filter: None,
+            narrow_filter: None,
             path: None,
         }
     }
@@ -797,7 +825,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "warn filter .tool==gleipnir should show only gleipnir issues");
         assert_eq!(result.warn_groups[0].tool, "gleipnir");
@@ -816,7 +844,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert!(result.warn_groups.is_empty(), "no issues match warn filter, groups should be empty");
         assert_eq!(result.decision, "allow");
     }
@@ -836,7 +864,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.deny_issues, 2, "two blocked issues should yield deny_issues=2");
     }
 
@@ -852,7 +880,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.deny_issues, 0, "no blocked issues should yield deny_issues=0");
     }
 
@@ -869,7 +897,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.decision, "deny", "gate mode with blocked issues should deny");
         assert_eq!(result.deny_issues, 1);
     }
@@ -888,7 +916,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.decision, "warn", "gate mode with non-blocked issues should warn");
         assert_eq!(result.deny_issues, 0);
     }
@@ -907,7 +935,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_ne!(result.decision, "deny", "report mode should never return 'deny'");
         assert_eq!(result.decision, "warn", "report mode with deny-matching issues should return 'warn'");
         assert_eq!(result.deny_issues, 2, "deny_issues count should still track matches");
@@ -929,7 +957,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "CLI --tool ruff should show only ruff issues (2), ignoring warn filter");
         for group in &result.warn_groups {
@@ -950,7 +978,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "CLI --tool all should show all issues");
     }
@@ -973,7 +1001,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 2, "level filter 'error' should show error+blocked (severity >= error)");
     }
@@ -992,7 +1020,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "level filter 'blocked' should show only blocked issues");
     }
@@ -1013,7 +1041,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "custom filter .code==E501 should show only E501 issue");
         assert_eq!(result.warn_groups[0].code, "E501");
@@ -1027,7 +1055,7 @@ mod tests {
         let args = make_args_report();
         let reports: Vec<saga_runner::SanityReport> = vec![];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.decision, "allow");
         assert!(result.warn_groups.is_empty());
         assert_eq!(result.deny_issues, 0);
@@ -1039,7 +1067,7 @@ mod tests {
         let args = make_args_gate();
         let reports: Vec<saga_runner::SanityReport> = vec![];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.decision, "allow");
     }
 
@@ -1056,7 +1084,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.decision, "allow", "no gleipnir issues → nothing visible → allow");
     }
 
@@ -1078,7 +1106,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 3, "should see 3 gleipnir issues across 2 reports (ruff excluded)");
         assert_eq!(result.deny_issues, 2, "2 blocked gleipnir issues");
@@ -1100,7 +1128,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.deny_issues, 0, "ruff blocked issue should not count (not visible)");
         assert_eq!(result.decision, "warn", "visible issues but no deny → warn");
     }
@@ -1125,7 +1153,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "gate mode ignores CLI overrides, uses config warn filter");
         assert_eq!(result.warn_groups[0].tool, "gleipnir");
@@ -1147,7 +1175,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 3, "pass-all warn filter should show all issues");
     }
@@ -1166,7 +1194,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.deny_issues, 2, "pass-all deny filter should count all visible issues");
         assert_eq!(result.decision, "deny");
     }
@@ -1185,7 +1213,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         assert_eq!(result.deny_issues, 0, "deny filter matching nothing should yield 0");
         assert_eq!(result.decision, "warn", "visible issues but no deny matches → warn");
     }
@@ -1207,7 +1235,7 @@ mod tests {
             ]),
         ];
 
-        let result = apply_filters(&reports, &config, &args);
+        let result = apply_filters(reports, &config, &args);
         let total = report_render_core::total_issues(&result.warn_groups);
         assert_eq!(total, 1, "only ruff+error should pass both tool and level filters");
     }

@@ -85,6 +85,26 @@ pub(crate) fn has_preceding_attribute(node: tree_sitter::Node, source: &[u8], ta
 // no_unwrap
 // -------------------------------------------------------------------------
 
+/// Check if a node is inside a static or const initializer.
+///
+/// `static FOO: LazyLock<T> = LazyLock::new(|| ...unwrap()...);`
+///
+/// Unwrap/expect in static initializers runs exactly once at first access
+/// (LazyLock) or at compile time (const). These are initialization panics
+/// on constant data, not runtime panics on variable data.
+fn in_static_initializer(node: tree_sitter::Node) -> bool {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        match ancestor.kind() {
+            "static_item" | "const_item" => return true,
+            "function_item" => return false,
+            _ => {}
+        }
+        current = ancestor.parent();
+    }
+    false
+}
+
 /// Safe method names that start with "unwrap" but don't panic.
 const SAFE_UNWRAP_METHODS: &[&str] = &[
     "unwrap_or",
@@ -119,6 +139,9 @@ pub fn check_no_unwrap(source: &ParsedSource, _config: &CheckConfig) -> Vec<Viol
 
         if method_name == "unwrap" || method_name == "expect" {
             if in_test_context(node, source.source_bytes) {
+                continue;
+            }
+            if in_static_initializer(node) {
                 continue;
             }
 
@@ -452,6 +475,76 @@ mod tests {
         );
         let violations = check_no_unwrap(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn unwrap_in_static_lazy_lock_ok() {
+        let parsed = parse(
+            r#"
+            use std::sync::LazyLock;
+            use regex::Regex;
+            static PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+$").unwrap());
+            "#,
+        );
+        let violations = check_no_unwrap(&parsed, &default_config());
+        assert!(violations.is_empty(), "unwrap in LazyLock static should be skipped");
+    }
+
+    #[test]
+    fn expect_in_static_lazy_lock_ok() {
+        let parsed = parse(
+            r#"
+            use std::sync::LazyLock;
+            static SCHEMA: LazyLock<Value> = LazyLock::new(|| {
+                serde_json::from_str(SCHEMA_JSON).expect("embedded schema must be valid JSON")
+            });
+            "#,
+        );
+        let violations = check_no_unwrap(&parsed, &default_config());
+        assert!(violations.is_empty(), "expect in LazyLock static should be skipped");
+    }
+
+    #[test]
+    fn unwrap_in_const_ok() {
+        let parsed = parse(
+            r#"
+            const VALUE: i32 = Some(42).unwrap();
+            "#,
+        );
+        let violations = check_no_unwrap(&parsed, &default_config());
+        assert!(violations.is_empty(), "unwrap in const initializer should be skipped");
+    }
+
+    #[test]
+    fn unwrap_in_static_multiline_ok() {
+        let parsed = parse(
+            r#"
+            use std::sync::LazyLock;
+            use regex::Regex;
+            static PYRIGHT_RE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"test").unwrap());
+            "#,
+        );
+        let violations = check_no_unwrap(&parsed, &default_config());
+        assert!(violations.is_empty(), "unwrap in multiline LazyLock static should be skipped: {:?}",
+            violations.iter().map(|v| &v.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn unwrap_in_function_still_caught() {
+        let parsed = parse(
+            r#"
+            use std::sync::LazyLock;
+            use regex::Regex;
+            static PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+$").unwrap());
+            fn production_code() {
+                let x: Option<i32> = Some(1);
+                x.unwrap();
+            }
+            "#,
+        );
+        let violations = check_no_unwrap(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "only function unwrap should be caught, not static");
     }
 
     // -- no_println --
