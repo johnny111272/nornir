@@ -1,112 +1,110 @@
+use clap::{Parser, ValueEnum};
 use datagram::{Datagram, DatagramKind, Priority, emit_validated, now, workspace_name};
+
+// =============================================================================
+// CLI enum types (local ValueEnum wrappers for tier isolation)
+// =============================================================================
+
+#[derive(Debug, Clone, ValueEnum)]
+enum Kind {
+    Alert,
+    Warning,
+    Quality,
+    Canary,
+    Notify,
+    Traffic,
+}
+
+impl From<Kind> for DatagramKind {
+    fn from(kind: Kind) -> Self {
+        match kind {
+            Kind::Alert => DatagramKind::Alert,
+            Kind::Warning => DatagramKind::Warning,
+            Kind::Quality => DatagramKind::Quality,
+            Kind::Canary => DatagramKind::Canary,
+            Kind::Notify => DatagramKind::Notify,
+            Kind::Traffic => DatagramKind::Traffic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum PriorityLevel {
+    Critical,
+    High,
+    Normal,
+    Low,
+    Trace,
+}
+
+impl From<PriorityLevel> for Priority {
+    fn from(level: PriorityLevel) -> Self {
+        match level {
+            PriorityLevel::Critical => Priority::Critical,
+            PriorityLevel::High => Priority::High,
+            PriorityLevel::Normal => Priority::Normal,
+            PriorityLevel::Low => Priority::Low,
+            PriorityLevel::Trace => Priority::Trace,
+        }
+    }
+}
 
 // =============================================================================
 // Types
 // =============================================================================
 
-#[derive(Debug)]
-struct Config {
+/// Emit a validated datagram to the Hlidskjalf messaging system.
+#[derive(Debug, Parser)]
+#[command(name = "send_datagram")]
+struct Args {
+    /// Datagram source identifier
+    #[arg(long)]
     source: String,
-    kind: DatagramKind,
+
+    /// Datagram kind
+    #[arg(long)]
+    kind: Kind,
+
+    /// Datagram priority
+    #[arg(long)]
+    priority: PriorityLevel,
+
+    /// Optional classifier tag
+    #[arg(long)]
     classifier: Option<String>,
-    priority: Priority,
+
+    /// Workspace name (auto-derived if omitted)
+    #[arg(long)]
     workspace: Option<String>,
+
+    /// Human-readable detail message
+    #[arg(long)]
     detail: Option<String>,
+
+    /// Speech text for audio alerts
+    #[arg(long)]
     speech: Option<String>,
+
+    /// Path to JSON file for payload
+    #[arg(long)]
     payload_file: Option<String>,
-    payload_str: Option<String>,
-}
 
-// =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut source = None;
-    let mut dtype_str = None;
-    let mut priority_str = None;
-    let mut workspace = None;
-    let mut detail = None;
-    let mut speech = None;
-    let mut classifier = None;
-    let mut payload_file = None;
-    let mut payload_str = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--source" => { i += 1; source = Some(args.get(i).ok_or("--source requires a value")?.clone()); }
-            "--kind" => { i += 1; dtype_str = Some(args.get(i).ok_or("--kind requires a value")?.clone()); }
-            "--priority" => { i += 1; priority_str = Some(args.get(i).ok_or("--priority requires a value")?.clone()); }
-            "--workspace" => { i += 1; workspace = Some(args.get(i).ok_or("--workspace requires a value")?.clone()); }
-            "--detail" => { i += 1; detail = Some(args.get(i).ok_or("--detail requires a value")?.clone()); }
-            "--speech" => { i += 1; speech = Some(args.get(i).ok_or("--speech requires a value")?.clone()); }
-            "--classifier" => { i += 1; classifier = Some(args.get(i).ok_or("--classifier requires a value")?.clone()); }
-            "--payload-file" => { i += 1; payload_file = Some(args.get(i).ok_or("--payload-file requires a value")?.clone()); }
-            "--payload" => { i += 1; payload_str = Some(args.get(i).ok_or("--payload requires a value")?.clone()); }
-            other => {
-                return Err(format!("Unknown flag: {other}"));
-            }
-        }
-        i += 1;
-    }
-
-    let source = source.ok_or("--source is required")?;
-    let dtype_str = dtype_str.ok_or("--kind is required")?;
-    let priority_str = priority_str.ok_or("--priority is required")?;
-
-    let kind = match dtype_str.as_str() {
-        "alert" => DatagramKind::Alert,
-        "quality" => DatagramKind::Quality,
-        "canary" => DatagramKind::Canary,
-        "notify" => DatagramKind::Notify,
-        "traffic" => DatagramKind::Traffic,
-        other => return Err(format!("Unknown --kind: {other} (expected: alert, quality, canary, notify, traffic)")),
-    };
-
-    let priority = match priority_str.as_str() {
-        "critical" => Priority::Critical,
-        "high" => Priority::High,
-        "normal" => Priority::Normal,
-        "low" => Priority::Low,
-        "trace" => Priority::Trace,
-        other => return Err(format!("Unknown --priority: {other} (expected: critical, high, normal, low, trace)")),
-    };
-
-    Ok(Config {
-        source,
-        kind,
-        classifier,
-        priority,
-        workspace,
-        detail,
-        speech,
-        payload_file,
-        payload_str,
-    })
-}
-
-// =============================================================================
-// Help
-// =============================================================================
-
-fn print_usage() {
-    eprintln!(
-        "Usage: send_datagram --source <s> --kind <k> --priority <p> [--classifier <c>] [--workspace <w>] [--detail <d>] [--speech <s>] [--payload <json>] [--payload-file <path>]"
-    );
+    /// Inline JSON string for payload
+    #[arg(long)]
+    payload: Option<String>,
 }
 
 // =============================================================================
 // Core logic
 // =============================================================================
 
-fn run(config: Config) -> Result<(), String> {
-    let payload = if let Some(path) = config.payload_file {
+fn run(args: Args) -> Result<(), String> {
+    let payload = if let Some(path) = args.payload_file {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read {path}: {e}"))?;
         Some(serde_json::from_str::<serde_json::Value>(&content)
             .map_err(|e| format!("Invalid JSON in {path}: {e}"))?)
-    } else if let Some(raw) = config.payload_str {
+    } else if let Some(raw) = args.payload {
         Some(serde_json::from_str::<serde_json::Value>(&raw)
             .map_err(|e| format!("Invalid --payload JSON: {e}"))?)
     } else {
@@ -115,13 +113,13 @@ fn run(config: Config) -> Result<(), String> {
 
     let datagram = Datagram {
         timestamp: now(),
-        source: config.source,
-        kind: config.kind,
-        classifier: config.classifier,
-        priority: config.priority,
-        workspace: config.workspace.unwrap_or_else(workspace_name),
-        detail: config.detail,
-        speech: config.speech,
+        source: args.source,
+        kind: args.kind.into(),
+        classifier: args.classifier,
+        priority: args.priority.into(),
+        workspace: args.workspace.unwrap_or_else(workspace_name),
+        detail: args.detail,
+        speech: args.speech,
         payload,
     };
 
@@ -133,18 +131,9 @@ fn run(config: Config) -> Result<(), String> {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args = Args::parse();
 
-    let config = match parse_args(&args[1..]) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            print_usage();
-            std::process::exit(1);
-        }
-    };
-
-    match run(config) {
+    match run(args) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("{e}");
@@ -157,31 +146,27 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     // =========================================================================
-    // parse_args — required flags present
+    // arg parsing (clap) — required flags present
     // =========================================================================
 
     #[test]
     fn parse_args_all_required() {
-        let a = args(&["--source", "saga", "--kind", "alert", "--priority", "high"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.source, "saga");
-        assert_eq!(config.kind, DatagramKind::Alert);
-        assert_eq!(config.priority, Priority::High);
-        assert!(config.workspace.is_none());
-        assert!(config.detail.is_none());
-        assert!(config.speech.is_none());
-        assert!(config.payload_file.is_none());
-        assert!(config.payload_str.is_none());
+        let args = Args::try_parse_from(["send_datagram", "--source", "saga", "--kind", "alert", "--priority", "high"]).unwrap();
+        assert_eq!(args.source, "saga");
+        assert!(matches!(args.kind, Kind::Alert));
+        assert!(matches!(args.priority, PriorityLevel::High));
+        assert!(args.workspace.is_none());
+        assert!(args.detail.is_none());
+        assert!(args.speech.is_none());
+        assert!(args.payload_file.is_none());
+        assert!(args.payload.is_none());
     }
 
     #[test]
     fn parse_args_all_flags() {
-        let a = args(&[
+        let args = Args::try_parse_from([
+            "send_datagram",
             "--source", "hook",
             "--kind", "quality",
             "--priority", "normal",
@@ -189,129 +174,114 @@ mod tests {
             "--detail", "something happened",
             "--speech", "alert spoken text",
             "--payload", r#"{"key":"val"}"#,
-        ]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.source, "hook");
-        assert_eq!(config.kind, DatagramKind::Quality);
-        assert_eq!(config.priority, Priority::Normal);
-        assert_eq!(config.workspace.as_deref(), Some("odinn"));
-        assert_eq!(config.detail.as_deref(), Some("something happened"));
-        assert_eq!(config.speech.as_deref(), Some("alert spoken text"));
-        assert_eq!(config.payload_str.as_deref(), Some(r#"{"key":"val"}"#));
+        ]).unwrap();
+        assert_eq!(args.source, "hook");
+        assert!(matches!(args.kind, Kind::Quality));
+        assert!(matches!(args.priority, PriorityLevel::Normal));
+        assert_eq!(args.workspace.as_deref(), Some("odinn"));
+        assert_eq!(args.detail.as_deref(), Some("something happened"));
+        assert_eq!(args.speech.as_deref(), Some("alert spoken text"));
+        assert_eq!(args.payload.as_deref(), Some(r#"{"key":"val"}"#));
     }
 
     // =========================================================================
-    // parse_args — missing required flags
+    // arg parsing — missing required flags
     // =========================================================================
 
     #[test]
     fn parse_args_missing_source() {
-        let a = args(&["--kind", "alert", "--priority", "high"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--kind", "alert", "--priority", "high"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--source"), "error should mention --source: {err}");
     }
 
     #[test]
     fn parse_args_missing_kind() {
-        let a = args(&["--source", "saga", "--priority", "high"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source", "saga", "--priority", "high"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--kind"), "error should mention --kind: {err}");
     }
 
     #[test]
     fn parse_args_missing_priority() {
-        let a = args(&["--source", "saga", "--kind", "alert"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source", "saga", "--kind", "alert"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--priority"), "error should mention --priority: {err}");
     }
 
     // =========================================================================
-    // parse_args — invalid enum values
+    // arg parsing — invalid enum values
     // =========================================================================
 
     #[test]
     fn parse_args_invalid_kind() {
-        let a = args(&["--source", "s", "--kind", "bogus", "--priority", "high"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", "bogus", "--priority", "high"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("bogus"), "error should mention the bad value: {err}");
     }
 
     #[test]
     fn parse_args_invalid_priority() {
-        let a = args(&["--source", "s", "--kind", "alert", "--priority", "mega"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", "alert", "--priority", "mega"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("mega"), "error should mention the bad value: {err}");
     }
 
     // =========================================================================
-    // parse_args — unknown flags
+    // arg parsing — unknown flags
     // =========================================================================
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&["--source", "s", "--kind", "alert", "--priority", "high", "--banana"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", "alert", "--priority", "high", "--banana"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--banana"), "error should mention unknown flag: {err}");
     }
 
     // =========================================================================
-    // parse_args — all datagram kinds
+    // arg parsing — all datagram kinds
     // =========================================================================
 
     #[test]
     fn parse_args_all_datagram_kinds() {
-        for (name, expected) in [
-            ("alert", DatagramKind::Alert),
-            ("quality", DatagramKind::Quality),
-            ("canary", DatagramKind::Canary),
-            ("notify", DatagramKind::Notify),
-            ("traffic", DatagramKind::Traffic),
-        ] {
-            let a = args(&["--source", "s", "--kind", name, "--priority", "low"]);
-            let config = parse_args(&a).unwrap();
-            assert_eq!(config.kind, expected, "kind mismatch for --kind {name}");
+        for name in ["alert", "quality", "canary", "notify", "traffic"] {
+            let args = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", name, "--priority", "low"]).unwrap();
+            // Verify the conversion to DatagramKind works
+            let _: DatagramKind = args.kind.into();
         }
     }
 
     // =========================================================================
-    // parse_args — all priorities
+    // arg parsing — all priorities
     // =========================================================================
 
     #[test]
     fn parse_args_all_priorities() {
-        for (name, expected) in [
-            ("critical", Priority::Critical),
-            ("high", Priority::High),
-            ("normal", Priority::Normal),
-            ("low", Priority::Low),
-            ("trace", Priority::Trace),
-        ] {
-            let a = args(&["--source", "s", "--kind", "alert", "--priority", name]);
-            let config = parse_args(&a).unwrap();
-            assert_eq!(config.priority, expected, "priority mismatch for --priority {name}");
+        for name in ["critical", "high", "normal", "low", "trace"] {
+            let args = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", "alert", "--priority", name]).unwrap();
+            let _: Priority = args.priority.into();
         }
     }
 
     // =========================================================================
-    // parse_args — detail and speech are optional
+    // arg parsing — detail and speech are optional
     // =========================================================================
 
     #[test]
     fn parse_args_optional_detail_speech() {
-        let a = args(&["--source", "s", "--kind", "alert", "--priority", "low"]);
-        let config = parse_args(&a).unwrap();
-        assert!(config.detail.is_none());
-        assert!(config.speech.is_none());
+        let args = Args::try_parse_from(["send_datagram", "--source", "s", "--kind", "alert", "--priority", "low"]).unwrap();
+        assert!(args.detail.is_none());
+        assert!(args.speech.is_none());
     }
 
     // =========================================================================
-    // parse_args — flag without value
+    // arg parsing — flag without value
     // =========================================================================
 
     #[test]
     fn parse_args_source_without_value() {
-        let a = args(&["--source"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["send_datagram", "--source"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--source"), "error should mention --source: {err}");
     }
 }

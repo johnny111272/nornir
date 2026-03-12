@@ -157,7 +157,9 @@ pub fn workspace_name() -> String {
 
 /// Derive workspace identity from a filesystem path.
 ///
-/// Paths under `~/.ai/` become `@{relative}` (e.g. `@smidja/nornir`).
+/// Paths under `~/.ai/` become `@{relative}` with `:` separators
+/// (e.g. `@smidja:nornir`). Colon separators avoid `/` which breaks
+/// Svelte 5's reactive proxy in template rendering.
 /// Paths outside `~/.ai/` or when no path is meaningful: `@`.
 pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
     let ai_base = ai_base_dir();
@@ -170,7 +172,7 @@ pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
         if trimmed.is_empty() {
             "@".to_string()
         } else {
-            format!("@{trimmed}")
+            format!("@{}", trimmed.replace('/', ":"))
         }
     } else {
         "@".to_string()
@@ -191,14 +193,14 @@ mod tests {
     fn workspace_from_path_under_ai() {
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{home}/.ai/smidja/nornir");
-        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja/nornir");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja:nornir");
     }
 
     #[test]
     fn workspace_from_path_nested() {
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{home}/.ai/spaces/bragi");
-        assert_eq!(workspace_from_path(Path::new(&path)), "@spaces/bragi");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@spaces:bragi");
     }
 
     #[test]
@@ -217,6 +219,6 @@ mod tests {
     fn workspace_from_path_trailing_slash() {
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{home}/.ai/smidja/nornir/");
-        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja/nornir");
+        assert_eq!(workspace_from_path(Path::new(&path)), "@smidja:nornir");
     }
 }
