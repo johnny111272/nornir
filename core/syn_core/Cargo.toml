@@ -1,0 +1,16 @@
+[package]
+name = "syn_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "syn_core"
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+jaq-interpret = { workspace = true }
+jaq-parse = { workspace = true }
+saga_core = { path = "../saga_core" }
+report_render_core = { path = "../report_render_core" }

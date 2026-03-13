@@ -1,13 +1,12 @@
 //! Gleipnir: guardrail checks for Python, Rust, and TypeScript/Svelte source files.
 //!
 //! Pure computation library. No I/O — caller provides source bytes,
-//! library returns violations. Used by saga_core as a direct dependency.
+//! library returns violations.
 
 pub mod checks_py;
 pub mod checks_rs;
 pub mod checks_ts;
 pub mod classify;
-pub mod config;
 pub mod matrix;
 pub mod parsing;
 pub mod structures;
@@ -16,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use structures::{
-    CheckConfig, CheckMessages, FileKind, ParsedSource, Severity, UserConfig, Violation,
+    CheckConfig, CheckMessages, FileKind, ParsedSource, Severity, Violation,
 };
 
 // Embedded messages, parsed once on first access.
@@ -34,6 +33,38 @@ pub fn messages(check_name: &str) -> CheckMessages {
         .unwrap_or_default()
 }
 
+/// Stamp violations with check metadata and collect into output vec.
+///
+/// Each violation gets the check name, severity, and message fields
+/// (detail, signal, direction, canary) from the embedded messages TOML.
+fn stamp_and_collect(
+    name: &str,
+    severity: Severity,
+    mut check_violations: Vec<Violation>,
+    output: &mut Vec<Violation>,
+) {
+    let msgs = messages(name);
+    for viol in &mut check_violations {
+        if viol.check_name.is_empty() {
+            viol.check_name = name.to_string();
+        }
+        viol.severity = severity;
+        if viol.detail.is_empty() {
+            viol.detail = msgs.detail.clone();
+        }
+        if viol.signal.is_empty() {
+            viol.signal = msgs.signal.clone();
+        }
+        if viol.direction.is_empty() {
+            viol.direction = msgs.direction.clone();
+        }
+        if viol.canary.is_empty() {
+            viol.canary = msgs.canary.clone();
+        }
+    }
+    output.extend(check_violations);
+}
+
 /// Run all applicable gleipnir checks on a Python source file.
 ///
 /// Classifies the file, selects checks from the matrix, parses with
@@ -41,7 +72,6 @@ pub fn messages(check_name: &str) -> CheckMessages {
 pub fn run_checks(
     file_path: &str,
     source: &[u8],
-    user_config: Option<&UserConfig>,
 ) -> Vec<Violation> {
     let first_line = source
         .split(|&b| b == b'\n')
@@ -50,35 +80,18 @@ pub fn run_checks(
         .unwrap_or("");
 
     let kind = classify::classify_file(file_path, first_line);
-    let config = CheckConfig::for_kind(kind, user_config);
+    let config = CheckConfig::for_kind(kind);
     let entries = matrix::checks_for_kind(kind);
 
-    let parsed = parsing::build_parsed_source(file_path, source);
+    let parsed = match parsing::build_parsed_source(file_path, source) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
 
     let mut violations = Vec::new();
     for entry in &entries {
-        let mut check_violations = (entry.check_fn)(&parsed, &config);
-        // Stamp each violation with the check name, severity, and messages
-        let msgs = messages(entry.name);
-        for viol in &mut check_violations {
-            if viol.check_name.is_empty() {
-                viol.check_name = entry.name.to_string();
-            }
-            viol.severity = entry.severity;
-            if viol.detail.is_empty() {
-                viol.detail = msgs.detail.clone();
-            }
-            if viol.signal.is_empty() {
-                viol.signal = msgs.signal.clone();
-            }
-            if viol.direction.is_empty() {
-                viol.direction = msgs.direction.clone();
-            }
-            if viol.canary.is_empty() {
-                viol.canary = msgs.canary.clone();
-            }
-        }
-        violations.extend(check_violations);
+        let check_violations = (entry.check_fn)(&parsed, &config);
+        stamp_and_collect(entry.name, entry.severity, check_violations, &mut violations);
     }
     violations
 }
@@ -88,8 +101,11 @@ pub fn run_checks(
 /// Parses with tree-sitter-rust, runs Rust-specific checks, returns violations.
 /// Skips test modules and #[test] functions for panic-on-failure checks.
 pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
-    let parsed = parsing::build_parsed_source_rust(file_path, source);
-    let config = CheckConfig::for_kind(structures::FileKind::Outside, None);
+    let parsed = match parsing::build_parsed_source_rust(file_path, source) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let config = CheckConfig::for_kind(structures::FileKind::Outside);
 
     type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
     let rust_checks: &[(&str, Severity, CheckFn)] = &[
@@ -113,27 +129,8 @@ pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
 
     let mut violations = Vec::new();
     for &(name, severity, check_fn) in rust_checks {
-        let mut check_violations = check_fn(&parsed, &config);
-        let msgs = messages(name);
-        for viol in &mut check_violations {
-            if viol.check_name.is_empty() {
-                viol.check_name = name.to_string();
-            }
-            viol.severity = severity;
-            if viol.detail.is_empty() {
-                viol.detail = msgs.detail.clone();
-            }
-            if viol.signal.is_empty() {
-                viol.signal = msgs.signal.clone();
-            }
-            if viol.direction.is_empty() {
-                viol.direction = msgs.direction.clone();
-            }
-            if viol.canary.is_empty() {
-                viol.canary = msgs.canary.clone();
-            }
-        }
-        violations.extend(check_violations);
+        let check_violations = check_fn(&parsed, &config);
+        stamp_and_collect(name, severity, check_violations, &mut violations);
     }
     violations
 }
@@ -150,8 +147,11 @@ pub fn run_checks_svelte(file_path: &str, source: &[u8]) -> Vec<Violation> {
     };
 
     let script_bytes = script.content.as_bytes();
-    let parsed = parsing::build_parsed_source_typescript(file_path, script_bytes);
-    let config = CheckConfig::for_kind(structures::FileKind::Outside, None);
+    let parsed = match parsing::build_parsed_source_typescript(file_path, script_bytes) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let config = CheckConfig::for_kind(structures::FileKind::Outside);
 
     type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
     let ts_checks: &[(&str, Severity, CheckFn)] = &[
@@ -172,28 +172,10 @@ pub fn run_checks_svelte(file_path: &str, source: &[u8]) -> Vec<Violation> {
     let mut violations = Vec::new();
     for &(name, severity, check_fn) in ts_checks {
         let mut check_violations = check_fn(&parsed, &config);
-        let msgs = messages(name);
         for viol in &mut check_violations {
-            // Offset line numbers back to .svelte file coordinates
             viol.line += script.line_offset;
-            if viol.check_name.is_empty() {
-                viol.check_name = name.to_string();
-            }
-            viol.severity = severity;
-            if viol.detail.is_empty() {
-                viol.detail = msgs.detail.clone();
-            }
-            if viol.signal.is_empty() {
-                viol.signal = msgs.signal.clone();
-            }
-            if viol.direction.is_empty() {
-                viol.direction = msgs.direction.clone();
-            }
-            if viol.canary.is_empty() {
-                viol.canary = msgs.canary.clone();
-            }
         }
-        violations.extend(check_violations);
+        stamp_and_collect(name, severity, check_violations, &mut violations);
     }
     violations
 }
@@ -219,14 +201,14 @@ mod tests {
 
     #[test]
     fn run_checks_on_empty_file() {
-        let violations = run_checks("/test/empty.py", b"", None);
+        let violations = run_checks("/test/empty.py", b"");
         assert!(violations.is_empty());
     }
 
     #[test]
     fn run_checks_classifies_test_file() {
         let source = b"def test_foo():\n    assert True\n";
-        let violations = run_checks("/project/tests/test_foo.py", source, None);
+        let violations = run_checks("/project/tests/test_foo.py", source);
         // Test files have a minimal check set — should run without panic
         let _ = violations;
     }

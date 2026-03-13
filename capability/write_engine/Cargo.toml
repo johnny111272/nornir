@@ -1,0 +1,13 @@
+[package]
+name = "write_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde_json = { workspace = true }
+error_core = { path = "../../core/error_core" }
+schema_core = { path = "../../core/schema_core" }
+path_core = { path = "../../core/path_core" }

@@ -11,3 +11,4 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { workspace = true }
 serde_json = { workspace = true }
 format_core = { path = "../../core/format_core" }
+write_engine = { path = "../../capability/write_engine" }

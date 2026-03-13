@@ -152,11 +152,11 @@ mod tests {
 
     fn parse(code: &str) -> ParsedSource<'static> {
         let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
-        build_parsed_source_rust("/test/file.rs", source)
+        build_parsed_source_rust("/test/file.rs", source).unwrap()
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside, None)
+        CheckConfig::for_kind(FileKind::Outside)
     }
 
     #[test]

@@ -5,8 +5,7 @@
 //! - `append_jsonl_line(path, json_str)` — validate JSON object, compact append with fsync
 
 use pyo3::prelude::*;
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::path::Path;
 
 /// Convert a JSON string to TOML, stripping null values.
 ///
@@ -41,18 +40,8 @@ fn append_jsonl_line(path: &str, json_str: &str) -> PyResult<()> {
     let compact = serde_json::to_string(&value)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("serialize failed: {e}")))?;
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("open {path}: {e}")))?;
-
-    file.write_all(compact.as_bytes())
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("write failed: {e}")))?;
-    file.write_all(b"\n")
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("write newline failed: {e}")))?;
-    file.sync_all()
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("fsync failed: {e}")))?;
+    write_engine::append_line_fsync(Path::new(path), &compact)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(e))?;
 
     Ok(())
 }

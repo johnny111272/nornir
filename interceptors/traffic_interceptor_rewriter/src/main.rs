@@ -13,6 +13,7 @@
 //! Stdout: rewritten JSON bytes for compactions, empty for everything else.
 //! The caller (bifrost addon) checks stdout: if non-empty, set flow.request.content.
 
+use clap::Parser;
 use compaction_inject_core::inject_compaction_system_block;
 use datagram::{Datagram, DatagramKind, Priority};
 use std::fs::{self, OpenOptions};
@@ -35,10 +36,20 @@ enum ExchangeKind {
     Compaction,
 }
 
-#[derive(Debug)]
-struct Config {
+/// Classify, capture, and optionally rewrite Claude API traffic.
+#[derive(Debug, Parser)]
+#[command(name = "traffic_interceptor_rewriter")]
+struct Args {
+    /// Session identifier for file naming
+    #[arg(long)]
     session_id: String,
+
+    /// Workspace name for directory routing
+    #[arg(long)]
     workspace: String,
+
+    /// Root directory for traffic JSONL files
+    #[arg(long)]
     traffic_dir: PathBuf,
 }
 
@@ -136,26 +147,13 @@ fn append_exchange(
 ) -> Result<(), String> {
     let dir = traffic_dir.join(workspace);
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-
     let path = dir.join(format!("mainexch_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize exchange: {e}"))?;
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    file.write_all(compact.as_bytes())
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    file.write_all(b"\n")
-        .map_err(|e| format!("write newline {}: {e}", path.display()))?;
-    file.sync_all()
-        .map_err(|e| format!("fsync {}: {e}", path.display()))?;
-    Ok(())
+    write_engine::append_line_fsync(&path, &compact)
 }
 
-/// Append compact JSON + newline to {workspace}/precomp_{session_id}.jsonl.
+/// Append compact JSON + newline to {workspace}/precomp_{session_id}.jsonl with fsync.
 /// Returns the line number of the appended entry (1-based).
 fn append_precompact(
     traffic_dir: &Path,
@@ -165,23 +163,10 @@ fn append_precompact(
 ) -> Result<u64, String> {
     let dir = traffic_dir.join(workspace);
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-
     let path = dir.join(format!("precomp_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize precompact: {e}"))?;
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    file.write_all(compact.as_bytes())
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    file.write_all(b"\n")
-        .map_err(|e| format!("write newline {}: {e}", path.display()))?;
-    file.flush()
-        .map_err(|e| format!("flush {}: {e}", path.display()))?;
-
+    write_engine::append_line_fsync(&path, &compact)?;
     count_lines(&path)
 }
 
@@ -193,65 +178,45 @@ fn count_lines(path: &Path) -> Result<u64, String> {
 }
 
 // =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut session_id = None;
-    let mut workspace = None;
-    let mut traffic_dir = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--session-id" => {
-                i += 1;
-                session_id = Some(
-                    args.get(i)
-                        .ok_or("--session-id requires a value")?
-                        .clone(),
-                );
-            }
-            "--workspace" => {
-                i += 1;
-                workspace = Some(
-                    args.get(i)
-                        .ok_or("--workspace requires a value")?
-                        .clone(),
-                );
-            }
-            "--traffic-dir" => {
-                i += 1;
-                traffic_dir = Some(PathBuf::from(
-                    args.get(i).ok_or("--traffic-dir requires a value")?,
-                ));
-            }
-            other => {
-                return Err(format!("unknown argument: {other}"));
-            }
-        }
-        i += 1;
-    }
-
-    Ok(Config {
-        session_id: session_id.ok_or("--session-id is required")?,
-        workspace: workspace.ok_or("--workspace is required")?,
-        traffic_dir: traffic_dir.ok_or("--traffic-dir is required")?,
-    })
-}
-
-fn print_usage() {
-    eprintln!(
-        "Usage: traffic_interceptor_rewriter --session-id <id> --workspace <name> --traffic-dir <path>"
-    );
-}
-
-// =============================================================================
 // Orchestration
 // =============================================================================
 
-fn run(config: &Config) -> Result<(), String> {
-    // Read stdin
+fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(), String> {
+    let line = append_precompact(
+        &config.traffic_dir,
+        &config.workspace,
+        &config.session_id,
+        value,
+    )?;
+
+    let precompact_filename = format!("precomp_{}.jsonl", config.session_id);
+    let dg = Datagram {
+        timestamp: datagram::now(),
+        source: "bifrost".into(),
+        kind: DatagramKind::Alert,
+        classifier: None,
+        priority: Priority::High,
+        workspace: config.workspace.clone(),
+        detail: Some(format!("Compaction detected in {}", config.workspace)),
+        speech: Some(format!("Compaction detected in {}", config.workspace)),
+        payload: Some(serde_json::json!({
+            "precompact": precompact_filename,
+            "line": line,
+        })),
+    };
+    datagram::emit(&dg);
+
+    inject_compaction_system_block(value)?;
+
+    let output = serde_json::to_vec(&value)
+        .map_err(|e| format!("serialize rewritten JSON: {e}"))?;
+    io::stdout()
+        .write_all(&output)
+        .map_err(|e| format!("write stdout: {e}"))?;
+    Ok(())
+}
+
+fn run(config: &Args) -> Result<(), String> {
     let mut input_bytes = Vec::new();
     io::stdin()
         .read_to_end(&mut input_bytes)
@@ -260,14 +225,11 @@ fn run(config: &Config) -> Result<(), String> {
         return Err("stdin is empty".to_string());
     }
 
-    // Raw capture — unconditional, original bytes
     append_raw(&config.traffic_dir, &config.session_id, &input_bytes)?;
 
-    // Parse JSON
     let mut value: serde_json::Value = serde_json::from_slice(&input_bytes)
         .map_err(|e| format!("invalid JSON: {e}"))?;
 
-    // Classify
     let kind = match classify_exchange(&value) {
         None => return Ok(()),
         Some(k) => k,
@@ -275,49 +237,10 @@ fn run(config: &Config) -> Result<(), String> {
 
     match kind {
         ExchangeKind::Main => {
-            append_exchange(
-                &config.traffic_dir,
-                &config.workspace,
-                &config.session_id,
-                &value,
-            )?;
+            append_exchange(&config.traffic_dir, &config.workspace, &config.session_id, &value)?;
         }
         ExchangeKind::Compaction => {
-            // Save pre-compaction state
-            let line = append_precompact(
-                &config.traffic_dir,
-                &config.workspace,
-                &config.session_id,
-                &value,
-            )?;
-
-            // Alert datagram
-            let precompact_filename = format!("precomp_{}.jsonl", config.session_id);
-            let dg = Datagram {
-                timestamp: datagram::now(),
-                source: "bifrost".into(),
-                kind: DatagramKind::Alert,
-                classifier: None,
-                priority: Priority::High,
-                workspace: config.workspace.clone(),
-                detail: Some(format!("Compaction detected in {}", config.workspace)),
-                speech: Some(format!("Compaction detected in {}", config.workspace)),
-                payload: Some(serde_json::json!({
-                    "precompact": precompact_filename,
-                    "line": line,
-                })),
-            };
-            datagram::emit(&dg);
-
-            // Inject compaction instructions
-            inject_compaction_system_block(&mut value)?;
-
-            // Write rewritten JSON to stdout
-            let output = serde_json::to_vec(&value)
-                .map_err(|e| format!("serialize rewritten JSON: {e}"))?;
-            io::stdout()
-                .write_all(&output)
-                .map_err(|e| format!("write stdout: {e}"))?;
+            handle_compaction(config, &mut value)?;
         }
     }
 
@@ -329,18 +252,9 @@ fn run(config: &Config) -> Result<(), String> {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse();
 
-    let config = match parse_args(&args) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            print_usage();
-            std::process::exit(2);
-        }
-    };
-
-    match run(&config) {
+    match run(&args) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("error: {e}");
@@ -357,10 +271,6 @@ fn main() {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
 
     // =========================================================================
     // Classification — is_main_agent
@@ -537,60 +447,61 @@ mod tests {
     }
 
     // =========================================================================
-    // Arg parsing
+    // Arg parsing (clap)
     // =========================================================================
 
     #[test]
     fn parse_args_valid() {
-        let a = args(&[
+        let args = Args::try_parse_from([
+            "traffic_interceptor_rewriter",
             "--session-id", "abc123",
             "--workspace", "odinn",
             "--traffic-dir", "/tmp/traffic",
-        ]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.session_id, "abc123");
-        assert_eq!(config.workspace, "odinn");
-        assert_eq!(config.traffic_dir, PathBuf::from("/tmp/traffic"));
+        ]).unwrap();
+        assert_eq!(args.session_id, "abc123");
+        assert_eq!(args.workspace, "odinn");
+        assert_eq!(args.traffic_dir, PathBuf::from("/tmp/traffic"));
     }
 
     #[test]
     fn parse_args_missing_session_id() {
-        let a = args(&["--workspace", "odinn", "--traffic-dir", "/tmp"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--workspace", "odinn", "--traffic-dir", "/tmp"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--session-id"), "should mention --session-id: {err}");
     }
 
     #[test]
     fn parse_args_missing_workspace() {
-        let a = args(&["--session-id", "abc", "--traffic-dir", "/tmp"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id", "abc", "--traffic-dir", "/tmp"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--workspace"), "should mention --workspace: {err}");
     }
 
     #[test]
     fn parse_args_missing_traffic_dir() {
-        let a = args(&["--session-id", "abc", "--workspace", "odinn"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id", "abc", "--workspace", "odinn"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--traffic-dir"), "should mention --traffic-dir: {err}");
     }
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&[
+        let result = Args::try_parse_from([
+            "traffic_interceptor_rewriter",
             "--session-id", "abc",
             "--workspace", "odinn",
             "--traffic-dir", "/tmp",
             "--banana",
         ]);
-        let err = parse_args(&a).unwrap_err();
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--banana"), "should mention unknown flag: {err}");
     }
 
     #[test]
     fn parse_args_session_id_missing_value() {
-        let a = args(&["--session-id"]);
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--session-id"), "should mention --session-id: {err}");
+        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id"]);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("session-id"), "should mention --session-id: {err}");
     }
 
     // =========================================================================

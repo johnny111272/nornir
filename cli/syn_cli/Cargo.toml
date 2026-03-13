@@ -8,11 +8,10 @@ name = "syn"
 path = "src/main.rs"
 
 [dependencies]
-serde = { workspace = true }
 serde_json = { workspace = true }
+clap = { workspace = true }
 toml = { workspace = true }
-jaq-interpret = { workspace = true }
-jaq-parse = { workspace = true }
+syn_core = { path = "../../core/syn_core" }
 saga_runner = { path = "../../capability/saga_runner" }
 report_render_core = { path = "../../core/report_render_core" }
 datagram = { path = "../../capability/datagram" }

@@ -335,17 +335,17 @@ mod tests {
 
     fn parse(code: &str) -> ParsedSource<'static> {
         let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
-        build_parsed_source("/test/file.py", source)
+        build_parsed_source("/test/file.py", source).unwrap()
     }
 
     fn parse_with_path<'a>(code: &str, path: &'a str) -> ParsedSource<'static> {
         let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
         let path: &'static str = Box::leak(path.to_string().into_boxed_str());
-        build_parsed_source(path, source)
+        build_parsed_source(path, source).unwrap()
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside, None)
+        CheckConfig::for_kind(FileKind::Outside)
     }
 
     // -- no_type_checking_imports --

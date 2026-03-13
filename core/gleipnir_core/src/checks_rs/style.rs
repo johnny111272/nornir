@@ -138,7 +138,6 @@ const RUST_NESTING_TYPES: &[&str] = &[
     "while_expression",
     "loop_expression",
     "match_expression",
-    "match_arm",
 ];
 
 fn compute_max_nesting_rust(node: tree_sitter::Node, current: usize) -> usize {
@@ -181,6 +180,37 @@ pub fn check_nesting_depth(source: &ParsedSource, config: &CheckConfig) -> Vec<V
 
 fn has_underscore_prefix(name: &str) -> bool {
     name.starts_with('_') && name != "_"
+}
+
+/// Check if an underscore-prefixed let binding is actually used in its enclosing block.
+/// Walks up to the nearest block and counts identifier matches — if > 1
+/// (the binding itself plus at least one use), the underscore is a lie.
+fn underscore_let_is_used(let_node: tree_sitter::Node, var_name: &str, source: &[u8]) -> bool {
+    let block = match find_enclosing_block(let_node) {
+        Some(b) => b,
+        None => return false,
+    };
+    let mut count = 0;
+    for ident in find_nodes_by_type(block, "identifier") {
+        if node_text(ident, source) == var_name {
+            count += 1;
+            if count > 1 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn find_enclosing_block(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if ancestor.kind() == "block" {
+            return Some(ancestor);
+        }
+        current = ancestor.parent();
+    }
+    None
 }
 
 /// Check if a name appears as an identifier in a subtree.
@@ -231,7 +261,7 @@ pub fn check_no_underscore_prefix(
         }
     }
 
-    // Let bindings: only flag if used after the binding (count > 1 in enclosing function)
+    // Let bindings: only flag if used after the binding (count > 1 in enclosing block)
     for let_node in find_nodes_by_type(source.tree.root_node(), "let_declaration") {
         if in_test_context(let_node, source.source_bytes) {
             continue;
@@ -244,30 +274,11 @@ pub fn check_no_underscore_prefix(
         if !has_underscore_prefix(var_name) {
             continue;
         }
-
-        // Find enclosing function body and count identifier matches
-        let mut ancestor = let_node.parent();
-        while let Some(node) = ancestor {
-            if node.kind() == "block" {
-                let mut count = 0;
-                for ident in find_nodes_by_type(node, "identifier") {
-                    if node_text(ident, source.source_bytes) == var_name {
-                        count += 1;
-                        if count > 1 {
-                            break;
-                        }
-                    }
-                }
-                if count > 1 {
-                    // Used beyond the binding — underscore is a lie
-                    violations.push(violation(
-                        node_line(let_node),
-                        format!("variable '{var_name}' uses underscore prefix"),
-                    ));
-                }
-                break;
-            }
-            ancestor = node.parent();
+        if underscore_let_is_used(let_node, var_name, source.source_bytes) {
+            violations.push(violation(
+                node_line(let_node),
+                format!("variable '{var_name}' uses underscore prefix"),
+            ));
         }
     }
 
@@ -278,7 +289,7 @@ pub fn check_no_underscore_prefix(
 // Naming quality helpers
 // -------------------------------------------------------------------------
 
-const SINGLE_LETTER_ALLOWLIST: &[&str] = &["i", "j", "k", "_"];
+const SINGLE_LETTER_ALLOWLIST: &[&str] = &["i", "j", "k", "_", "f", "m"];
 
 static NUMBERED_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z_]*\d+$").unwrap());
@@ -305,7 +316,7 @@ static NUMBERED_ALLOWED: LazyLock<Regex> = LazyLock::new(|| {
 
 const SHORT_PARAM_ALLOWLIST: &[&str] = &[
     "id", "db", "ok", "io", "fn", "tx", "rx", "ui", "pk", "op",
-    "fd", "ip", "cx",
+    "fd", "ip", "cx", "f", "map", "py", "m", "sig", "key",
 ];
 
 fn is_bad_numbered_name(name: &str) -> bool {
@@ -451,11 +462,11 @@ mod tests {
 
     fn parse(code: &str) -> ParsedSource<'static> {
         let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
-        build_parsed_source_rust("/test/file.rs", source)
+        build_parsed_source_rust("/test/file.rs", source).unwrap()
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside, None)
+        CheckConfig::for_kind(FileKind::Outside)
     }
 
     // -- function_length --
@@ -552,6 +563,68 @@ fn foo() {
         let violations = check_nesting_depth(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("foo"));
+    }
+
+    #[test]
+    fn match_inside_for_ok() {
+        // for(1) -> match(2) -> if(3) = depth 3. Arms are alternatives, not depth.
+        let code = r#"
+fn dispatch(items: &[i32]) {
+    for item in items {
+        match item {
+            0 => {
+                if true {
+                    return;
+                }
+            }
+            1 => {
+                for sub in items {
+                    if *sub > 0 {
+                        continue;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+"#;
+        let parsed = parse(code);
+        let violations = check_nesting_depth(&parsed, &default_config());
+        assert!(violations.is_empty(), "match arms should not count as nesting depth");
+    }
+
+    #[test]
+    fn nested_match_expressions_caught() {
+        // match(1) -> match(2) -> match(3) -> if(4) -> if(5) = depth 5. Still caught.
+        let code = r#"
+fn deeply_nested(val: Option<Option<Option<i32>>>) {
+    match val {
+        Some(inner1) => {
+            match inner1 {
+                Some(inner2) => {
+                    match inner2 {
+                        Some(x) => {
+                            if x > 0 {
+                                if x > 10 {
+                                    return;
+                                }
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                None => {}
+            }
+        }
+        None => {}
+    }
+}
+"#;
+        let parsed = parse(code);
+        let violations = check_nesting_depth(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "nested match expressions should still be caught");
+        assert!(violations[0].message.contains("deeply_nested"));
     }
 
     // -- no_underscore_prefix --

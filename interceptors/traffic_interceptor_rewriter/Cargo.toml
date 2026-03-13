@@ -9,5 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = { workspace = true }
+clap = { workspace = true }
 datagram = { path = "../../capability/datagram" }
 compaction_inject_core = { path = "../../core/compaction_inject_core" }
+write_engine = { path = "../../capability/write_engine" }

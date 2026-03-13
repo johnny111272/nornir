@@ -95,7 +95,11 @@ fn decide(input: &HookInput) -> HookDecision {
             };
         }
     };
+    decide_inner(input, &config, &rules)
+}
 
+/// Core decision logic, separated from config/rules parsing for testability.
+fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecision {
     let tool_input = &input.tool_input;
 
     // Extract path from tool_input (same fields as subagent_tool)
@@ -319,129 +323,229 @@ mod tests {
         }
     }
 
-    // ── decide: integration via constructed HookInput ─────────────
+    // ── decide_inner: integration tests ─────────────────────────────
 
-    fn make_hook_input_no_path() -> HookInput {
+    fn default_rules() -> Rules {
+        parse_rules(RULES_TOML).unwrap()
+    }
+
+    fn config_all_block() -> Config {
+        Config { probing: Some(Severity::Block), gaming: Some(Severity::Block), allow_paths: vec![] }
+    }
+
+    fn config_all_warn() -> Config {
+        Config { probing: Some(Severity::Warn), gaming: Some(Severity::Warn), allow_paths: vec![] }
+    }
+
+    fn config_disabled() -> Config {
+        Config { probing: None, gaming: None, allow_paths: vec![] }
+    }
+
+    fn make_input(path: &str) -> HookInput {
         HookInput {
             tool_name: Some("Read".to_string()),
-            tool_input: serde_json::json!({}),
+            tool_input: serde_json::json!({ "file_path": path }),
+        }
+    }
+
+    fn make_input_path_field(path: &str) -> HookInput {
+        HookInput {
+            tool_name: Some("Grep".to_string()),
+            tool_input: serde_json::json!({ "path": path }),
+        }
+    }
+
+    // Layer 1: Floor — always deny regardless of config
+
+    #[test]
+    fn decide_floor_ssh_denied() {
+        let d = decide_inner(&make_input("/home/user/.ssh/id_rsa"), &config_disabled(), &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "floor"),
+            _ => panic!("Floor must deny SSH access"),
         }
     }
 
     #[test]
-    fn decide_floor_ssh_always_denied() {
-        // Floor rules fire regardless of config — test with direct parse_rules + logic
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.ssh/id_rsa";
-        for rule in &rules.floor {
-            if target.contains(&rule.pattern) {
-                // Confirmed: floor rule matches SSH path
-                return;
-            }
+    fn decide_floor_aws_denied() {
+        let d = decide_inner(&make_input("/home/user/.aws/credentials"), &config_disabled(), &default_rules());
+        assert!(matches!(d, HookDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn decide_floor_gnupg_denied() {
+        let d = decide_inner(&make_input("/home/user/.gnupg/secring.gpg"), &config_disabled(), &default_rules());
+        assert!(matches!(d, HookDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn decide_floor_kube_denied() {
+        let d = decide_inner(&make_input("/home/user/.kube/config"), &config_disabled(), &default_rules());
+        assert!(matches!(d, HookDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn decide_floor_docker_denied() {
+        let d = decide_inner(&make_input("/home/user/.docker/config.json"), &config_disabled(), &default_rules());
+        assert!(matches!(d, HookDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn decide_floor_netrc_denied() {
+        let d = decide_inner(&make_input("/home/user/.netrc"), &config_disabled(), &default_rules());
+        assert!(matches!(d, HookDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn decide_floor_overrides_allow_paths() {
+        // allow_paths cannot exempt floor rules
+        let config = Config {
+            probing: Some(Severity::Block),
+            gaming: Some(Severity::Block),
+            allow_paths: vec!["/home/user/.ssh/".to_string()],
+        };
+        let d = decide_inner(&make_input("/home/user/.ssh/id_rsa"), &config, &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "floor"),
+            _ => panic!("Floor must deny even with allow_paths"),
         }
-        panic!("Floor rules must match /.ssh/ path");
+    }
+
+    // Allow path exemption (probing/gaming only)
+
+    #[test]
+    fn decide_allow_path_exempts_probing() {
+        let config = Config {
+            probing: Some(Severity::Block),
+            gaming: None,
+            allow_paths: vec!["/home/user/.claude/hooks/".to_string()],
+        };
+        let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
+        assert!(matches!(d, HookDecision::Allow));
+    }
+
+    // Layer 2: Probing
+
+    #[test]
+    fn decide_probing_block_denies() {
+        let config = Config { probing: Some(Severity::Block), gaming: None, allow_paths: vec![] };
+        let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Probing block must deny"),
+        }
     }
 
     #[test]
-    fn decide_floor_aws_always_denied() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.aws/credentials";
-        let matched = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Floor rules must match /.aws/ path");
+    fn decide_probing_warn_warns() {
+        let config = Config { probing: Some(Severity::Warn), gaming: None, allow_paths: vec![] };
+        let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
+        match d {
+            HookDecision::Warn { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Probing warn must warn"),
+        }
     }
 
     #[test]
-    fn decide_floor_gnupg_always_denied() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.gnupg/secring.gpg";
-        let matched = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Floor rules must match /.gnupg/ path");
-    }
-
-    #[test]
-    fn decide_floor_kube_always_denied() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.kube/config";
-        let matched = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Floor rules must match /.kube/config path");
-    }
-
-    #[test]
-    fn decide_floor_docker_always_denied() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.docker/config.json";
-        let matched = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Floor rules must match /.docker/config.json path");
-    }
-
-    #[test]
-    fn decide_floor_netrc_always_denied() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.netrc";
-        let matched = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Floor rules must match /.netrc path");
-    }
-
-    #[test]
-    fn decide_probing_hooks_detected() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.claude/hooks/pre_tool";
-        let matched = rules.probing.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Probing rules must match /.claude/hooks/ path");
+    fn decide_probing_disabled_allows() {
+        let config = Config { probing: None, gaming: None, allow_paths: vec![] };
+        let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
+        assert!(matches!(d, HookDecision::Allow));
     }
 
     #[test]
     fn decide_probing_gleipnir_detected() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/project/.gleipnir/rules.toml";
-        let matched = rules.probing.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Probing rules must match /.gleipnir/ path");
+        let d = decide_inner(&make_input("/project/.gleipnir/rules.toml"), &config_all_block(), &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Gleipnir probing must be detected"),
+        }
     }
 
     #[test]
     fn decide_probing_settings_detected() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/.claude/settings.json";
-        let matched = rules.probing.iter().any(|r| target.contains(&r.pattern));
-        assert!(matched, "Probing rules must match /.claude/settings path");
+        let d = decide_inner(&make_input("/home/user/.claude/settings.json"), &config_all_block(), &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Settings probing must be detected"),
+        }
+    }
+
+    // Layer 3: Gaming
+
+    #[test]
+    fn decide_gaming_block_denies() {
+        // Use a gaming pattern — need to check what gaming rules exist
+        let rules = default_rules();
+        if rules.gaming.is_empty() {
+            // No gaming rules currently defined — skip
+            return;
+        }
+        let target = format!("/some/path/{}", rules.gaming[0].pattern);
+        let config = Config { probing: None, gaming: Some(Severity::Block), allow_paths: vec![] };
+        let d = decide_inner(&make_input(&target), &config, &rules);
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "gaming"),
+            _ => panic!("Gaming block must deny"),
+        }
     }
 
     #[test]
-    fn decide_benign_path_not_flagged() {
-        let rules = parse_rules(RULES_TOML).unwrap();
-        let target = "/home/user/project/src/main.rs";
-        let floor_match = rules.floor.iter().any(|r| target.contains(&r.pattern));
-        let probing_match = rules.probing.iter().any(|r| target.contains(&r.pattern));
-        let gaming_match = rules.gaming.iter().any(|r| target.contains(&r.pattern));
-        assert!(!floor_match, "Benign path must not match floor");
-        assert!(!probing_match, "Benign path must not match probing");
-        assert!(!gaming_match, "Benign path must not match gaming");
+    fn decide_gaming_warn_warns() {
+        let rules = default_rules();
+        if rules.gaming.is_empty() {
+            return;
+        }
+        let target = format!("/some/path/{}", rules.gaming[0].pattern);
+        let config = Config { probing: None, gaming: Some(Severity::Warn), allow_paths: vec![] };
+        let d = decide_inner(&make_input(&target), &config, &rules);
+        match d {
+            HookDecision::Warn { category, .. } => assert_eq!(category, "gaming"),
+            _ => panic!("Gaming warn must warn"),
+        }
+    }
+
+    // Layer 4: Allow
+
+    #[test]
+    fn decide_benign_path_allowed() {
+        let d = decide_inner(&make_input("/home/user/project/src/main.rs"), &config_all_block(), &default_rules());
+        assert!(matches!(d, HookDecision::Allow));
     }
 
     #[test]
-    fn decide_no_path_in_input_allows() {
-        // When tool_input has no file_path or path, decide() returns Allow
-        let input = make_hook_input_no_path();
-        // We can't call decide() directly due to parse_config() reading CLI args,
-        // but we can verify the extraction logic:
-        let target = input.tool_input
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .or_else(|| input.tool_input.get("path").and_then(|v| v.as_str()));
-        assert!(target.is_none(), "No path should be extractable");
-    }
-
-    #[test]
-    fn decide_path_field_also_works() {
-        // Glob/Grep tools use "path" instead of "file_path"
+    fn decide_no_path_in_input_allowed() {
         let input = HookInput {
-            tool_name: Some("Grep".to_string()),
-            tool_input: serde_json::json!({ "path": "/home/user/.ssh/keys" }),
+            tool_name: Some("Read".to_string()),
+            tool_input: serde_json::json!({}),
         };
-        let target = input.tool_input
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .or_else(|| input.tool_input.get("path").and_then(|v| v.as_str()));
-        assert_eq!(target, Some("/home/user/.ssh/keys"));
+        let d = decide_inner(&input, &config_all_block(), &default_rules());
+        assert!(matches!(d, HookDecision::Allow));
+    }
+
+    #[test]
+    fn decide_path_field_works() {
+        // Glob/Grep use "path" instead of "file_path"
+        let d = decide_inner(&make_input_path_field("/home/user/.ssh/keys"), &config_disabled(), &default_rules());
+        match d {
+            HookDecision::Deny { category, .. } => assert_eq!(category, "floor"),
+            _ => panic!("path field must be recognized"),
+        }
+    }
+
+    // Priority: probing checked before gaming
+
+    #[test]
+    fn decide_probing_takes_priority_over_gaming() {
+        // A path matching probing should return probing decision even if gaming is also configured
+        let d = decide_inner(
+            &make_input("/home/user/.claude/hooks/pre_tool"),
+            &config_all_warn(),
+            &default_rules(),
+        );
+        match d {
+            HookDecision::Warn { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Probing must take priority over gaming"),
+        }
     }
 }

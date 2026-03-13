@@ -68,7 +68,7 @@ pub fn run_gleipnir(file_path: &Path) -> Vec<Issue> {
         Ok(bytes) => bytes,
         Err(_) => return Vec::new(),
     };
-    gleipnir_core::run_checks(&file_path.to_string_lossy(), &source, None)
+    gleipnir_core::run_checks(&file_path.to_string_lossy(), &source)
         .into_iter()
         .map(violation_to_issue)
         .collect()
@@ -241,13 +241,7 @@ pub fn generate_report(file_path: &Path, project_root: Option<&Path>) -> SanityR
     let relative_path = project_root
         .and_then(|root| file_path.strip_prefix(root).ok())
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| {
-            file_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-        });
+        .unwrap_or_else(|| tail_path(&file_path, 3));
 
     let content_hash = hash_file(&file_path).unwrap_or_default();
     let total = issues.len();
@@ -302,7 +296,7 @@ pub fn generate_report_from_content(
     let relative_path = project_root
         .and_then(|root| file_path.strip_prefix(root).ok())
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| file_name.to_string());
+        .unwrap_or_else(|| tail_path(file_path, 3));
 
     let content_hash = hash_content(content);
     let total = issues.len();
@@ -417,6 +411,17 @@ pub fn find_files(
 
 /// Directories always skipped during recursive file discovery.
 const SKIP_DIRS: &[&str] = &["__pycache__", "node_modules", ".venv", "venv", "target"];
+
+/// Last N path components as a string. Disambiguates `lib.rs` across crates.
+fn tail_path(path: &Path, depth: usize) -> String {
+    let components: Vec<_> = path.components().collect();
+    let start = components.len().saturating_sub(depth);
+    components[start..]
+        .iter()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .to_string()
+}
 
 fn hash_content(content: &str) -> String {
     use sha2::{Digest, Sha256};

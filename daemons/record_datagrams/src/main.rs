@@ -12,11 +12,13 @@
 //! Protocol: one JSON line per connection (connect, write line, disconnect).
 //! Same protocol as datagram's try_emit().
 
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use clap::Parser;
 
 // =============================================================================
 // Constants
@@ -30,59 +32,22 @@ const READ_TIMEOUT: Duration = Duration::from_secs(2);
 // Types
 // =============================================================================
 
-#[derive(Debug)]
-struct Config {
+fn default_log_dir() -> PathBuf {
+    let home = std::env::var("HOME");
+    PathBuf::from(home.as_deref().unwrap_or("/tmp")).join(DEFAULT_LOG_DIR)
+}
+
+/// Persistent datagram logger — listens on a Unix socket and writes daily JSONL logs.
+#[derive(Debug, Parser)]
+#[command(name = "record_datagrams")]
+struct Args {
+    /// Unix socket path to listen on
+    #[arg(long, default_value = DEFAULT_SOCKET_PATH)]
     socket_path: PathBuf,
+
+    /// Directory for daily JSONL log files
+    #[arg(long, default_value_os_t = default_log_dir())]
     log_dir: PathBuf,
-}
-
-// =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut socket_path = None;
-    let mut log_dir = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--socket-path" => {
-                i += 1;
-                socket_path = Some(PathBuf::from(
-                    args.get(i).ok_or("--socket-path requires a value")?,
-                ));
-            }
-            "--log-dir" => {
-                i += 1;
-                log_dir = Some(PathBuf::from(
-                    args.get(i).ok_or("--log-dir requires a value")?,
-                ));
-            }
-            other => {
-                return Err(format!("unknown argument: {other}"));
-            }
-        }
-        i += 1;
-    }
-
-    let socket_path = socket_path.unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET_PATH));
-
-    let log_dir = log_dir.unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        PathBuf::from(home).join(DEFAULT_LOG_DIR)
-    });
-
-    Ok(Config {
-        socket_path,
-        log_dir,
-    })
-}
-
-fn print_usage() {
-    eprintln!(
-        "Usage: record_datagrams [--socket-path <path>] [--log-dir <path>]"
-    );
 }
 
 // =============================================================================
@@ -98,10 +63,10 @@ fn today() -> String {
 
     let days = secs / 86400;
     // Civil date from days since epoch (simplified, handles 1970-2099)
-    let mut y = 1970i64;
+    let mut year = 1970i64;
     let mut remaining = days as i64;
     loop {
-        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+        let year_days = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
             366
         } else {
             365
@@ -110,47 +75,28 @@ fn today() -> String {
             break;
         }
         remaining -= year_days;
-        y += 1;
+        year += 1;
     }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let month_days = [
         31,
         if leap { 29 } else { 28 },
         31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
     ];
-    let mut m = 0usize;
+    let mut month = 0usize;
     for md in &month_days {
         if remaining < *md as i64 {
             break;
         }
         remaining -= *md as i64;
-        m += 1;
+        month += 1;
     }
-    format!("{y:04}-{:02}-{:02}", m + 1, remaining + 1)
+    format!("{year:04}-{:02}-{:02}", month + 1, remaining + 1)
 }
 
 /// Path to today's log file.
 fn log_path(log_dir: &Path) -> PathBuf {
     log_dir.join(format!("datagrams_{}.jsonl", today()))
-}
-
-/// Append a line to the log file.
-fn append_log(log_dir: &Path, line: &str) -> Result<(), String> {
-    let path = log_path(log_dir);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    file.write_all(line.as_bytes())
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    if !line.ends_with('\n') {
-        file.write_all(b"\n")
-            .map_err(|e| format!("write newline {}: {e}", path.display()))?;
-    }
-    file.flush()
-        .map_err(|e| format!("flush {}: {e}", path.display()))?;
-    Ok(())
 }
 
 // =============================================================================
@@ -166,120 +112,101 @@ fn cleanup_socket(path: &Path) {
     }
 }
 
-/// Install signal handler for clean shutdown.
-fn install_shutdown_handler(socket_path: PathBuf) {
-    // Store path for cleanup on ctrl-c
-    ctrlc_cleanup(socket_path);
-}
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
-/// Register cleanup on SIGINT/SIGTERM using atexit-style approach.
-/// On ctrl-c, remove the socket file then exit.
-fn ctrlc_cleanup(socket_path: PathBuf) {
-    // Use a simple atomic flag — on signal, set flag, main loop checks it
-    unsafe {
-        SHUTDOWN_SOCKET_PATH = Some(socket_path);
-    }
-    register_signal(SIGINT, shutdown_handler);
-    register_signal(SIGTERM, shutdown_handler);
-}
-
-// Signal constants (macOS/Linux compatible)
-const SIGINT: i32 = 2;
-const SIGTERM: i32 = 15;
-
-extern "C" {
-    fn signal(sig: i32, handler: usize) -> usize;
-}
-
-fn register_signal(sig: i32, handler: extern "C" fn(i32)) {
-    unsafe {
-        signal(sig, handler as *const () as usize);
-    }
-}
-
-static mut SHUTDOWN_SOCKET_PATH: Option<PathBuf> = None;
-static mut SHUTDOWN_FLAG: bool = false;
+static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN_SOCKET_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 extern "C" fn shutdown_handler(_sig: i32) {
-    unsafe {
-        SHUTDOWN_FLAG = true;
-        if let Some(ref path) = SHUTDOWN_SOCKET_PATH {
-            let _ = fs::remove_file(path);
-        }
-    }
-    std::process::exit(0);
+    SHUTDOWN_FLAG.store(true, Ordering::Relaxed);
 }
 
-fn should_shutdown() -> bool {
-    unsafe { SHUTDOWN_FLAG }
+/// Store socket path and register SIGINT/SIGTERM handlers.
+fn install_shutdown_handler(socket_path: PathBuf) {
+    let _ = SHUTDOWN_SOCKET_PATH.set(socket_path);
+    unsafe {
+        libc::signal(libc::SIGINT, shutdown_handler as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, shutdown_handler as libc::sighandler_t);
+    }
 }
 
 // =============================================================================
 // Main loop
 // =============================================================================
 
-fn run(config: &Config) -> Result<(), String> {
-    fs::create_dir_all(&config.log_dir)
-        .map_err(|e| format!("mkdir {}: {e}", config.log_dir.display()))?;
+fn is_transient_io_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+}
 
-    cleanup_socket(&config.socket_path);
-    install_shutdown_handler(config.socket_path.clone());
-
-    let listener = UnixListener::bind(&config.socket_path)
-        .map_err(|e| format!("bind {}: {e}", config.socket_path.display()))?;
-
-    eprintln!(
-        "record_datagrams listening on {}",
-        config.socket_path.display()
-    );
-    eprintln!("logging to {}", config.log_dir.display());
-
-    let mut count: u64 = 0;
-
-    for stream in listener.incoming() {
-        if should_shutdown() {
-            break;
-        }
-
-        let stream = match stream {
-            Ok(s) => s,
+fn process_stream(stream: std::os::unix::net::UnixStream, log_dir: &Path, count: &mut u64) {
+    let reader = BufReader::new(stream);
+    for line in reader.lines() {
+        let text = match line {
+            Ok(text) => text,
             Err(e) => {
-                eprintln!("accept error: {e}");
-                continue;
+                if !is_transient_io_error(&e) {
+                    eprintln!("read error: {e}");
+                }
+                break;
             }
         };
-
-        // Best-effort timeout — some macOS socket configs reject this
-        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-
-        let reader = BufReader::new(stream);
-        for line in reader.lines() {
-            match line {
-                Ok(line) if !line.trim().is_empty() => {
-                    if let Err(e) = append_log(&config.log_dir, &line) {
-                        eprintln!("log error: {e}");
-                    } else {
-                        count += 1;
-                        if count % 100 == 0 {
-                            eprintln!("recorded {count} datagrams");
-                        }
-                    }
-                }
-                Ok(_) => {} // empty line, skip
-                Err(e) => {
-                    // Read timeout or connection reset — normal
-                    if e.kind() != std::io::ErrorKind::WouldBlock
-                        && e.kind() != std::io::ErrorKind::TimedOut
-                    {
-                        eprintln!("read error: {e}");
-                    }
-                    break;
+        if text.trim().is_empty() {
+            continue;
+        }
+        match write_engine::append_line_fsync(&log_path(log_dir), &text) {
+            Err(e) => eprintln!("log error: {e}"),
+            Ok(()) => {
+                *count += 1;
+                if *count % 100 == 0 {
+                    eprintln!("recorded {} datagrams", *count);
                 }
             }
         }
     }
+}
 
-    cleanup_socket(&config.socket_path);
+fn run(args: Args) -> Result<(), String> {
+    fs::create_dir_all(&args.log_dir)
+        .map_err(|e| format!("mkdir {}: {e}", args.log_dir.display()))?;
+
+    cleanup_socket(&args.socket_path);
+
+    let listener = UnixListener::bind(&args.socket_path)
+        .map_err(|e| format!("bind {}: {e}", args.socket_path.display()))?;
+
+    eprintln!("record_datagrams listening on {}", args.socket_path.display());
+    eprintln!("logging to {}", args.log_dir.display());
+
+    let log_dir = args.log_dir;
+    install_shutdown_handler(args.socket_path);
+
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("set_nonblocking: {e}"))?;
+
+    let mut count: u64 = 0;
+
+    loop {
+        if SHUTDOWN_FLAG.load(Ordering::Relaxed) {
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                process_stream(stream, &log_dir, &mut count);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => eprintln!("accept error: {e}"),
+        }
+    }
+
+    if let Some(path) = SHUTDOWN_SOCKET_PATH.get() {
+        cleanup_socket(path);
+    }
+    eprintln!("shutdown after {count} datagrams");
     Ok(())
 }
 
@@ -288,18 +215,9 @@ fn run(config: &Config) -> Result<(), String> {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse();
 
-    let config = match parse_args(&args) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            print_usage();
-            std::process::exit(2);
-        }
-    };
-
-    match run(&config) {
+    match run(args) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("error: {e}");
@@ -316,47 +234,40 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     // =========================================================================
-    // parse_args
+    // arg parsing (clap)
     // =========================================================================
 
     #[test]
     fn parse_args_defaults() {
-        let a = args(&[]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.socket_path, PathBuf::from(DEFAULT_SOCKET_PATH));
+        let args = Args::try_parse_from(["record_datagrams"]).unwrap();
+        assert_eq!(args.socket_path, PathBuf::from(DEFAULT_SOCKET_PATH));
     }
 
     #[test]
     fn parse_args_custom_socket() {
-        let a = args(&["--socket-path", "/tmp/custom.sock"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.socket_path, PathBuf::from("/tmp/custom.sock"));
+        let args = Args::try_parse_from(["record_datagrams", "--socket-path", "/tmp/custom.sock"]).unwrap();
+        assert_eq!(args.socket_path, PathBuf::from("/tmp/custom.sock"));
     }
 
     #[test]
     fn parse_args_custom_log_dir() {
-        let a = args(&["--log-dir", "/tmp/logs"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.log_dir, PathBuf::from("/tmp/logs"));
+        let args = Args::try_parse_from(["record_datagrams", "--log-dir", "/tmp/logs"]).unwrap();
+        assert_eq!(args.log_dir, PathBuf::from("/tmp/logs"));
     }
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&["--banana"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["record_datagrams", "--banana"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--banana"), "should mention unknown flag: {err}");
     }
 
     #[test]
     fn parse_args_socket_path_missing_value() {
-        let a = args(&["--socket-path"]);
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--socket-path"), "should mention flag: {err}");
+        let result = Args::try_parse_from(["record_datagrams", "--socket-path"]);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("socket-path"), "should mention flag: {err}");
     }
 
     // =========================================================================
@@ -385,41 +296,24 @@ mod tests {
     }
 
     // =========================================================================
-    // append_log
+    // append via write_engine
     // =========================================================================
 
     #[test]
-    fn append_log_creates_and_appends() {
+    fn append_creates_and_appends_via_write_engine() {
         let dir = std::env::temp_dir().join("rd_test_append");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        append_log(&dir, r#"{"test": 1}"#).unwrap();
-        append_log(&dir, r#"{"test": 2}"#).unwrap();
-
         let path = log_path(&dir);
+        write_engine::append_line_fsync(&path, r#"{"test": 1}"#).unwrap();
+        write_engine::append_line_fsync(&path, r#"{"test": 2}"#).unwrap();
+
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], r#"{"test": 1}"#);
         assert_eq!(lines[1], r#"{"test": 2}"#);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn append_log_adds_newline_if_missing() {
-        let dir = std::env::temp_dir().join("rd_test_newline");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        append_log(&dir, "line without newline").unwrap();
-        append_log(&dir, "line with newline\n").unwrap();
-
-        let path = log_path(&dir);
-        let content = fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 2);
 
         let _ = fs::remove_dir_all(&dir);
     }

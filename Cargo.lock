@@ -107,7 +107,7 @@ name = "append_embedding_normalize_batch_20"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
- "write_core",
+ "write_engine",
 ]
 
 [[package]]
@@ -115,7 +115,7 @@ name = "append_interview_summaries_record"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
- "write_core",
+ "write_engine",
 ]
 
 [[package]]
@@ -123,7 +123,7 @@ name = "append_raw_jsonl"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
- "write_core",
+ "write_engine",
 ]
 
 [[package]]
@@ -131,7 +131,7 @@ name = "append_truth_qc_report_record"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
- "write_core",
+ "write_engine",
 ]
 
 [[package]]
@@ -515,6 +515,7 @@ version = "0.1.0"
 dependencies = [
  "format_core",
  "serde_json",
+ "write_engine",
 ]
 
 [[package]]
@@ -1374,6 +1375,7 @@ name = "hook_pre_subagent_bash"
 version = "0.1.0"
 dependencies = [
  "hook_io",
+ "path_core",
  "regex",
  "serde_json",
 ]
@@ -1654,6 +1656,7 @@ dependencies = [
  "format_core",
  "pyo3",
  "serde_json",
+ "write_engine",
 ]
 
 [[package]]
@@ -2338,8 +2341,11 @@ dependencies = [
 name = "record_datagrams"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "datagram",
+ "libc",
  "serde_json",
+ "write_engine",
 ]
 
 [[package]]
@@ -2462,6 +2468,7 @@ dependencies = [
 name = "rewrite_compaction_summary"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "compaction_inject_core",
  "serde_json",
 ]
@@ -2514,6 +2521,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "saga_cli"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "saga_runner",
  "serde",
  "serde_json",
@@ -2580,6 +2588,7 @@ dependencies = [
 name = "send_datagram"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "datagram",
  "serde_json",
 ]
@@ -2763,6 +2772,8 @@ dependencies = [
 name = "split_jsonl_batches"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "path_core",
  "serde",
  "serde_json",
 ]
@@ -2828,14 +2839,25 @@ dependencies = [
 name = "syn_cli"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "datagram",
+ "report_render_core",
+ "saga_runner",
+ "serde_json",
+ "syn_core",
+ "toml",
+]
+
+[[package]]
+name = "syn_core"
+version = "0.1.0"
+dependencies = [
  "jaq-interpret",
  "jaq-parse",
  "report_render_core",
- "saga_runner",
+ "saga_core",
  "serde",
  "serde_json",
- "toml",
 ]
 
 [[package]]
@@ -3120,9 +3142,11 @@ dependencies = [
 name = "traffic_interceptor_rewriter"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "compaction_inject_core",
  "datagram",
  "serde_json",
+ "write_engine",
 ]
 
 [[package]]
@@ -3399,6 +3423,7 @@ dependencies = [
 name = "watch_and_diff_exchange_intercepts"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "datagram",
  "diff_core",
  "serde",
@@ -3683,10 +3708,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
 
 [[package]]
-name = "write_core"
+name = "write_engine"
 version = "0.1.0"
 dependencies = [
  "error_core",
+ "path_core",
  "schema_core",
  "serde_json",
 ]
@@ -3696,7 +3722,7 @@ name = "write_truth_glossary_record"
 version = "0.1.0"
 dependencies = [
  "schemas_embedded",
- "write_core",
+ "write_engine",
 ]
 
 [[package]]

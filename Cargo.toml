@@ -4,6 +4,7 @@ members = [
     "core/format_core",
     "core/schema_core",
     "core/path_core",
+    "core/syn_core",
     "capability/schemas_embedded",
     "capability/path_verify",
     "capability/io_filter",
@@ -51,7 +52,7 @@ members = [
     "cli/check_universal_format",
     "cli/check_universal_render",
     "cli/check_anthropic_render",
-    "capability/write_core",
+    "capability/write_engine",
     "writers/append_truth_qc_report_record",
     "writers/write_truth_glossary_record",
     "writers/append_embedding_normalize_batch_20",
@@ -104,3 +105,5 @@ tree-sitter-python = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
