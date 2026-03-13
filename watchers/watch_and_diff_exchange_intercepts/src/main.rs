@@ -1,4 +1,5 @@
-use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, Exchange};
+use clap::Parser;
+use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, DatagramContext, Exchange};
 use datagram::emit_validated_or_alert;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
@@ -15,81 +16,50 @@ enum Mode {
     Watch,
 }
 
-#[derive(Debug)]
-struct Config {
-    mode: Mode,
+/// Watch or replay bifrost exchange intercepts, diffing consecutive exchanges.
+#[derive(Debug, Parser)]
+#[command(name = "watch_and_diff_exchange_intercepts")]
+struct Args {
+    /// Replay mode — process entire file from start
+    #[arg(long, group = "mode")]
+    replay: bool,
+
+    /// Watch mode — tail file for new exchanges
+    #[arg(long, group = "mode")]
+    watch: bool,
+
+    /// Path to mainexch JSONL file
+    #[arg(long)]
     jsonl_path: String,
-    workspace: String,
-    pace: Option<(u64, u64)>, // min_ms, max_ms
+
+    /// Workspace name (auto-derived from path if omitted)
+    #[arg(long)]
+    workspace: Option<String>,
+
+    /// Pacing as min:max milliseconds (e.g. 800:3000)
+    #[arg(long, value_parser = parse_pace_arg)]
+    pace: Option<(u64, u64)>,
+}
+
+fn resolve_mode(args: &Args) -> Result<Mode, String> {
+    match (args.replay, args.watch) {
+        (true, false) => Ok(Mode::Replay),
+        (false, true) => Ok(Mode::Watch),
+        _ => Err("--replay or --watch is required".into()),
+    }
+}
+
+fn parse_pace_arg(input: &str) -> Result<(u64, u64), String> {
+    parse_pace(input)
 }
 
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-// =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut mode = None;
-    let mut jsonl_path = None;
-    let mut workspace = None;
-    let mut pace = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--replay" => {
-                mode = Some(Mode::Replay);
-            }
-            "--watch" => {
-                mode = Some(Mode::Watch);
-            }
-            "--jsonl-path" => {
-                i += 1;
-                jsonl_path = Some(
-                    args.get(i)
-                        .ok_or("--jsonl-path requires a value")?
-                        .clone(),
-                );
-            }
-            "--workspace" => {
-                i += 1;
-                workspace = Some(
-                    args.get(i)
-                        .ok_or("--workspace requires a value")?
-                        .clone(),
-                );
-            }
-            "--pace" => {
-                i += 1;
-                let val = args.get(i).ok_or("--pace requires a value (e.g. 800:3000)")?;
-                pace = Some(parse_pace(val)?);
-            }
-            other => {
-                return Err(format!("Unknown flag: {other}"));
-            }
-        }
-        i += 1;
-    }
-
-    let mode = mode.ok_or("--replay or --watch is required")?;
-    let jsonl_path = jsonl_path.ok_or("--jsonl-path is required")?;
-
-    let workspace = workspace.unwrap_or_else(|| workspace_from_path(&jsonl_path));
-
-    Ok(Config {
-        mode,
-        jsonl_path,
-        workspace,
-        pace,
-    })
-}
-
 /// Parse "min:max" pace string into (min_ms, max_ms).
-fn parse_pace(val: &str) -> Result<(u64, u64), String> {
-    let parts: Vec<&str> = val.split(':').collect();
+fn parse_pace(input: &str) -> Result<(u64, u64), String> {
+    let parts: Vec<&str> = input.split(':').collect();
     if parts.len() != 2 {
-        return Err(format!("--pace expects min:max (e.g. 800:3000), got: {val}"));
+        return Err(format!("--pace expects min:max (e.g. 800:3000), got: {input}"));
     }
     let min: u64 = parts[0].parse().map_err(|_| format!("Invalid pace min: {}", parts[0]))?;
     let max: u64 = parts[1].parse().map_err(|_| format!("Invalid pace max: {}", parts[1]))?;
@@ -110,24 +80,14 @@ fn jitter_sleep(min_ms: u64, max_ms: u64, seed: &mut u64) {
     std::thread::sleep(Duration::from_millis(delay));
 }
 
-/// Derive workspace name from JSONL path.
+/// Derive workspace name from JSONL path's parent directory.
 /// Path convention: .../traffic/{workspace}/{session_id}.jsonl
-fn workspace_from_path(path: &str) -> String {
-    let p = Path::new(path);
-    p.parent()
+fn workspace_from_parent_dir(path: &str) -> String {
+    let parsed = Path::new(path);
+    parsed.parent()
         .and_then(|dir| dir.file_name())
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-// =============================================================================
-// Help
-// =============================================================================
-
-fn print_usage() {
-    eprintln!(
-        "Usage: watch_and_diff_exchange_intercepts (--replay|--watch) --jsonl-path <path> [--workspace <name>] [--pace min:max]"
-    );
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 // =============================================================================
@@ -144,25 +104,25 @@ fn diff_and_emit(
 ) -> Option<serde_json::Value> {
     match previous {
         None => {
-            let new_messages = current.messages.clone();
-            if !new_messages.is_empty() {
-                let dg = build_datagram(
-                    &new_messages,
-                    &[],
-                    &[],
-                    workspace,
-                    datagram::Priority::Low,
-                    source_ref,
-                    true, // startup — first exchange
-                    datagram::now(),
-                );
-                let payload = dg.payload.clone();
-                if !emit_validated_or_alert(&dg, "bifrost_watcher") {
-                    return None;
-                }
-                return payload;
+            if current.messages.is_empty() {
+                return None;
             }
-            None
+            let dg = build_datagram(
+                &current.messages,
+                &[],
+                &[],
+                &DatagramContext {
+                    workspace,
+                    priority: datagram::Priority::Low,
+                    source_ref,
+                    is_startup: true,
+                    timestamp: datagram::now(),
+                },
+            );
+            if !emit_validated_or_alert(&dg, "bifrost_watcher") {
+                return None;
+            }
+            dg.payload
         }
         Some(prev) => {
             let new_messages = diff_messages(&prev.messages, &current.messages);
@@ -178,17 +138,18 @@ fn diff_and_emit(
                 &new_messages,
                 &new_system,
                 &new_tools,
-                workspace,
-                priority,
-                source_ref,
-                false,
-                datagram::now(),
+                &DatagramContext {
+                    workspace,
+                    priority,
+                    source_ref,
+                    is_startup: false,
+                    timestamp: datagram::now(),
+                },
             );
-            let payload = dg.payload.clone();
             if !emit_validated_or_alert(&dg, "bifrost_watcher") {
                 return None;
             }
-            payload
+            dg.payload
         }
     }
 }
@@ -202,9 +163,7 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
-    let filename = path.file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let compact = datagram::compact_path(&path.to_string_lossy());
 
     let transcript_path = transcript_path_for(path);
     let mut transcript = open_transcript(&transcript_path)?;
@@ -230,7 +189,7 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
             .map_err(|e| format!("Line {line_number}: invalid JSON: {e}"))?;
 
         let current = split_exchange(&value);
-        let source_ref = format!("{filename}:{line_number}");
+        let source_ref = format!("{compact}:{line_number}");
 
         if let Some(payload) = diff_and_emit(&previous, &current, workspace, &source_ref) {
             append_transcript(&mut transcript, &payload);
@@ -253,23 +212,78 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
 // Watch
 // =============================================================================
 
+fn accumulate_line(partial: &mut String, chunk: &str) -> Option<serde_json::Value> {
+    partial.push_str(chunk);
+    if !partial.ends_with('\n') {
+        return None;
+    }
+    let trimmed = partial.trim();
+    if trimmed.is_empty() {
+        partial.clear();
+        return None;
+    }
+    let result = match serde_json::from_str(trimmed) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("Skipping malformed line: {e}");
+            None
+        }
+    };
+    partial.clear();
+    result
+}
+
+struct WatchState {
+    filename: String,
+    previous: Option<Exchange>,
+    datagrams_emitted: u64,
+    exchanges_processed: u64,
+    line_number: u64,
+    partial_line: String,
+}
+
+fn process_exchange(
+    state: &mut WatchState,
+    value: &serde_json::Value,
+    workspace: &str,
+    transcript: &mut File,
+) {
+    state.line_number += 1;
+    state.exchanges_processed += 1;
+
+    let current = split_exchange(value);
+    let source_ref = format!("{}:{}", state.filename, state.line_number);
+
+    if let Some(payload) = diff_and_emit(&state.previous, &current, workspace, &source_ref) {
+        append_transcript(transcript, &payload);
+        state.datagrams_emitted += 1;
+    }
+
+    state.previous = Some(current);
+
+    if state.exchanges_processed % 50 == 0 {
+        eprintln!(
+            "Watch: {} exchanges, {} datagrams",
+            state.exchanges_processed, state.datagrams_emitted
+        );
+    }
+}
+
 /// Tail a JSONL file, diffing new exchanges as they appear.
 /// Seeks to end of file (or start if file doesn't exist yet), polls for new lines.
 fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
-    let filename = path.file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
     let transcript_path = transcript_path_for(path);
     let mut transcript = open_transcript(&transcript_path)?;
 
-    let mut previous: Option<Exchange> = None;
-    let mut datagrams_emitted = 0u64;
-    let mut exchanges_processed = 0u64;
-    let mut line_number = 0u64;
-    let mut partial_line = String::new();
+    let mut state = WatchState {
+        filename: datagram::compact_path(&path.to_string_lossy()),
+        previous: None,
+        datagrams_emitted: 0,
+        exchanges_processed: 0,
+        line_number: 0,
+        partial_line: String::new(),
+    };
 
-    // Wait for file to exist
     while !path.exists() {
         eprintln!("Waiting for {} ...", path.display());
         std::thread::sleep(Duration::from_secs(2));
@@ -278,72 +292,30 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
 
-    // Count existing lines to get correct line numbers for source refs
     {
         let reader = BufReader::new(&mut file);
         for _ in reader.lines() {
-            line_number += 1;
+            state.line_number += 1;
         }
     }
 
-    // Seek to end — only process new lines
     file.seek(SeekFrom::End(0))
         .map_err(|e| format!("Failed to seek {}: {e}", path.display()))?;
 
     let mut reader = BufReader::new(file);
 
     eprintln!(
-        "Watching {} (workspace: {workspace}, starting at line {line_number})",
-        path.display()
+        "Watching {} (workspace: {workspace}, starting at line {})",
+        path.display(), state.line_number
     );
 
     loop {
         let mut line = String::new();
         match reader.read_line(&mut line) {
-            Ok(0) => {
-                std::thread::sleep(WATCH_POLL_INTERVAL);
-                continue;
-            }
+            Ok(0) => std::thread::sleep(WATCH_POLL_INTERVAL),
             Ok(_) => {
-                partial_line.push_str(&line);
-
-                if !partial_line.ends_with('\n') {
-                    continue;
-                }
-
-                let trimmed = partial_line.trim();
-                if trimmed.is_empty() {
-                    partial_line.clear();
-                    continue;
-                }
-
-                let value: serde_json::Value = match serde_json::from_str(trimmed) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("Skipping malformed line: {e}");
-                        partial_line.clear();
-                        continue;
-                    }
-                };
-
-                partial_line.clear();
-                line_number += 1;
-                exchanges_processed += 1;
-
-                let current = split_exchange(&value);
-                let source_ref = format!("{filename}:{line_number}");
-
-                if let Some(payload) = diff_and_emit(&previous, &current, workspace, &source_ref) {
-                    append_transcript(&mut transcript, &payload);
-                    datagrams_emitted += 1;
-                }
-
-                previous = Some(current);
-
-                if exchanges_processed % 50 == 0 {
-                    eprintln!(
-                        "Watch: {exchanges_processed} exchanges, {datagrams_emitted} datagrams"
-                    );
+                if let Some(value) = accumulate_line(&mut state.partial_line, &line) {
+                    process_exchange(&mut state, &value, workspace, &mut transcript);
                 }
             }
             Err(e) => {
@@ -397,20 +369,21 @@ fn append_transcript(file: &mut File, payload: &serde_json::Value) {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args = Args::parse();
 
-    let config = match parse_args(&args[1..]) {
-        Ok(c) => c,
+    let mode = match resolve_mode(&args) {
+        Ok(m) => m,
         Err(e) => {
             eprintln!("{e}");
-            print_usage();
-            std::process::exit(1);
+            std::process::exit(2);
         }
     };
 
-    let result = match config.mode {
-        Mode::Replay => run_replay(Path::new(&config.jsonl_path), &config.workspace, config.pace),
-        Mode::Watch => run_watch(Path::new(&config.jsonl_path), &config.workspace),
+    let workspace = args.workspace.unwrap_or_else(|| workspace_from_parent_dir(&args.jsonl_path));
+
+    let result = match mode {
+        Mode::Replay => run_replay(Path::new(&args.jsonl_path), &workspace, args.pace),
+        Mode::Watch => run_watch(Path::new(&args.jsonl_path), &workspace),
     };
 
     match result {
@@ -428,54 +401,47 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     // =========================================================================
-    // parse_args — valid configurations
+    // arg parsing (clap) — valid configurations
     // =========================================================================
 
     #[test]
     fn parse_args_replay_with_path() {
-        let a = args(&["--replay", "--jsonl-path", "/tmp/session.jsonl"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.mode, Mode::Replay);
-        assert_eq!(config.jsonl_path, "/tmp/session.jsonl");
+        let args = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay", "--jsonl-path", "/tmp/session.jsonl"]).unwrap();
+        assert_eq!(resolve_mode(&args).unwrap(), Mode::Replay);
+        assert_eq!(args.jsonl_path, "/tmp/session.jsonl");
     }
 
     #[test]
     fn parse_args_explicit_workspace() {
-        let a = args(&[
-            "--replay",
-            "--jsonl-path",
-            "/tmp/session.jsonl",
-            "--workspace",
-            "odinn",
-        ]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.workspace, "odinn");
+        let args = Args::try_parse_from([
+            "watch_and_diff_exchange_intercepts",
+            "--replay", "--jsonl-path", "/tmp/session.jsonl",
+            "--workspace", "odinn",
+        ]).unwrap();
+        assert_eq!(args.workspace.as_deref(), Some("odinn"));
     }
 
     #[test]
     fn parse_args_workspace_derived_from_path() {
-        let a = args(&[
-            "--replay",
-            "--jsonl-path",
+        let args = Args::try_parse_from([
+            "watch_and_diff_exchange_intercepts",
+            "--replay", "--jsonl-path",
             "/home/user/.ai/intercept/traffic/odinn/abc123.jsonl",
-        ]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.workspace, "odinn");
+        ]).unwrap();
+        let workspace = args.workspace.unwrap_or_else(|| workspace_from_parent_dir(&args.jsonl_path));
+        assert_eq!(workspace, "odinn");
     }
 
     // =========================================================================
-    // parse_args — missing required flags
+    // arg parsing — missing required flags
     // =========================================================================
 
     #[test]
     fn parse_args_missing_mode() {
-        let a = args(&["--jsonl-path", "/tmp/session.jsonl"]);
-        let err = parse_args(&a).unwrap_err();
+        // clap won't error on missing mode (they're optional bools), resolve_mode will
+        let args = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--jsonl-path", "/tmp/session.jsonl"]).unwrap();
+        let err = resolve_mode(&args).unwrap_err();
         assert!(
             err.contains("--replay") || err.contains("--watch"),
             "error should mention mode flags: {err}"
@@ -484,15 +450,14 @@ mod tests {
 
     #[test]
     fn parse_args_watch_mode() {
-        let a = args(&["--watch", "--jsonl-path", "/tmp/session.jsonl"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.mode, Mode::Watch);
+        let args = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--watch", "--jsonl-path", "/tmp/session.jsonl"]).unwrap();
+        assert_eq!(resolve_mode(&args).unwrap(), Mode::Watch);
     }
 
     #[test]
     fn parse_args_missing_jsonl_path() {
-        let a = args(&["--replay"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay"]);
+        let err = result.unwrap_err().to_string();
         assert!(
             err.contains("--jsonl-path"),
             "error should mention --jsonl-path: {err}"
@@ -500,13 +465,13 @@ mod tests {
     }
 
     // =========================================================================
-    // parse_args — error cases
+    // arg parsing — error cases
     // =========================================================================
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&["--replay", "--jsonl-path", "/tmp/x.jsonl", "--banana"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay", "--jsonl-path", "/tmp/x.jsonl", "--banana"]);
+        let err = result.unwrap_err().to_string();
         assert!(
             err.contains("--banana"),
             "error should mention unknown flag: {err}"
@@ -515,30 +480,28 @@ mod tests {
 
     #[test]
     fn parse_args_jsonl_path_without_value() {
-        let a = args(&["--replay", "--jsonl-path"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay", "--jsonl-path"]);
+        let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("--jsonl-path"),
+            err.contains("jsonl-path"),
             "error should mention --jsonl-path: {err}"
         );
     }
 
     // =========================================================================
-    // parse_args — pace flag
+    // arg parsing — pace flag
     // =========================================================================
 
     #[test]
     fn parse_args_with_pace() {
-        let a = args(&["--replay", "--jsonl-path", "/tmp/x.jsonl", "--pace", "800:3000"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.pace, Some((800, 3000)));
+        let args = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay", "--jsonl-path", "/tmp/x.jsonl", "--pace", "800:3000"]).unwrap();
+        assert_eq!(args.pace, Some((800, 3000)));
     }
 
     #[test]
     fn parse_args_without_pace() {
-        let a = args(&["--replay", "--jsonl-path", "/tmp/x.jsonl"]);
-        let config = parse_args(&a).unwrap();
-        assert_eq!(config.pace, None);
+        let args = Args::try_parse_from(["watch_and_diff_exchange_intercepts", "--replay", "--jsonl-path", "/tmp/x.jsonl"]).unwrap();
+        assert_eq!(args.pace, None);
     }
 
     // =========================================================================
@@ -568,13 +531,13 @@ mod tests {
     }
 
     // =========================================================================
-    // workspace_from_path
+    // workspace_from_parent_dir
     // =========================================================================
 
     #[test]
     fn workspace_from_traffic_path() {
         assert_eq!(
-            workspace_from_path("/home/user/.ai/intercept/traffic/odinn/session.jsonl"),
+            workspace_from_parent_dir("/home/user/.ai/intercept/traffic/odinn/session.jsonl"),
             "odinn"
         );
     }
@@ -582,6 +545,6 @@ mod tests {
     #[test]
     fn workspace_from_bare_filename() {
         // A bare filename has no parent directory name to use
-        assert_eq!(workspace_from_path("session.jsonl"), "unknown");
+        assert_eq!(workspace_from_parent_dir("session.jsonl"), "unknown");
     }
 }

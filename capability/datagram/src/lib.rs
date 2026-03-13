@@ -179,6 +179,21 @@ pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
     }
 }
 
+/// Compact an absolute path for display.
+///
+/// Paths under `~/.ai/` become `@{relative}` with `/` separators preserved
+/// (e.g. `/Users/johnny/.ai/intercept/traffic/odinn/file.jsonl`
+///    → `@intercept/traffic/odinn/file.jsonl`).
+/// Paths outside `~/.ai/` are returned unchanged.
+pub fn compact_path(path: &str) -> String {
+    let ai_base = ai_base_dir();
+    if let Some(relative) = path.strip_prefix(&ai_base) {
+        format!("@{relative}")
+    } else {
+        path.to_string()
+    }
+}
+
 fn ai_base_dir() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     format!("{home}/.ai/")
@@ -220,5 +235,17 @@ mod tests {
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{home}/.ai/smidja/nornir/");
         assert_eq!(workspace_from_path(Path::new(&path)), "@smidja:nornir");
+    }
+
+    #[test]
+    fn compact_path_under_ai() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{home}/.ai/intercept/traffic/odinn/mainexch_abc.jsonl");
+        assert_eq!(compact_path(&path), "@intercept/traffic/odinn/mainexch_abc.jsonl");
+    }
+
+    #[test]
+    fn compact_path_outside_ai() {
+        assert_eq!(compact_path("/tmp/something"), "/tmp/something");
     }
 }

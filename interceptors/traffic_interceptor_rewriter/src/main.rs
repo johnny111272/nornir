@@ -189,7 +189,10 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
         value,
     )?;
 
-    let precompact_filename = format!("precomp_{}.jsonl", config.session_id);
+    let precompact_path = config.traffic_dir
+        .join(&config.workspace)
+        .join(format!("precomp_{}.jsonl", config.session_id));
+    let precompact_ref = format!("{}:{}", datagram::compact_path(&precompact_path.to_string_lossy()), line);
     let dg = Datagram {
         timestamp: datagram::now(),
         source: "bifrost".into(),
@@ -197,10 +200,10 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
         classifier: None,
         priority: Priority::High,
         workspace: config.workspace.clone(),
-        detail: Some(format!("Compaction detected in {}", config.workspace)),
+        detail: Some(precompact_ref.clone()),
         speech: Some(format!("Compaction detected in {}", config.workspace)),
         payload: Some(serde_json::json!({
-            "precompact": precompact_filename,
+            "precompact": precompact_ref,
             "line": line,
         })),
     };
