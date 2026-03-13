@@ -30,4 +30,4 @@ After schema changes (draupnir regeneration): `./deploy_gates.py`
 - All helper functions return `Result`. Only `main()` calls `process::exit()`.
 - Do not hand-write validation logic in Python. Import the gate module and call `validate()`.
 - Do not bypass the gate API. Every gate returns `{"ok": bool, "data": ..., "error": ...}`. Check `ok` before using `data`.
-- Run `cargo test` before committing. 564 tests across 20 crates must all pass.
+- Run `cargo test` before committing. All tests must pass.

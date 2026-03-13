@@ -34,15 +34,23 @@ pub struct ValidationResult {
     pub issues: TomlxIssues,
 }
 
+/// Mutable state accumulated during validation.
+struct ValidationState {
+    sections: HashMap<String, ValidatedSection>,
+    issues: TomlxIssues,
+    path_registry: PathRegistry,
+}
+
 /// Validate a .tomlx source file.
 pub fn validate_tomlx(source: &str, file: Option<&str>) -> ValidationResult {
-    let mut issues = match file {
-        Some(f) => TomlxIssues::with_file(f),
-        None => TomlxIssues::new(),
+    let mut state = ValidationState {
+        issues: match file {
+            Some(f) => TomlxIssues::with_file(f),
+            None => TomlxIssues::new(),
+        },
+        sections: HashMap::new(),
+        path_registry: PathRegistry::new(),
     };
-
-    let mut sections: HashMap<String, ValidatedSection> = HashMap::new();
-    let mut path_registry = PathRegistry::new();
 
     let section_headers = extract_section_annotations(source);
 
@@ -60,8 +68,8 @@ pub fn validate_tomlx(source: &str, file: Option<&str>) -> ValidationResult {
                         (ann.section_path.clone(), *line, end, Some(ann.clone()))
                     }
                     SectionHeaderParse::Error { section_path, raw, reason } => {
-                        issues.malformed_section_annotations.push(MalformedSectionAnnotation {
-                            location: issues.loc(*line),
+                        state.issues.malformed_section_annotations.push(MalformedSectionAnnotation {
+                            location: state.issues.loc(*line),
                             section_name: section_path.clone(),
                             raw_annotation: raw.clone(),
                             reason: reason.clone(),
@@ -76,24 +84,98 @@ pub fn validate_tomlx(source: &str, file: Option<&str>) -> ValidationResult {
     let first_section_line = section_ranges.first().map(|(_, l, _, _)| *l).unwrap_or(usize::MAX);
     if first_section_line > 1 {
         let root_fields = extract_field_annotations(source, 0, Some(first_section_line), "");
-        validate_section_fields("", None, &root_fields, &mut sections, &mut issues, &mut path_registry);
+        validate_section_fields("", None, &root_fields, &mut state);
     }
 
     for (section_path, start, end, annotation) in section_ranges {
         let field_parses = extract_field_annotations(source, start, end, &section_path);
-        validate_section_fields(&section_path, annotation, &field_parses, &mut sections, &mut issues, &mut path_registry);
+        validate_section_fields(&section_path, annotation, &field_parses, &mut state);
     }
 
-    ValidationResult { sections, path_registry, issues }
+    ValidationResult {
+        sections: state.sections,
+        path_registry: state.path_registry,
+        issues: state.issues,
+    }
+}
+
+fn report_missing_annotations(
+    section_path: &str,
+    target: &TargetFamily,
+    unannotated: &[(usize, String)],
+    issues: &mut TomlxIssues,
+) {
+    let expected_type = match target {
+        TargetFamily::Path => "path",
+        _ => "unit",
+    };
+    for (line, field_name) in unannotated {
+        issues.missing_field_annotations.push(MissingFieldAnnotation {
+            location: issues.loc(*line),
+            field_name: field_name.clone(),
+            section_name: section_path.to_string(),
+            expected_type: expected_type.to_string(),
+        });
+    }
+}
+
+fn register_path_bases(
+    section_path: &str,
+    annotation: &SectionAnnotation,
+    state: &mut ValidationState,
+) {
+    if state.path_registry.declared_at.is_none() {
+        state.path_registry.user_defined = annotation.path_bases.clone();
+        state.path_registry.expand_mode = annotation.expand_mode;
+        state.path_registry.declared_at = Some(annotation.line);
+    } else {
+        for (base_name, _) in &annotation.path_bases {
+            if let Some(original_value) = state.path_registry.user_defined.get(base_name) {
+                state.issues.base_redeclarations.push(BaseRedeclaration {
+                    location: state.issues.loc(annotation.line),
+                    section_name: section_path.to_string(),
+                    base_name: base_name.clone(),
+                    original_line: state.path_registry.declared_at.unwrap_or(0),
+                    original_value: original_value.clone(),
+                });
+            }
+        }
+    }
+}
+
+fn report_orphan_annotations(
+    section_path: &str,
+    annotated_fields: &[FieldAnnotation],
+    issues: &mut TomlxIssues,
+) {
+    for ann in annotated_fields {
+        let field_name = ann.field_path.rsplit('.').next().unwrap_or(&ann.field_path);
+        match &ann.annotation_type {
+            FieldAnnotationType::Unit(unit) => {
+                issues.orphan_unit_annotations.push(OrphanUnitAnnotation {
+                    location: issues.loc(ann.line),
+                    field_name: field_name.to_string(),
+                    unit: unit.clone(),
+                    section_name: section_path.to_string(),
+                });
+            }
+            FieldAnnotationType::Path(path_ref) => {
+                issues.orphan_path_annotations.push(OrphanPathAnnotation {
+                    location: issues.loc(ann.line),
+                    field_name: field_name.to_string(),
+                    path_ref: path_ref.clone(),
+                    section_name: section_path.to_string(),
+                });
+            }
+        }
+    }
 }
 
 fn validate_section_fields(
     section_path: &str,
     annotation: Option<SectionAnnotation>,
     field_parses: &[(usize, FieldLineParse)],
-    sections: &mut HashMap<String, ValidatedSection>,
-    issues: &mut TomlxIssues,
-    path_registry: &mut PathRegistry,
+    state: &mut ValidationState,
 ) {
     let mut annotated_fields: Vec<FieldAnnotation> = Vec::new();
     let mut unannotated_fields: Vec<(usize, String)> = Vec::new();
@@ -108,8 +190,8 @@ fn validate_section_fields(
                 annotated_fields.push(ann.clone());
             }
             FieldLineParse::Error { field_name, raw, reason } => {
-                issues.malformed_field_annotations.push(MalformedFieldAnnotation {
-                    location: issues.loc(*line),
+                state.issues.malformed_field_annotations.push(MalformedFieldAnnotation {
+                    location: state.issues.loc(*line),
                     field_name: field_name.clone(),
                     raw_annotation: raw.clone(),
                     reason: reason.clone(),
@@ -121,72 +203,19 @@ fn validate_section_fields(
 
     match &annotation {
         Some(ann) => {
-            // Type-only sections (no target) don't require field annotations
             if let Some(target) = &ann.target {
-                let expected_type = match target {
-                    TargetFamily::Path => "path",
-                    _ => "unit",
-                };
-
-                for (line, field_name) in &unannotated_fields {
-                    issues.missing_field_annotations.push(MissingFieldAnnotation {
-                        location: issues.loc(*line),
-                        field_name: field_name.clone(),
-                        section_name: section_path.to_string(),
-                        expected_type: expected_type.to_string(),
-                    });
-                }
+                report_missing_annotations(section_path, target, &unannotated_fields, &mut state.issues);
             }
-
-            // Handle path registry
             if matches!(ann.target, Some(TargetFamily::Path)) {
-                if path_registry.declared_at.is_none() {
-                    path_registry.user_defined = ann.path_bases.clone();
-                    path_registry.expand_mode = ann.expand_mode;
-                    path_registry.declared_at = Some(ann.line);
-                } else {
-                    for (base_name, _) in &ann.path_bases {
-                        if let Some(original_value) = path_registry.user_defined.get(base_name) {
-                            issues.base_redeclarations.push(BaseRedeclaration {
-                                location: issues.loc(ann.line),
-                                section_name: section_path.to_string(),
-                                base_name: base_name.clone(),
-                                original_line: path_registry.declared_at.unwrap_or(0),
-                                original_value: original_value.clone(),
-                            });
-                        }
-                    }
-                }
+                register_path_bases(section_path, ann, state);
             }
         }
         None => {
-            // Non-targeted section: check for orphan annotations
-            for ann in &annotated_fields {
-                match &ann.annotation_type {
-                    FieldAnnotationType::Unit(unit) => {
-                        let field_name = ann.field_path.rsplit('.').next().unwrap_or(&ann.field_path);
-                        issues.orphan_unit_annotations.push(OrphanUnitAnnotation {
-                            location: issues.loc(ann.line),
-                            field_name: field_name.to_string(),
-                            unit: unit.clone(),
-                            section_name: section_path.to_string(),
-                        });
-                    }
-                    FieldAnnotationType::Path(path_ref) => {
-                        let field_name = ann.field_path.rsplit('.').next().unwrap_or(&ann.field_path);
-                        issues.orphan_path_annotations.push(OrphanPathAnnotation {
-                            location: issues.loc(ann.line),
-                            field_name: field_name.to_string(),
-                            path_ref: path_ref.clone(),
-                            section_name: section_path.to_string(),
-                        });
-                    }
-                }
-            }
+            report_orphan_annotations(section_path, &annotated_fields, &mut state.issues);
         }
     }
 
-    sections.insert(
+    state.sections.insert(
         section_path.to_string(),
         ValidatedSection { annotation, fields: annotated_fields, unannotated_fields },
     );

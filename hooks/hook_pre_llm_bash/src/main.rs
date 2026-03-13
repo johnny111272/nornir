@@ -33,11 +33,11 @@ struct CompiledRule {
 
 impl CompiledRule {
     /// Compile a RawRule's pattern as a regex. Returns None if invalid.
-    fn from_raw(raw: RawRule) -> Option<Self> {
-        let compiled = Regex::new(&raw.pattern).ok()?;
+    fn from_raw(rule: RawRule) -> Option<Self> {
+        let compiled = Regex::new(&rule.pattern).ok()?;
         Some(Self {
-            pattern: raw.pattern,
-            description: raw.description,
+            pattern: rule.pattern,
+            description: rule.description,
             compiled,
         })
     }
@@ -47,6 +47,8 @@ struct Rules {
     subversion: Vec<CompiledRule>,
     truncation: Vec<CompiledRule>,
     evasion: Vec<CompiledRule>,
+    destruction: Vec<CompiledRule>,
+    revert: Vec<CompiledRule>,
 }
 
 fn parse_rules(toml_str: &str) -> Result<Rules, String> {
@@ -63,6 +65,8 @@ fn parse_rules(toml_str: &str) -> Result<Rules, String> {
         subversion: compile_array("subversion"),
         truncation: compile_array("truncation"),
         evasion: compile_array("evasion"),
+        destruction: compile_array("destruction"),
+        revert: compile_array("revert"),
     })
 }
 
@@ -73,6 +77,8 @@ struct Config {
     subversion: Option<Severity>,
     truncation: Option<Severity>,
     evasion: Option<Severity>,
+    destruction: Option<Severity>,
+    revert: Option<Severity>,
     allow_patterns: Vec<String>,
 }
 
@@ -81,6 +87,8 @@ fn parse_config() -> Config {
     let mut subversion = None;
     let mut truncation = None;
     let mut evasion = None;
+    let mut destruction = None;
+    let mut revert = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -95,6 +103,14 @@ fn parse_config() -> Config {
             }
             "--evasion" if i + 1 < args.len() => {
                 evasion = parse_severity(&args[i + 1]);
+                i += 2;
+            }
+            "--destruction" if i + 1 < args.len() => {
+                destruction = parse_severity(&args[i + 1]);
+                i += 2;
+            }
+            "--revert" if i + 1 < args.len() => {
+                revert = parse_severity(&args[i + 1]);
                 i += 2;
             }
             _ => i += 1,
@@ -112,6 +128,8 @@ fn parse_config() -> Config {
         subversion,
         truncation,
         evasion,
+        destruction,
+        revert,
         allow_patterns,
     }
 }
@@ -131,17 +149,21 @@ fn decide(input: &HookInput) -> HookDecision {
         }
     };
 
-    let command = input
-        .tool_input
-        .get("command")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let command = input.command();
 
     if command.trim().is_empty() {
         return HookDecision::Allow;
     }
 
-    // Check each category
+    // Check each category (destruction first — data loss is highest priority)
+    if let Some(severity) = config.destruction {
+        if let Some(decision) = check_category(
+            command, &rules.destruction, severity, "destruction", &config.allow_patterns,
+        ) {
+            return decision;
+        }
+    }
+
     if let Some(severity) = config.subversion {
         if let Some(decision) = check_category(
             command, &rules.subversion, severity, "subversion", &config.allow_patterns,
@@ -161,6 +183,14 @@ fn decide(input: &HookInput) -> HookDecision {
     if let Some(severity) = config.evasion {
         if let Some(decision) = check_category(
             command, &rules.evasion, severity, "evasion", &config.allow_patterns,
+        ) {
+            return decision;
+        }
+    }
+
+    if let Some(severity) = config.revert {
+        if let Some(decision) = check_category(
+            command, &rules.revert, severity, "revert", &config.allow_patterns,
         ) {
             return decision;
         }
@@ -601,6 +631,274 @@ mod tests {
             result.is_some(),
             "git config hooks must be detected as evasion"
         );
+    }
+
+    // -- Destruction detections (must catch) --
+
+    #[test]
+    fn destruction_git_reset_hard_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git reset --hard",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git reset --hard must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_reset_hard_head_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git reset --hard HEAD~3",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git reset --hard HEAD~3 must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_checkout_dot_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout .",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git checkout . must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_checkout_dashdash_dot_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout -- .",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git checkout -- . must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_restore_dot_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git restore .",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git restore . must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_clean_f_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git clean -fd",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git clean -fd must be blocked");
+    }
+
+    #[test]
+    fn destruction_git_clean_f_only_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git clean -f",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "git clean -f must be blocked");
+    }
+
+    // -- Destruction: benign git that must NOT match --
+
+    #[test]
+    fn destruction_git_reset_soft_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git reset --soft HEAD~1",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_none(), "git reset --soft must not be blocked");
+    }
+
+    #[test]
+    fn destruction_git_checkout_branch_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout -b feature-branch",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_none(), "git checkout -b must not be blocked");
+    }
+
+    #[test]
+    fn destruction_git_clean_n_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git clean -n",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_none(), "git clean -n (dry run) must not be blocked");
+    }
+
+    // -- Revert detections (must catch for user decision) --
+
+    #[test]
+    fn revert_git_checkout_dashdash_file_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout -- src/main.rs",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_some(), "git checkout -- file must be caught for user decision");
+    }
+
+    #[test]
+    fn revert_git_checkout_head_dashdash_file_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout HEAD -- src/main.rs",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_some(), "git checkout HEAD -- file must be caught");
+    }
+
+    #[test]
+    fn revert_git_restore_file_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git restore src/main.rs",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_some(), "git restore file must be caught for user decision");
+    }
+
+    #[test]
+    fn revert_git_stash_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git stash",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_some(), "git stash must be caught for user decision");
+    }
+
+    #[test]
+    fn revert_git_stash_push_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git stash push",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_some(), "git stash push must be caught");
+    }
+
+    // -- Revert: benign git that must NOT match --
+
+    #[test]
+    fn revert_git_restore_staged_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git restore --staged file.rs",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_none(), "git restore --staged must not be caught (just unstaging)");
+    }
+
+    #[test]
+    fn revert_git_stash_list_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git stash list",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_none(), "git stash list must not be caught");
+    }
+
+    #[test]
+    fn revert_git_stash_pop_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git stash pop",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_none(), "git stash pop must not be caught");
+    }
+
+    #[test]
+    fn revert_git_stash_show_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git stash show",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_none(), "git stash show must not be caught");
+    }
+
+    #[test]
+    fn revert_git_checkout_branch_switch_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "git checkout main",
+            &rules.revert,
+            Severity::Warn,
+            "revert",
+            &[],
+        );
+        assert!(result.is_none(), "git checkout main (branch switch) must not be caught");
     }
 
     // -- Benign commands (must NOT match) --

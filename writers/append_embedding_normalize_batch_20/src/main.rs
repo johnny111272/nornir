@@ -1,15 +1,16 @@
 use schemas_embedded::EMBEDDING_TARGET;
-use write_core::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
+use write_engine::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
 
 fn main() {
-    match write_core::run(&WriterConfig {
+    let base = write_engine::ai_home();
+    match write_engine::run(&WriterConfig {
         name: "append_embedding_normalize_batch_20",
         schema: &EMBEDDING_TARGET,
-        schema_source_path: "/Users/johnny/.ai/spaces/bragi/definitions/schemas/embedding-target.schema.json",
+        schema_source_path: base.join("spaces/bragi/definitions/schemas/embedding-target.schema.json").display().to_string(),
         format: OutputFormat::Jsonl,
         frequency: WriteFrequency::Batch,
         output: OutputPath::FixedFile(
-            "/Users/johnny/.ai/spaces/bragi/interview/embedding_format/normalized.jsonl",
+            base.join("spaces/bragi/interview/embedding_format/normalized.jsonl"),
         ),
         batch_size: Some(20),
     }) {

@@ -12,6 +12,7 @@
 //!
 //! File vs directory is auto-detected from the path.
 
+use clap::{Parser, ValueEnum};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -20,7 +21,7 @@ use std::process;
 // CLI
 // =============================================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, ValueEnum)]
 enum Kind {
     Py,
     Rs,
@@ -28,90 +29,37 @@ enum Kind {
     All,
 }
 
+/// Saga — quality truth recorder. Runs quality tools on source files.
+#[derive(Parser)]
+#[command(name = "saga")]
 struct Args {
+    /// File or directory to process (defaults to current directory)
+    #[arg(default_value = ".")]
     path: PathBuf,
+
+    /// Regenerate even if .qa exists (directory only)
+    #[arg(long)]
     force: bool,
+
+    /// Remove ALL .qa sidecars recursively (directory only)
+    #[arg(long)]
     strip: bool,
-    write_sidecar: bool,
-    read_stdin: bool,
+
+    /// Write .qa sidecar file (file mode)
+    #[arg(long)]
+    sidecar: bool,
+
+    /// Read file content from stdin
+    #[arg(long)]
+    stdin: bool,
+
+    /// Project root for relative paths
+    #[arg(long)]
     project_dir: Option<PathBuf>,
+
+    /// File types to process in directory mode
+    #[arg(long, default_value = "all")]
     kind: Kind,
-}
-
-fn parse_args() -> Result<Args, String> {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-
-    let mut force = false;
-    let mut strip = false;
-    let mut write_sidecar = false;
-    let mut read_stdin = false;
-    let mut project_dir = None;
-    let mut kind = Kind::All;
-    let mut positional: Vec<String> = Vec::new();
-
-    let mut idx = 0;
-    while idx < raw.len() {
-        match raw[idx].as_str() {
-            "--force" => force = true,
-            "--strip" => strip = true,
-            "--sidecar" => write_sidecar = true,
-            "--stdin" => read_stdin = true,
-            "--project-dir" => {
-                idx += 1;
-                project_dir = raw.get(idx).map(PathBuf::from);
-            }
-            "--kind" => {
-                idx += 1;
-                kind = match raw.get(idx).map(|s| s.as_str()) {
-                    Some("py") => Kind::Py,
-                    Some("rs") => Kind::Rs,
-                    Some("svelte") => Kind::Svelte,
-                    Some("all") => Kind::All,
-                    Some(other) => return Err(format!("[saga] unknown kind: {} (use py, rs, svelte, or all)", other)),
-                    None => return Err(format!("[saga] --kind requires a value (py, rs, svelte, or all)")),
-                };
-            }
-            arg if arg.starts_with('-') => {
-                return Err(format!("[saga] unknown flag: {}", arg));
-            }
-            arg => positional.push(arg.to_string()),
-        }
-        idx += 1;
-    }
-
-    let path = match positional.first() {
-        Some(p) => PathBuf::from(p),
-        None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-    };
-
-    Ok(Args { path, force, strip, write_sidecar, read_stdin, project_dir, kind })
-}
-
-fn print_usage() {
-    eprintln!(
-        "saga — quality truth recorder
-
-USAGE:
-    saga <file> [--sidecar] [--project-dir <dir>]
-    saga <dir> [--kind py|rs|svelte|all] [--force]
-    echo \"content\" | saga --stdin <file>
-
-FILE:
-    saga <file>                Run tools, report JSON to stdout
-    saga <file> --sidecar      Run tools, write .qa sidecar
-
-DIRECTORY:
-    saga <dir>                  Remove orphaned .qa, generate missing sidecars
-    saga <dir> --force          Remove orphaned .qa, regenerate all sidecars
-    saga <dir> --strip          Remove ALL .qa sidecars recursively
-
-OPTIONS:
-    --kind <py|rs|svelte|all>  File types to process in directory mode (default: all)
-    --project-dir <dir>    Project root (for relative paths)
-    --stdin                Read file content from stdin
-    --force                Regenerate even if .qa exists (directory only)
-    --strip                Remove all .qa sidecars (directory only)"
-    );
 }
 
 // =============================================================================
@@ -210,7 +158,7 @@ fn run_directory(search_dir: &Path, force: bool, kind: Kind) -> Result<(), Strin
 fn run_file(args: &Args) -> Result<(), String> {
     let project_root = args.project_dir.as_deref();
 
-    let report = if args.read_stdin {
+    let report = if args.stdin {
         let mut content = String::new();
         std::io::stdin().read_to_string(&mut content)
             .map_err(|e| format!("[saga] failed to read stdin: {}", e))?;
@@ -222,7 +170,7 @@ fn run_file(args: &Args) -> Result<(), String> {
         saga_runner::generate_report(&args.path, project_root)
     };
 
-    if args.write_sidecar {
+    if args.sidecar {
         match saga_runner::save_sidecar(&report) {
             Ok(path) => eprintln!("[saga] wrote {}", path.display()),
             Err(e) => eprintln!("[saga] sidecar write failed: {}", e),
@@ -236,19 +184,7 @@ fn run_file(args: &Args) -> Result<(), String> {
 }
 
 fn main() {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.iter().any(|a| a == "--help" || a == "-h") {
-        print_usage();
-        process::exit(0);
-    }
-
-    let args = match parse_args() {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("{}", e);
-            process::exit(2);
-        }
-    };
+    let args = Args::parse();
 
     let result = if args.strip {
         if !args.path.is_dir() {

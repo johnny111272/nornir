@@ -301,5 +301,5 @@ Write as one cohesive binary with these components:
 - [x] qa_core/qa_report deleted, saga orphan cleanup added
 - [x] process::exit refactored out of all helpers (15+ crates)
 - [x] Hook shared code extracted to hook_io::rules
-- [x] 576 tests across 21 crates, all passing
+- [x] All tests passing
 - [x] Full audit remediation (naming, organization, code quality)

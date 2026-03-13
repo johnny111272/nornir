@@ -8,5 +8,5 @@ name = "append_truth_qc_report_record"
 path = "src/main.rs"
 
 [dependencies]
-write_core = { path = "../../capability/write_core" }
+write_engine = { path = "../../capability/write_engine" }
 schemas_embedded = { path = "../../capability/schemas_embedded" }

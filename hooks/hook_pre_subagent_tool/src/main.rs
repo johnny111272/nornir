@@ -66,15 +66,7 @@ fn decide_with_map(
         }
     };
 
-    let tool_input = &input.tool_input;
-
-    // Read/Write/Edit use file_path, Grep/Glob use path
-    let target = tool_input
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .or_else(|| tool_input.get("path").and_then(|v| v.as_str()));
-
-    let target = match target {
+    let target = match input.target_path() {
         Some(t) => t,
         None => return HookDecision::Allow, // Grep/Glob with no path = cwd
     };

@@ -25,7 +25,7 @@ pub fn read_and_validate(
         return Err(SchemaError::ValidationFailed(result.message).into());
     }
     if verify_paths {
-        path_verify::verify_paths(schema.schema_json(), &json)?;
+        path_verify_io::verify_paths(schema.schema_json(), &json)?;
     }
     Ok(json)
 }
@@ -42,7 +42,7 @@ pub fn validate_and_write(
         return Err(SchemaError::ValidationFailed(result.message).into());
     }
     if verify_paths {
-        path_verify::verify_paths(schema.schema_json(), data)?;
+        path_verify_io::verify_paths(schema.schema_json(), data)?;
     }
     let toml_str = json_to_toml(data)?;
     write_file(path, &toml_str)?;
@@ -61,7 +61,7 @@ pub fn read_validate_write(
     if !result.valid {
         return Err(SchemaError::ValidationFailed(result.message).into());
     }
-    path_verify::verify_paths(schema.schema_json(), &json)?;
+    path_verify_io::verify_paths(schema.schema_json(), &json)?;
     let output_toml = json_to_toml(&json)?;
     write_file(output_path, &output_toml)?;
     Ok(())
@@ -78,8 +78,8 @@ fn read_file(path: &str) -> Result<String, NornirError> {
 }
 
 fn write_file(path: &str, content: &str) -> Result<(), NornirError> {
-    let p = Path::new(path);
-    if let Some(parent) = p.parent() {
+    let target = Path::new(path);
+    if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| IoError::WriteFailed {
             path: path.to_string(),
             message: format!("Cannot create parent directory: {}", e),

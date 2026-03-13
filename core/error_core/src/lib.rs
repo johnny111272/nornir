@@ -152,139 +152,145 @@ impl ValidationIssue {
 fn categorize_error(error: &ValidationError) -> (String, String, String) {
     let msg = error.to_string();
 
-    // Type mismatch
     if msg.contains("is not of type") {
-        let rule = "type_mismatch".to_string();
-        let expected = extract_expected_type(&msg);
-        let fix = format!(
-            "Change the value to match the expected type: {}",
-            expected
-        );
-        return (rule, expected, fix);
+        return categorize_type_mismatch(&msg);
     }
-
-    // Required property missing
     if msg.contains("is a required property") {
-        let rule = "missing_required".to_string();
-        let prop = extract_property_name(&msg);
-        let expected = format!("Property '{}' must be present", prop);
-        let fix = format!("Add the required property '{}'", prop);
-        return (rule, expected, fix);
+        return categorize_missing_required(&msg);
     }
-
-    // Additional property not allowed
     if msg.contains("Additional properties are not allowed") {
-        let rule = "additional_property".to_string();
-        let expected = "No additional properties allowed".to_string();
-        let fix =
-            "Remove the unexpected property, or update the schema to allow it".to_string();
-        return (rule, expected, fix);
+        return categorize_additional_property();
     }
-
-    // Enum value not allowed
     if msg.contains("is not one of") {
-        let rule = "invalid_enum".to_string();
-        let expected = extract_enum_values(&msg);
-        let fix = format!("Use one of the allowed values: {}", expected);
-        return (rule, expected, fix);
+        return categorize_invalid_enum(&msg);
+    }
+    if msg.contains("does not match") {
+        return categorize_pattern_mismatch(&msg);
+    }
+    if msg.contains("is less than") || msg.contains("is greater than") {
+        return categorize_range_violation(&msg);
+    }
+    if msg.contains("is shorter than") || msg.contains("is longer than") {
+        return categorize_length_violation();
+    }
+    if msg.contains("has less than") || msg.contains("has more than") {
+        return categorize_array_length();
+    }
+    if msg.contains("is not a")
+        && (msg.contains("email") || msg.contains("uri") || msg.contains("date"))
+    {
+        return categorize_format_invalid();
+    }
+    if msg.contains("not valid under any of the schemas listed in the") {
+        return categorize_variant_mismatch(&msg, error);
     }
 
-    // Pattern mismatch — extract the actual pattern from the message
-    // jsonschema format: "value" does not match "^pattern$"
-    if msg.contains("does not match") {
-        let rule = "pattern_mismatch".to_string();
-        let pattern = extract_pattern(&msg);
-        let expected = format!("Value must match pattern: {}", pattern);
-        let fix = format!(
+    ("validation_failed".into(), msg, "Check the value against the schema requirements".into())
+}
+
+fn categorize_type_mismatch(error_message: &str) -> (String, String, String) {
+    let expected = extract_expected_type(error_message);
+    let fix = format!("Change the value to match the expected type: {}", expected);
+    ("type_mismatch".into(), expected, fix)
+}
+
+fn categorize_missing_required(error_message: &str) -> (String, String, String) {
+    let prop = extract_property_name(error_message);
+    (
+        "missing_required".into(),
+        format!("Property '{}' must be present", prop),
+        format!("Add the required property '{}'", prop),
+    )
+}
+
+fn categorize_additional_property() -> (String, String, String) {
+    (
+        "additional_property".into(),
+        "No additional properties allowed".into(),
+        "Remove the unexpected property, or update the schema to allow it".into(),
+    )
+}
+
+fn categorize_invalid_enum(error_message: &str) -> (String, String, String) {
+    let expected = extract_enum_values(error_message);
+    let fix = format!("Use one of the allowed values: {}", expected);
+    ("invalid_enum".into(), expected, fix)
+}
+
+fn categorize_pattern_mismatch(error_message: &str) -> (String, String, String) {
+    let pattern = extract_pattern(error_message);
+    (
+        "pattern_mismatch".into(),
+        format!("Value must match pattern: {}", pattern),
+        format!(
             "The value does not match the required format.\n\
              Pattern: {}\n\
              Review the schema definition for this field to see valid examples.",
             pattern
-        );
-        return (rule, expected, fix);
-    }
+        ),
+    )
+}
 
-    // Minimum/maximum violations
-    if msg.contains("is less than") || msg.contains("is greater than") {
-        let rule = "range_violation".to_string();
-        let expected = extract_range(&msg);
-        let fix = format!(
-            "Adjust the value to be within the allowed range: {}",
-            expected
-        );
-        return (rule, expected, fix);
-    }
+fn categorize_range_violation(error_message: &str) -> (String, String, String) {
+    let expected = extract_range(error_message);
+    let fix = format!("Adjust the value to be within the allowed range: {}", expected);
+    ("range_violation".into(), expected, fix)
+}
 
-    // MinLength/MaxLength
-    if msg.contains("is shorter than") || msg.contains("is longer than") {
-        let rule = "length_violation".to_string();
-        let expected = "String length out of bounds".to_string();
-        let fix = "Adjust the string length to meet requirements".to_string();
-        return (rule, expected, fix);
-    }
+fn categorize_length_violation() -> (String, String, String) {
+    (
+        "length_violation".into(),
+        "String length out of bounds".into(),
+        "Adjust the string length to meet requirements".into(),
+    )
+}
 
-    // Array length
-    if msg.contains("has less than") || msg.contains("has more than") {
-        let rule = "array_length".to_string();
-        let expected = "Array length out of bounds".to_string();
-        let fix = "Adjust the number of array items".to_string();
-        return (rule, expected, fix);
-    }
+fn categorize_array_length() -> (String, String, String) {
+    (
+        "array_length".into(),
+        "Array length out of bounds".into(),
+        "Adjust the number of array items".into(),
+    )
+}
 
-    // Format validation
-    if msg.contains("is not a")
-        && (msg.contains("email") || msg.contains("uri") || msg.contains("date"))
-    {
-        let rule = "format_invalid".to_string();
-        let expected = "Value must match the specified format".to_string();
-        let fix = "Ensure the value matches the required format".to_string();
-        return (rule, expected, fix);
-    }
+fn categorize_format_invalid() -> (String, String, String) {
+    (
+        "format_invalid".into(),
+        "Value must match the specified format".into(),
+        "Ensure the value matches the required format".into(),
+    )
+}
 
-    // oneOf / anyOf — value doesn't match any variant
-    if msg.contains("not valid under any of the schemas listed in the") {
-        let keyword = if msg.contains("'oneOf'") {
-            "oneOf"
-        } else {
-            "anyOf"
-        };
-        let rule = format!("{}_mismatch", keyword);
-        let schema_path = format_schema_path(error);
-        let expected = format!(
-            "Value must match one of the allowed variants ({})",
-            keyword
-        );
-        let fix = format!(
+fn categorize_variant_mismatch(error_message: &str, error: &ValidationError) -> (String, String, String) {
+    let keyword = if error_message.contains("'oneOf'") { "oneOf" } else { "anyOf" };
+    let schema_path = format_schema_path(error);
+    (
+        format!("{}_mismatch", keyword),
+        format!("Value must match one of the allowed variants ({})", keyword),
+        format!(
             "The value doesn't match any of the allowed forms for this field.\n\
              Schema location: {}\n\
              Check the schema to see what variants are accepted.\n\
              Common causes: wrong string format, missing required fields in an object, \
              or using an include reference where inline content is expected (or vice versa).",
             schema_path
-        );
-        return (rule, expected, fix);
-    }
-
-    // Fallback
-    let rule = "validation_failed".to_string();
-    let expected = msg.clone();
-    let fix = "Check the value against the schema requirements".to_string();
-    (rule, expected, fix)
+        ),
+    )
 }
 
 // =============================================================================
 // Formatting helpers
 // =============================================================================
 
-fn extract_expected_type(msg: &str) -> String {
-    if let Some(start) = msg.find("type \"") {
-        let rest = &msg[start + 6..];
+fn extract_expected_type(message: &str) -> String {
+    if let Some(start) = message.find("type \"") {
+        let rest = &message[start + 6..];
         if let Some(end) = rest.find('"') {
             return rest[..end].to_string();
         }
     }
-    if let Some(start) = msg.find("type '") {
-        let rest = &msg[start + 6..];
+    if let Some(start) = message.find("type '") {
+        let rest = &message[start + 6..];
         if let Some(end) = rest.find('\'') {
             return rest[..end].to_string();
         }
@@ -292,15 +298,15 @@ fn extract_expected_type(msg: &str) -> String {
     "unknown".to_string()
 }
 
-fn extract_property_name(msg: &str) -> String {
-    if let Some(start) = msg.find('"') {
-        let rest = &msg[start + 1..];
+fn extract_property_name(message: &str) -> String {
+    if let Some(start) = message.find('"') {
+        let rest = &message[start + 1..];
         if let Some(end) = rest.find('"') {
             return rest[..end].to_string();
         }
     }
-    if let Some(start) = msg.find('\'') {
-        let rest = &msg[start + 1..];
+    if let Some(start) = message.find('\'') {
+        let rest = &message[start + 1..];
         if let Some(end) = rest.find('\'') {
             return rest[..end].to_string();
         }
@@ -308,27 +314,27 @@ fn extract_property_name(msg: &str) -> String {
     "unknown".to_string()
 }
 
-fn extract_enum_values(msg: &str) -> String {
-    if let Some(start) = msg.find('[') {
-        if let Some(end) = msg.find(']') {
-            return msg[start..=end].to_string();
+fn extract_enum_values(message: &str) -> String {
+    if let Some(start) = message.find('[') {
+        if let Some(end) = message.find(']') {
+            return message[start..=end].to_string();
         }
     }
     "allowed values".to_string()
 }
 
-fn extract_range(msg: &str) -> String {
-    msg.to_string()
+fn extract_range(message: &str) -> String {
+    message.to_string()
 }
 
 /// Extract the pattern regex from a "does not match" error message.
 /// Format: `"value" does not match "^pattern$"`
-fn extract_pattern(msg: &str) -> String {
+fn extract_pattern(message: &str) -> String {
     // The pattern is in the last quoted string in the message
-    if let Some(idx) = msg.rfind('"') {
-        let before = &msg[..idx];
+    if let Some(idx) = message.rfind('"') {
+        let before = &message[..idx];
         if let Some(start) = before.rfind('"') {
-            return msg[start + 1..idx].to_string();
+            return message[start + 1..idx].to_string();
         }
     }
     "unknown pattern".to_string()
@@ -341,12 +347,12 @@ fn format_schema_path(error: &ValidationError) -> String {
 }
 
 /// Truncate a value string for display (UTF-8 safe).
-pub fn truncate_value(s: &str, max_chars: usize) -> String {
-    let char_count = s.chars().count();
+pub fn truncate_value(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
     if char_count <= max_chars {
-        s.to_string()
+        value.to_string()
     } else {
-        let truncated: String = s.chars().take(max_chars).collect();
+        let truncated: String = value.chars().take(max_chars).collect();
         format!("{}...", truncated)
     }
 }

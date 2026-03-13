@@ -38,20 +38,20 @@ pub enum WriteFrequency {
 ///
 /// LLM-provided components are validated against path traversal before use.
 pub enum OutputPath {
-    /// Full path hardcoded. No LLM input needed.
-    FixedFile(&'static str),
+    /// Full path. No LLM input needed.
+    FixedFile(PathBuf),
 
     /// Directory + fixed suffix. LLM provides a prefix via CLI arg.
     /// Constructed: `{dir}/{llm_prefix}{suffix}`
     DirectoryPrefix {
-        dir: &'static str,
+        dir: PathBuf,
         suffix: &'static str,
     },
 
     /// Directory + fixed extension. LLM provides filename stem via CLI arg.
     /// Constructed: `{dir}/{llm_name}.{ext}`
     DirectoryName {
-        dir: &'static str,
+        dir: PathBuf,
         ext: &'static str,
     },
 }
@@ -62,8 +62,8 @@ pub struct WriterConfig {
     pub name: &'static str,
     /// Embedded schema validator.
     pub schema: &'static EmbeddedValidator,
-    /// Absolute path to the .schema.json source file (for --help display).
-    pub schema_source_path: &'static str,
+    /// Path to the .schema.json source file (for --help display only).
+    pub schema_source_path: String,
     /// Output format (jsonl or json).
     pub format: OutputFormat,
     /// Write frequency (record or batch).
@@ -170,6 +170,16 @@ impl WriteError {
 }
 
 // =============================================================================
+// Base path resolution
+// =============================================================================
+
+/// Resolve ~/.ai as an absolute path from $HOME.
+pub fn ai_home() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(".ai")
+}
+
+// =============================================================================
 // Path traversal protection
 // =============================================================================
 
@@ -189,14 +199,14 @@ fn resolve_output_path(
     cli_arg: Option<&str>,
 ) -> Result<PathBuf, WriteError> {
     match &config.output {
-        OutputPath::FixedFile(path) => Ok(PathBuf::from(path)),
+        OutputPath::FixedFile(path) => Ok(path.clone()),
         OutputPath::DirectoryPrefix { dir, suffix } => {
             let prefix = cli_arg.ok_or_else(|| {
                 WriteError::MissingArg("filename prefix as first argument".to_string())
             })?;
             validate_filename_component(prefix)
                 .map_err(|_| WriteError::PathTraversal(prefix.to_string()))?;
-            Ok(PathBuf::from(dir).join(format!("{}{}", prefix, suffix)))
+            Ok(dir.join(format!("{}{}", prefix, suffix)))
         }
         OutputPath::DirectoryName { dir, ext } => {
             let name = cli_arg.ok_or_else(|| {
@@ -204,7 +214,7 @@ fn resolve_output_path(
             })?;
             validate_filename_component(name)
                 .map_err(|_| WriteError::PathTraversal(name.to_string()))?;
-            Ok(PathBuf::from(dir).join(format!("{}.{}", name, ext)))
+            Ok(dir.join(format!("{}.{}", name, ext)))
         }
     }
 }
@@ -224,12 +234,12 @@ fn format_help(config: &WriterConfig) -> String {
         WriteFrequency::Batch => "batch (multiple JSONL lines per invocation)",
     };
     let output_str = match &config.output {
-        OutputPath::FixedFile(path) => format!("{}", path),
+        OutputPath::FixedFile(path) => format!("{}", path.display()),
         OutputPath::DirectoryPrefix { dir, suffix } => {
-            format!("{{dir}}/{{prefix}}{suffix}  (dir={dir})", suffix = suffix, dir = dir)
+            format!("{{dir}}/{{prefix}}{suffix}  (dir={dir})", suffix = suffix, dir = dir.display())
         }
         OutputPath::DirectoryName { dir, ext } => {
-            format!("{{dir}}/{{name}}.{ext}  (dir={dir})", ext = ext, dir = dir)
+            format!("{{dir}}/{{name}}.{ext}  (dir={dir})", ext = ext, dir = dir.display())
         }
     };
 
@@ -625,10 +635,10 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
-            schema_source_path: "test",
+            schema_source_path: "test".into(),
             format: OutputFormat::Jsonl,
             frequency: WriteFrequency::Record,
-            output: OutputPath::FixedFile("/tmp/test.jsonl"),
+            output: OutputPath::FixedFile(PathBuf::from("/tmp/test.jsonl")),
             batch_size: None,
         };
         let path = resolve_output_path(&config, None).unwrap();
@@ -640,11 +650,11 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
-            schema_source_path: "test",
+            schema_source_path: "test".into(),
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {
-                dir: "/tmp/out",
+                dir: PathBuf::from("/tmp/out"),
                 ext: "json",
             },
             batch_size: None,
@@ -658,11 +668,11 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
-            schema_source_path: "test",
+            schema_source_path: "test".into(),
             format: OutputFormat::Jsonl,
             frequency: WriteFrequency::Batch,
             output: OutputPath::DirectoryPrefix {
-                dir: "/tmp/out",
+                dir: PathBuf::from("/tmp/out"),
                 suffix: ".summaries.jsonl",
             },
             batch_size: None,
@@ -679,11 +689,11 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
-            schema_source_path: "test",
+            schema_source_path: "test".into(),
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {
-                dir: "/tmp/out",
+                dir: PathBuf::from("/tmp/out"),
                 ext: "json",
             },
             batch_size: None,
@@ -698,11 +708,11 @@ mod tests {
         let config = WriterConfig {
             name: "test",
             schema: &DUMMY_VALIDATOR,
-            schema_source_path: "test",
+            schema_source_path: "test".into(),
             format: OutputFormat::Json,
             frequency: WriteFrequency::Record,
             output: OutputPath::DirectoryName {
-                dir: "/tmp/out",
+                dir: PathBuf::from("/tmp/out"),
                 ext: "json",
             },
             batch_size: None,

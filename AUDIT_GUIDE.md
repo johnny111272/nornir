@@ -4,7 +4,7 @@ This document describes the architectural invariants of the nornir workspace and
 
 **Audience:** You are auditing this workspace. Your job is to find violations of these invariants. Use your own judgment to decide how to check — the invariants are described here, the detection methodology is yours.
 
-**What this is NOT:** A linter checklist. Gleipnir already handles surface-level Python issues (print statements, None returns, naming). This guide covers architectural and structural invariants that require reading comprehension and judgment to verify.
+**What this is NOT:** A linter checklist. Gleipnir already enforces many invariants mechanically via AST analysis — from style (naming, function length) through design (ownership patterns, error discipline) to architecture (import zone boundaries, class placement). See "What Gleipnir Covers" at the end. This guide covers invariants that require reading comprehension and judgment — things an AST walker cannot detect.
 
 ---
 
@@ -17,8 +17,6 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 **Why it matters:** Pure logic trapped in a binary crate is invisible to the rest of the workspace. When a second binary needs the same logic, it gets reimplemented (differently, with different bugs). When a third binary needs it, you have three divergent copies. By the time you notice, extraction is a multi-session project.
 
 **What makes this hard to catch:** The binary compiles, passes tests, does the right thing. There is no error. The damage is architectural — it's a decision that forecloses future composition. An auditor has to read the code and ask: "could anything else ever need this logic?" If yes, it shouldn't be here.
-
-**Recent example:** syn (the QA report viewer) contained ~450 lines of pure rendering logic — grouping issues by check, severity ranking, adaptive line wrapping, line number collapsing. All pure functions, zero I/O. They lived in syn because syn was the first consumer. When svalinn needed the same rendering, the logic was trapped. Extraction to `report_render_core` was a full session of work that wouldn't have been necessary if the logic had been placed correctly from the start.
 
 **What correct looks like:** Binary crates are thin. They handle CLI args, call into core/capability crates, and format output. The binary is orchestration; the logic is elsewhere. Writers are ~16 lines. Simple senders are ~25 lines. Even complex tools like saga keep their pure types in saga_core, their I/O in saga_runner, and their binary is orchestration.
 
@@ -39,9 +37,9 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 
 **The invariant:** Nornir has three tiers of crates with strict dependency rules:
 
-- **Tier 1 (core/):** Pure library crates. Depend only on other core crates and external workspace dependencies. No I/O, no side effects.
-- **Tier 2 (capability/):** Feature library crates that may perform I/O. Depend on core and other capability crates.
-- **Tier 3 (binaries):** Executable crates in `cli/`, `hooks/`, `senders/`, `writers/`, `rewriters/`, `converters/`, `dispatchers/`, `watchers/`. Depend on core and capability. **Never depend on other binary crates.**
+- **Tier 1 (core/):** Pure library crates. Depend only on other core crates and external workspace dependencies. No I/O, no side effects. Names use `_core` suffix.
+- **Tier 2 (capability/):** Feature library crates that may perform I/O. Depend on core and other capability crates. Names do NOT use `_core` suffix.
+- **Tier 3 (binaries):** Executable crates in `cli/`, `hooks/`, `senders/`, `writers/`, `rewriters/`, `converters/`, `dispatchers/`, `watchers/`, `interceptors/`, `daemons/`. Depend on core and capability. **Never depend on other binary crates.**
 
 **Why it matters:** Tier violations create invisible coupling. A binary importing from another binary means their build, test, and deploy lifecycles are entangled. Shared logic between binaries signals that a core crate is missing.
 
@@ -59,59 +57,44 @@ This is the single most damaging pattern in LLM-generated Rust code and the hard
 
 ---
 
-## Priority 3: process::exit Discipline
+## Priority 3: process::exit and Panic Discipline
 
-**The invariant:** `process::exit()` appears ONLY in `main()`. Every other function returns `Result<T, String>` (or `Result<T, E>`). No exceptions.
+**The invariant:** `process::exit()` appears ONLY in `main()`. Every other function returns `Result<T, String>` (or `Result<T, E>`). No exceptions. `.unwrap()` and `.expect()` are prohibited in production code (gleipnir enforces this), with specific exemptions for `static`/`LazyLock` initializers and `const` contexts.
 
-**Why it matters:** `process::exit()` in a helper function makes that function untestable — it kills the test harness. It makes the function uncomposable — a caller cannot handle the error, retry, or add context. It hides control flow — reading the code, you don't see that this function can terminate the entire program.
+**Why it matters:** `process::exit()` in a helper function makes that function untestable — it kills the test harness. `.unwrap()` and `.expect()` are soft `process::exit` — they panic, which in a binary is an uncontrolled exit. In pure logic that should be testable, panics are just as bad.
 
-**What makes this hard to catch:** LLMs generate `process::exit()` in helpers because training data is full of it. The code looks like proper error handling. The function "handles errors" by exiting. It works. Tests don't cover that path because they can't.
-
-**What correct looks like:** Every function below main returns Result. Main contains exactly two match arms: one for parse_args, one for run. Exit codes are assigned there and nowhere else.
-
-**Recent example:** During audit, process::exit calls were found buried in validation helpers, argument parsers, and I/O functions across multiple crates. Every one had to be refactored to return Result. In some cases, the exit was inside a closure passed to an iterator, making it especially hard to spot.
+**What correct looks like:** Every function below main returns Result. Complex binaries use clap derive for argument parsing — clap handles parse errors and `--help` exits internally, so main contains only the match on `run()`. Simpler binaries have two match arms: parse_args and run.
 
 **Questions to ask:**
-- Can every function in this binary be called from a test? If a function would kill the test harness on error, it has a hidden exit.
-- Does `main()` have more than two match/if blocks that lead to exit? If so, logic that should return Result may have been flattened into main instead.
-- Are there functions that return a bare value (not Result) but can encounter error conditions? That's suspicious — where does the error go?
-
-**Common drift patterns:**
-- `unwrap()` and `expect()` are soft process::exit. They panic, which in a binary is effectively an uncontrolled exit. In pure logic that should be testable, panics are just as bad as process::exit — they kill the test harness.
-- A function returns `String` instead of `Result<String, String>`. It handles the error internally by printing to stderr and returning an empty string or a default value. The error is swallowed. The caller has no idea something went wrong.
-- Early-return with exit gets hidden inside a chain of method calls or inside closures passed to iterators, where it's visually distant from the function signature.
+- Can every function in this binary be called from a test? If a function would kill the test harness on error, it has a hidden exit or panic.
+- Are there `.unwrap()` or `.expect()` calls outside of `static` initializers, `const` blocks, or test code? Those are panic sites in production.
+- Does a function return a bare value (not Result) but can encounter error conditions? Where does the error go?
 
 ---
 
 ## Priority 4: Composition Over Reimplementation
 
-**The invariant:** Before writing any logic, check whether an existing core or capability crate already handles it. The workspace has purpose-built crates for file writing, schema validation, directory walking, QA report rendering, hook decision contracts, datagram emission, format conversion, and more.
+**The invariant:** Before writing any logic, check whether an existing core or capability crate already handles it. The workspace has purpose-built crates for file writing, schema validation, directory walking, QA report rendering, hook decision contracts, datagram emission, format conversion, path validation, and more.
 
-**Why it matters:** Reimplemented logic diverges. Two directory walkers skip different directories. Two schema validators handle errors differently. Two report formatters produce different output for the same input. The bugs are subtle and the divergence is invisible until someone compares the implementations.
-
-**What makes this hard to catch:** The reimplemented code works. It produces correct output for the inputs it was tested with. The problem only appears when edge cases differ between the two implementations, or when a fix is applied to one but not the other.
+**Why it matters:** Reimplemented logic diverges. Two directory walkers skip different directories. Two schema validators handle errors differently. Two path traversal checks reject different characters. The bugs are subtle and the divergence is invisible until someone compares the implementations.
 
 **Key crates to know about:**
-- `write_core` handles all atomic file writes with schema validation
+- `write_engine` handles all atomic file writes with schema validation
 - `saga_runner` handles QA report generation and directory walking
 - `report_render_core` handles QA report grouping, formatting, and rendering
 - `hook_io` handles the hook stdin/stdout/decision contract
 - `hook_io::rules` handles TOML-based rule parsing for hooks
-- `datagram` handles datagram emission (owns the socket path)
+- `datagram_io` handles datagram emission (owns the socket path)
 - `format_core` handles JSON/YAML/TOML/TOON conversion
 - `schema_core` + `schemas_embedded` handle schema validation
+- `path_core::validate_path_segment` handles filename/directory name security validation (path traversal, flag injection, hidden files)
 
 If you see logic in a binary that overlaps with any of these crates, that's a violation.
 
 **Questions to ask:**
-- Is this binary doing its own file writing instead of using write_core? Its own directory walking instead of saga_runner? Its own JSON-to-TOML conversion instead of format_core?
+- Is this binary doing its own file writing instead of using write_engine? Its own directory walking instead of saga_runner? Its own path traversal checks instead of path_core?
 - Does this binary contain a function that looks like it belongs in one of the crates listed above? Even if the implementation differs slightly, the intent may overlap.
 - Are two binaries doing similar things in different ways? That usually means both should be using a shared core function that doesn't exist yet.
-
-**Common drift patterns:**
-- "It's just a small function, not worth extracting." This is how every monolith starts. The function is small today. Tomorrow it has edge case handling. Next week it has three callers who each copied it.
-- A binary hardcodes a path, a socket address, or a format string that is already defined in a core crate's constant. The values match today but will diverge when the core crate is updated and the binary isn't.
-- Custom error formatting that duplicates what error_core already provides. The binary formats its own error messages with slightly different structure, making error output inconsistent across the workspace.
 
 ---
 
@@ -119,25 +102,18 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 
 **The invariant:** Names in nornir carry architectural meaning. They are not labels — they are contracts.
 
-- Binary names use verb prefixes that encode their category: `check_`, `gate_`, `hook_`, `send_`, `append_`, `convert_`, `rewrite_`, `split_`, `watch_`
-- Core crate names use `_core` suffix: `saga_core`, `report_render_core`, `format_core`, `datagram_types`
-- Directory name = package name = binary name. Always. No aliases, no mismatches.
+- Binary names use verb prefixes that encode their category: `check_`, `gate_`, `hook_`, `send_`, `append_`, `write_`, `convert_`, `rewrite_`, `split_`, `watch_`, `intercept_`, `record_`
+- Core crate names use `_core` suffix. Capability crates do NOT use `_core` suffix.
+- Directory name = package name = binary name. Always. No aliases, no mismatches. (Exception: `saga_cli` → binary `saga`, `syn_cli` → binary `syn` for specialist tools.)
 - The crate's category directory tells you its tier and deploy script.
 
-**Why it matters:** An LLM encountering this workspace infers architecture from names. If a crate named `report_render` sits in `core/` without the `_core` suffix, a future session may not recognize it as a core crate. If a binary in `cli/` doesn't use a verb prefix, the next session won't know what category it belongs to or which deploy script manages it.
-
-**What makes this hard to catch:** A wrong name compiles fine. The binary works. The damage is that every future session that reads this name gets a slightly wrong mental model. Bad names compound: bad names generate bad code that reinforces bad names.
+**Why it matters:** An LLM encountering this workspace infers architecture from names. If a capability crate has a `_core` suffix, a future session will misclassify it as a Tier 1 pure library. If a binary in `interceptors/` doesn't use the `intercept_` prefix, the next session won't know what category it belongs to.
 
 **Questions to ask:**
-- If an LLM saw only this crate's name, would it correctly infer the crate's purpose, tier, and category? If not, the name is misleading.
-- Does the binary name's verb prefix match the directory it lives in? A `check_` binary should be in `cli/`, a `send_` binary in `senders/`, etc.
-- Do the `Cargo.toml` package name, the `[[bin]]` name, and the directory name all agree? Any mismatch creates confusion about what the crate is actually called.
-- Are there crates whose names suggest they do the same thing? Overlapping names suggest overlapping responsibilities, which suggests one of them shouldn't exist.
-
-**Common drift patterns:**
-- A crate is created with a generic name ("processor", "handler", "manager") that doesn't encode what it actually does. Every subsequent session has to open the crate and read the code to understand it.
-- A crate is renamed but not all references are updated — the old name appears in comments, documentation, or error messages, creating confusion about whether two things exist or one thing has two names.
-- A core crate is created without the `_core` suffix because "it's obvious from context." It's not obvious to the next LLM session, which may create a duplicate or misclassify it.
+- If an LLM saw only this crate's name, would it correctly infer the crate's purpose, tier, and category?
+- Does the binary name's verb prefix match the directory it lives in?
+- Do the `Cargo.toml` package name, the `[[bin]]` name, and the directory name all agree?
+- For complex binaries using clap derive: do the clap struct field names match the domain vocabulary? clap derive makes the field name the flag name, so field naming IS CLI naming.
 
 ---
 
@@ -150,20 +126,13 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 
 **Why it matters:** A security hook with only positive tests ("it catches bad things") is a ticking time bomb. You don't know what it falsely blocks. A developer running `cargo build` shouldn't trigger the same hook that catches `rm -rf ~/.ai/`. Both sides must be tested.
 
-**What makes this hard to catch:** Tests that only check "bad input is blocked" look comprehensive. The test file has many cases, good coverage, all green. But every test is the same direction. The absence of false-positive tests is invisible unless you read the tests and notice what's missing.
-
 **Hooks to pay special attention to:** The `hook_pre_llm_bash` and `hook_pre_subagent_bash` hooks enforce security policy on shell commands. Their detection rules involve regex patterns for subversion, truncation, and evasion of workspace configuration. These are the most security-critical code in the workspace.
 
 **Questions to ask:**
-- For each detection rule in a security hook, is there at least one test that confirms a benign input is NOT flagged? If every test is "bad thing is caught," the false positive coverage is zero.
+- For each detection rule in a security hook, is there at least one test that confirms a benign input is NOT flagged?
 - Are the regex patterns too broad? A pattern that catches `rm` will also catch `cargo rm` and `--format`. Are those false positives tested for?
-- Are there categories of malicious input that no rule addresses? Think about what an adversarial LLM might try that isn't covered by existing patterns.
 - Do the hook rules and the hook tests tell the same story? Rules added after tests were written may lack test coverage entirely.
-
-**Common drift patterns:**
-- New detection rules are added without corresponding tests. The rule "works" in manual testing but the test suite doesn't cover it, so future refactoring may break it silently.
-- Regex patterns are tightened to fix a false positive, but the tightening introduces a false negative that isn't caught because there's no test for the original malicious input variant.
-- A hook is "working fine" so nobody reads it for months. Meanwhile the threat model has evolved and the rules are stale.
+- Are the TOML rule files (`hook_io::rules`) and the hardcoded detection logic in sync? A rule that exists in TOML but isn't exercised in tests is untested policy.
 
 ---
 
@@ -178,67 +147,60 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 **Questions to ask:**
 - Is there Rust code that manually checks whether a JSON field exists, what type it is, or whether it matches a set of allowed values? That's procedural shape-checking pretending to be validation.
 - For each data shape that flows through the system, can you point to a `.schema.json` file that defines it? If the answer is "the validation is in the Rust code," there is no schema.
-- Do the schemas in `schemas/` match what the code actually validates? A schema that says a field is required, combined with code that treats the field as optional, is a contradiction.
-
-**Common drift patterns:**
-- A binary needs to validate input "quickly" and writes a few match arms instead of calling the schema validator. The match arms work but don't cover all the constraints the schema defines. The validation is partial and nobody notices.
-- A new field is added to the Rust struct but not to the schema. Or a field is removed from the schema but the Rust code still checks for it. Schema and code drift apart silently.
-- Schema validation is present but error messages are generated by hand instead of from the validation result. The hand-written messages may not match the actual constraint that was violated.
+- Do the schemas in `schemas/` match what the code actually validates?
 
 ---
 
 ## Priority 8: Stale Tests After Contract Changes
 
-**The invariant:** When a data contract changes — a schema field is renamed, a struct gains or loses a field, a function signature changes, an output format evolves — every test that touches that contract must be fully re-evaluated. Not tweaked. Re-evaluated.
+**The invariant:** When a data contract changes — a schema field is renamed, a struct gains or loses a field, a function signature changes — every test that touches that contract must be fully re-evaluated. Not tweaked. Re-evaluated.
 
 **Why it matters:** This is the most common and most dangerous LLM test failure mode. A schema changes `type` to `kind`. A test asserts `json["type"] == "syn_report"`. The test fails. The LLM sees a failing test and a one-line fix: add `"type": "syn_report"` back to the function output. The test passes. The code is now wrong — it emits a field that nothing consumes, the test verifies a phantom contract, and the actual current contract remains untested.
-
-**What makes this catastrophic:** The LLM "fixed" the test by making the code match the test instead of making the test match the code. This inverts the entire purpose of testing. The test is now a lie — it passes, it looks correct, and it verifies nothing real. Worse, it actively blocks detection of actual bugs because the test suite is green.
 
 **The correct response to a failing test after a contract change:**
 
 1. **Stop.** Do not touch the test or the code yet.
-2. **Find the contract change.** What actually changed? A field rename? A structural reorganization? A removed concept?
-3. **Read the test's assertions.** Each assertion is a claim about the contract. Which claims are still true? Which are stale? Which are testing something that no longer exists?
-4. **Decide: update or rewrite.** If most assertions are still valid and only one is stale, remove the stale assertion. If the contract changed substantially, delete the test and write a new one that verifies the current contract. Do not patch — the patch preserves the old mental model.
-5. **Never make the code match the test.** If the test expects a field and the code doesn't produce it, the test is wrong. Adding the field to the code to satisfy the test is backwards.
+2. **Find the contract change.** What actually changed?
+3. **Read the test's assertions.** Which claims are still true? Which are stale?
+4. **Decide: update or rewrite.** If most assertions are still valid and only one is stale, update it. If the contract changed substantially, delete the test and write a new one from the current contract.
+5. **Never make the code match the test.** If the test expects a field and the code doesn't produce it, the test is wrong.
 
 **Questions to ask:**
-- When was this test last meaningfully updated? If the answer is "when it was first written" and the code has evolved since, the test is likely stale.
-- Does this test verify the current data contract, or a previous version of it? Compare test assertions against the actual struct definitions, schema files, and function signatures.
-- Are there tests that pass but verify fields, types, or structures that no consumer actually uses? Those tests are verifying ghosts.
-- After a schema or struct change, were the tests rewritten or just tweaked to pass? Tweaked tests inherit the old mental model with a thin patch over the change point.
-
-**Common drift patterns:**
-- A field is renamed in a struct and schema (`type` → `kind`, `exchange_kind` → `traffic_kind`). Tests are updated with find-and-replace on the field name but the test's structural assumptions aren't re-examined. The test now checks the new field name but still assumes the old structure around it.
-- A function's return shape changes (adds a wrapper, removes a field, nests differently). Tests are "fixed" by adding `.unwrap()` or indexing into the new structure, but the test logic still reflects the old shape. The test passes but tests nothing meaningful.
-- A concept is removed entirely (a `type` discriminator field that the datagram envelope now handles). Tests still assert the removed concept exists. The LLM adds it back to make the test pass, creating dead code that persists indefinitely.
-- Batch test updates via search-and-replace change surface syntax but not test intent. Every test now uses the new name but still tests the old behavior.
-
-**The deeper principle:** Tests are not code to be maintained — they are specifications to be upheld. When the specification changes, the tests must be re-derived from the new specification, not patched to compile. A patched test is worse than no test: it provides false confidence.
+- When was this test last meaningfully updated? If the code has evolved since, the test may be stale.
+- Does this test verify the current data contract, or a previous version of it?
+- After a schema or struct change, were the tests rewritten or just tweaked to pass?
 
 ---
 
-## Priority 9: CLI Interface Consistency
+## Priority 9: Gleipnir Check Accuracy
 
-**The invariant:** CLI flag names, error messages, help text, and usage strings must use the same vocabulary as the types, struct fields, and wire format they operate on. When a concept is renamed in the type system, the rename must propagate through every string that references it.
+**The invariant:** Gleipnir's own AST-based checks must be correctly calibrated — rejecting actual violations without flagging legitimate code. A false positive in gleipnir is worse than a missed violation because it trains LLMs to dismiss gleipnir output.
 
-**Why it matters:** String-layer drift is invisible to every other audit check. The compiler catches type mismatches. Schema validation catches wire format mismatches. Tests catch behavioral regressions. But a CLI flag named `--type` that maps to a struct field named `kind` passes all of these — the code compiles, the tests pass, the schemas validate, and the interface silently lies about what it does.
+**Why it matters:** Gleipnir runs as a post-edit hook on every file change. If a check fires falsely, every session sees the false positive, every session dismisses it, and the dismissal habit transfers to real violations. The check becomes invisible. Conversely, a check that misses common violation patterns provides false confidence.
 
-**What makes this invisible:** Three consecutive audits missed a `--type`/`--kind` mismatch in send_datagram because no priority area checks for agreement between user-facing strings and type-system names. P5 (naming) checks directory=package=binary alignment. P7 (schema-first) checks wire format. P8 (stale tests) checks test assertions against struct fields. The CLI flag string lives in a gap between all three — it's not a name in the Cargo sense, not a schema field, and not a test assertion target. It's a string in an arg parser that is semantically linked to a type name but mechanically independent of it.
-
-**What correct looks like:** If the Datagram struct has a field `kind: DatagramKind`, the CLI accepts `--kind`. If the field is renamed, the flag is renamed in the same change. Error messages say `--kind is required`, not `--type is required`. Help text shows `--kind <k>`. The vocabulary is consistent from the type definition through the CLI interface to the error output.
+**Current gleipnir check categories (Rust):**
+- `no_unwrap` — .unwrap()/.expect() in production code (exempts static/LazyLock/const/test)
+- `no_println` — println!/dbg! in library code (exempts main.rs, test code, output-named functions)
+- `no_clone_spam` — .clone() without ownership justification (exempts return position, collection insert, struct fields, match arms, iterators, test code)
+- `no_string_abuse` — "literal".to_string() / String::from("literal") allocations
+- `no_pub_overuse` — too many pub functions in non-entry-point files
+- `no_underscore_prefix` — _variable used as actual variable (not genuinely unused)
+- `function_length_rs` — functions exceeding line threshold
+- `nesting_depth_rs` — deeply nested control flow
+- `short_names` / `numbered_names` — single-letter or numbered variable/param names
+- `suppression` — #[allow(...)], clippy suppression attributes outside test code
 
 **Questions to ask:**
-- For each CLI flag, does the flag name match the struct field or type it maps to? `--priority` mapping to `Config.priority` is correct. `--type` mapping to `Config.kind` is a mismatch.
-- After a type/field rename, were CLI strings updated? Search for the old name in flag parsing, error messages, help text, and usage strings — not just in struct definitions and tests.
-- Do error messages reference flag names that match the actual flags? An error that says `--type is required` when the flag is `--kind` will send users (and LLMs) searching for a flag that doesn't exist.
-- Is the help text generated from the actual config, or is it a hardcoded string that can drift? Hardcoded usage strings are orphaned artifacts waiting to happen.
+- Does a check fire on code patterns that are genuinely correct? Document the pattern and propose an exemption.
+- Does a check miss common violation patterns? Document the missed case and propose a detection addition.
+- Are the exemption rules correct? A check that exempts "test code" should correctly identify test modules, test functions, and test helper functions — not just `#[test]` annotations.
+- Is the check's error message actionable? A message that says "violation found" without explaining what to do is useless. A message that explains the principle and gives a concrete fix direction is valuable.
 
-**Common drift patterns:**
-- A field is renamed in the type system (`type` → `kind`, `exchange_kind` → `traffic_kind`). The struct, schema, and wire format are all updated. The CLI flag string is missed because it's a literal `"--type"` in a match arm, not a symbol the compiler tracks.
-- Tests use the old flag name and pass because the code also uses the old flag name. The mismatch is between the CLI and the type system, not between the CLI and the tests. Internal consistency masks external inconsistency.
-- Help text and usage strings are written once and never updated. They reference flags, formats, or behaviors from the original implementation that have since changed. The help text becomes documentation for a program that no longer exists.
+**Current known areas for gleipnir improvement:**
+- `no_clone_spam` — ownership-transferring call patterns (`.push()`, `.insert()`) could be recognized more broadly
+- `no_string_abuse` — same ownership-transfer recognition applies to `.to_string()` in return position
+- `nesting_depth_rs` — `match` arms inside `for` loops are counted as nesting but are often the idiomatic pattern
+- `no_println` — `main()` function in binary crates and output-named functions should be exempt
 
 ---
 
@@ -246,42 +208,46 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 
 **The invariant:** When files are renamed, moved, or deleted, their associated artifacts must be cleaned up.
 
-**Why it matters:** Nornir generates `.qa` sidecar files for every Python file it scans. When a `.py` file is renamed or deleted, the old `.qa` file remains. Downstream tools (syn, svalinn) read `.qa` files at face value — an orphaned sidecar with errors appears as real violations in a file that no longer exists. This produces false positives that erode trust in the entire QA pipeline.
+**Why it matters:** Nornir generates `.qa` sidecar files for every source file it scans. When a file is renamed or deleted, the old `.qa` file remains. Downstream tools read `.qa` files at face value — an orphaned sidecar appears as real violations in a file that no longer exists.
 
-**This extends beyond .qa files:** Dead entries in deploy script crate lists, workspace Cargo.toml members pointing to deleted crates, symlinks in `~/.ai/tools/bin/` pointing to missing binaries, schema entries in `schemas_embedded` for removed schemas — all are orphaned artifacts that silently degrade the workspace.
+**This extends beyond .qa files:** Dead entries in deploy script crate lists, workspace Cargo.toml members pointing to deleted crates, symlinks pointing to missing binaries, schema entries for removed schemas, documentation referencing renamed crates.
 
 **Questions to ask:**
-- Does every crate listed in a deploy script still exist as a directory with source files? Does every workspace member in Cargo.toml point to a real crate?
-- Are there schema files in `schemas/` that nothing references? Are there constants in `schemas_embedded` that no binary imports?
-- Do the comments and documentation reference crates, files, or features that no longer exist? Stale documentation is an orphaned artifact too — it misleads future sessions.
-- Has a crate been renamed but old references to the previous name survive in error messages, logging, or comments?
-
-**Common drift patterns:**
-- A crate is deleted but its entry in the workspace Cargo.toml is left behind. Cargo silently ignores the missing member in some configurations, so nobody notices until a clean build fails.
-- Documentation describes a workflow involving a tool that was renamed or replaced. The next session follows the documentation, can't find the tool, and either recreates it (duplicate) or gives up (confusion).
-- Test fixtures reference file paths or data shapes from a previous version of the code. The tests pass because they test the fixture, not the current code.
+- Does every crate listed in a deploy script still exist? Does every workspace member in Cargo.toml point to a real crate?
+- Are there schema files in `schemas/` that nothing references?
+- Has a crate been renamed but old references to the previous name survive in error messages, logging, comments, or documentation?
+- Do documentation files reference tools, crates, or workflows that no longer exist?
 
 ---
 
-## What This Guide Does NOT Cover
+## What Gleipnir Covers (Do NOT Audit These)
 
-**Gleipnir handles these automatically:**
-- Python print() calls (should use loguru)
-- Python functions returning None (should return typed values)
-- Python single-letter variable names
-- Python function length
-- Python parameter count and naming
+Gleipnir runs automatically as a post-edit hook via `syn`. Every check is a signal about code quality and architectural health — function length signals accumulated responsibilities, short names signal the author didn't think about the reader, println in library code signals misunderstanding of the orchestration boundary. Gleipnir detects these mechanically via tree-sitter AST analysis. Do not duplicate this coverage in architectural audits.
 
-**MANDATORY_READ_BEFORE_CODING.md covers:**
-- The compliance declaration process
-- The deploy script requirement
-- The pre-coding checklist
+**Python checks:**
+- print() calls, None returns, single-letter variables, function length, parameter count
+- Nesting depth, short/numbered names, underscore prefixes
+- Bare exceptions, broad exceptions, type suppression (noqa, pyright ignore, pylint disable)
+- Import violations (cross-zone, relative, parent), type safety (Any, bare dict/list, large unions)
+- Architecture (classes outside structures/, god classes, dataclass usage)
 
-**NORNIR_BUILDING_AND_COMPOSITION.md covers:**
-- The exact binary structure template
-- Specific composition patterns for each crate category
-- The dependency lookup table
-- Concrete code examples
+**Rust checks:**
+- .unwrap()/.expect(), println!/dbg!, .clone() spam, string literal allocation
+- Function length, nesting depth, short/numbered names, underscore prefixes
+- pub overuse, suppression attributes (#[allow(...)])
+
+**TypeScript checks:**
+- console.log/warn/error, function length, nesting depth
+- Short/numbered names, underscore prefixes, eslint/ts suppression comments
+
+---
+
+## Reference Documents
+
+- **MANDATORY_READ_BEFORE_CODING.md** — compliance declaration, deploy script requirement, pre-coding checklist
+- **NORNIR_BUILDING_AND_COMPOSITION.md** — binary structure template, composition patterns, dependency lookup
+- **NORNIR_NAMING.md** — verb prefix table, directory conventions, naming rules
+- **NORNIR_ORGANIZATION.md** — tier breakdown, crate inventory, test expectations
 
 **This guide is the "why" and "what to look for." Those documents are the "how to do it right."**
 
@@ -293,4 +259,4 @@ You are looking for violations of the invariants above. The most valuable findin
 
 Trust your reading of the code. If something feels like it's in the wrong place, it probably is. If a binary feels too large, it probably contains logic that should be extracted. If you see similar code in two places, one of them shouldn't exist.
 
-The damage from architectural drift is not immediate. It's cumulative. Each small violation makes the next session's code slightly worse. This workspace has been destroyed and rebuilt from scratch multiple times because of exactly this kind of drift. Your audit prevents the next rebuild.
+The damage from architectural drift is not immediate. It's cumulative. Each small violation makes the next session's code slightly worse. Your audit prevents the next rebuild.

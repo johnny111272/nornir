@@ -47,11 +47,7 @@ fn classify_file(path: &Path) -> FileKind {
 }
 
 fn extract_file_path(input: &PostHookInput) -> Option<PathBuf> {
-    let path_str = input
-        .tool_input
-        .get("file_path")
-        .and_then(|v| v.as_str())?;
-    let path = Path::new(path_str);
+    let path = Path::new(input.target_path()?);
     if path.exists() {
         Some(path.to_path_buf())
     } else {

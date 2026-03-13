@@ -1,4 +1,4 @@
-use datagram::{Datagram, DatagramKind, Priority, emit, now, workspace_name};
+use datagram_io::{Datagram, DatagramKind, Priority, emit, now, workspace_name};
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();

@@ -1,15 +1,16 @@
 use schemas_embedded::GLOSSARY;
-use write_core::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
+use write_engine::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
 
 fn main() {
-    match write_core::run(&WriterConfig {
+    let base = write_engine::ai_home();
+    match write_engine::run(&WriterConfig {
         name: "write_truth_glossary_record",
         schema: &GLOSSARY,
-        schema_source_path: "/Users/johnny/.ai/spaces/bragi/schemas/glossary.schema.json",
+        schema_source_path: base.join("spaces/bragi/schemas/glossary.schema.json").display().to_string(),
         format: OutputFormat::Json,
         frequency: WriteFrequency::Record,
         output: OutputPath::DirectoryName {
-            dir: "/Users/johnny/.ai/spaces/bragi/truth/quarantine",
+            dir: base.join("spaces/bragi/truth/quarantine"),
             ext: "json",
         },
         batch_size: None,

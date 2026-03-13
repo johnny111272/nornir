@@ -1,20 +1,23 @@
-use datagram::{Datagram, DatagramKind, Priority, emit, now, workspace_name};
+use datagram_io::{Datagram, DatagramKind, Priority, emit, now, workspace_name};
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: send_notification <source> <message>");
         std::process::exit(1);
     }
 
+    let detail = args.swap_remove(2);
+    let source = args.swap_remove(1);
+
     let datagram = Datagram {
         timestamp: now(),
-        source: args[1].clone(),
+        source,
         kind: DatagramKind::Notify,
         classifier: None,
         priority: Priority::Normal,
         workspace: workspace_name(),
-        detail: Some(args[2].clone()),
+        detail: Some(detail),
         speech: None,
         payload: None,
     };

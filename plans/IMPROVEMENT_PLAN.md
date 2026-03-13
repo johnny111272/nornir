@@ -78,18 +78,12 @@ Audit reports: `audit/strict_audit_A.md`, `audit/strict_audit_B.md`
 
 ---
 
-## 9. datagram and path_verify lack tier-indicating names
+## 9. ~~datagram and path_verify lack tier-indicating names~~ DONE
 
-**Priority:** P5 — Naming Encodes Architecture
-**What:** `capability/datagram` does I/O (Unix socket, UDP multicast) but its name gives no tier indication. Compare: `hook_io`, `gate_io`, `write_engine`, `saga_runner`. `path_verify` similarly — it does filesystem stat calls but reads like a pure function.
-**Where:** `capability/datagram/`, `capability/path_verify/`
-**Fix:** Rename `datagram` to `datagram_io` (matches `hook_io`, `gate_io` pattern — the `_io` suffix signals capability tier). Rename `path_verify` to `path_verify_io` or `verify_paths`. This is a mechanical find-and-replace across the workspace, same as the write_core -> write_engine rename. Update all Cargo.toml deps, use statements, deploy scripts, and documentation. The pure types stay in `datagram_types` (core).
+Renamed `datagram` → `datagram_io`, `path_verify` → `path_verify_io`. Mechanical find-and-replace across 22 Cargo.toml + 17 Rust source files + 6 documentation files. Removed 2 stale path_verify deps from check_paths_resolved and check_raw_definition.
 
 ---
 
-## 10. Hardcoded absolute paths in writer binaries
+## 10. ~~Hardcoded absolute paths in writer binaries~~ DONE
 
-**Priority:** P10 — Orphaned Artifacts
-**What:** All 5 writer binaries hardcode `/Users/johnny/.ai/...` paths for both `schema_source_path` (informational) and `output` (functional). Non-portable. If directory structure changes, all writers break.
-**Where:** Every `writers/*/src/main.rs` — lines 8 and 12 typically
-**Fix:** Two options: (a) read paths from environment variables with sensible defaults, or (b) use `$HOME`-relative paths resolved at runtime. Option (b) is simpler: `dirs::home_dir()` or `std::env::var("HOME")` + known relative paths. The `schema_source_path` is display-only so it can stay hardcoded (it's for --help, not functionality). The `output` path is functional and must resolve correctly. Study write_engine to see if it can accept path templates.
+Changed `OutputPath` fields from `&'static str` to `PathBuf`, `schema_source_path` from `&'static str` to `String`. Added `write_engine::ai_home()` to resolve `$HOME/.ai` at runtime. All 5 writers now use `ai_home().join(...)` for relative paths. Zero `/Users/johnny` strings remain in writer source.

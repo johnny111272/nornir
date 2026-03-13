@@ -57,7 +57,7 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-write_core = {{ path = "../../core/write_core" }}
+write_engine = {{ path = "../../capability/write_engine" }}
 schemas_embedded = {{ path = "../../capability/schemas_embedded" }}
 """
 
@@ -112,10 +112,10 @@ def build_main_rs(
     source_path = config.schema_path or "unknown"
     return (
         f"use schemas_embedded::{config.schema_const};\n"
-        f"use write_core::{{OutputFormat, OutputPath, WriteFrequency, WriterConfig}};\n"
+        f"use write_engine::{{OutputFormat, OutputPath, WriteFrequency, WriterConfig}};\n"
         f"\n"
         f"fn main() {{\n"
-        f"    write_core::run(&WriterConfig {{\n"
+        f"    write_engine::run(&WriterConfig {{\n"
         f'        name: "{config.name}",\n'
         f"        schema: &{config.schema_const},\n"
         f'        schema_source_path: "{source_path}",\n'

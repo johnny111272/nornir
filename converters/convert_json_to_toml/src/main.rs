@@ -4,41 +4,9 @@
 //!     echo '{"key": "value"}' | json_to_toml output.toml
 //!     echo '{"key": "value"}' | json_to_toml              # stdout
 
-use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process;
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let parent = path.parent().unwrap_or(Path::new("."));
-    if !parent.exists() {
-        return Err(format!(
-            "directory does not exist: {}",
-            parent.display()
-        ));
-    }
-
-    let tmp = parent.join(format!(
-        ".{}.tmp",
-        path.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "output".into())
-    ));
-
-    fs::write(&tmp, content)
-        .map_err(|e| format!("write failed: {e}"))?;
-
-    if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("rename failed: {e}"));
-    }
-
-    Ok(())
-}
 
 // =============================================================================
 // Core logic
@@ -64,7 +32,7 @@ fn run(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("TOML conversion failed — {e}"))?;
 
     match args.first() {
-        Some(path) => write_atomic(Path::new(path), &toml_str)?,
+        Some(path) => write_engine::write_file_atomic(Path::new(path), &toml_str)?,
         None => {
             io::stdout()
                 .write_all(toml_str.as_bytes())

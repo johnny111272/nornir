@@ -26,6 +26,25 @@ pub struct HookInput {
     pub tool_input: serde_json::Value,
 }
 
+impl HookInput {
+    /// Extract target file path from tool_input.
+    /// Read/Write/Edit use "file_path", Grep/Glob use "path".
+    pub fn target_path(&self) -> Option<&str> {
+        self.tool_input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .or_else(|| self.tool_input.get("path").and_then(|v| v.as_str()))
+    }
+
+    /// Extract command string from tool_input (Bash tool).
+    pub fn command(&self) -> &str {
+        self.tool_input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    }
+}
+
 /// Decision from a hook's logic.
 pub enum HookDecision {
     /// Allow silently — no output except permissionDecision: "allow".
@@ -84,7 +103,10 @@ where
         } => {
             print_banner_warn(&category, &event, &user_reason);
             print_warn(&user_reason, &llm_context);
-            emit_to_watchtower("warn", &category, &event, tool, &user_reason, &llm_context);
+            emit_to_watchtower(&WatchtowerEvent {
+                decision: "warn", category: &category, event: &event,
+                tool, detail: &user_reason, context: &llm_context,
+            });
         }
         HookDecision::Deny {
             category,
@@ -93,7 +115,10 @@ where
         } => {
             print_banner_deny(&category, &event, &reason);
             print_deny(&reason);
-            emit_to_watchtower("deny", &category, &event, tool, &reason, "");
+            emit_to_watchtower(&WatchtowerEvent {
+                decision: "deny", category: &category, event: &event,
+                tool, detail: &reason, context: "",
+            });
         }
     }
 
@@ -139,8 +164,8 @@ fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str) {
     let workspace = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
     let workspace_name = std::path::Path::new(&workspace)
         .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| workspace.clone());
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or(workspace);
 
     // macOS notification (persists in notification center)
     let title = format!("{} INTERCEPT [{}]", icon, category);
@@ -218,15 +243,18 @@ where
     run_pre_hook(decide_fn)
 }
 
-fn emit_to_watchtower(
-    decision: &str,
-    category: &str,
-    event: &str,
-    tool: &str,
-    detail: &str,
-    context: &str,
-) {
-    let speech = build_speech(decision, category);
+/// Fields needed to emit a watchtower alert datagram.
+struct WatchtowerEvent<'a> {
+    decision: &'a str,
+    category: &'a str,
+    event: &'a str,
+    tool: &'a str,
+    detail: &'a str,
+    context: &'a str,
+}
+
+fn emit_to_watchtower(alert: &WatchtowerEvent) {
+    let speech = build_speech(alert.decision, alert.category);
 
     let source = std::env::args()
         .next()
@@ -237,28 +265,143 @@ fn emit_to_watchtower(
         })
         .unwrap_or_else(|| "hook".to_string());
 
-    let datagram = datagram::Datagram {
-        timestamp: datagram::now(),
+    let datagram = datagram_io::Datagram {
+        timestamp: datagram_io::now(),
         source,
-        kind: datagram::DatagramKind::Alert,
+        kind: datagram_io::DatagramKind::Alert,
         classifier: None,
-        priority: match decision {
-            "deny" => datagram::Priority::High,
-            "warn" => datagram::Priority::Normal,
-            _ => datagram::Priority::Low,
+        priority: match alert.decision {
+            "deny" => datagram_io::Priority::High,
+            "warn" => datagram_io::Priority::Normal,
+            _ => datagram_io::Priority::Low,
         },
-        workspace: datagram::workspace_name(),
-        detail: Some(detail.to_string()),
+        workspace: datagram_io::workspace_name(),
+        detail: Some(alert.detail.to_string()),
         speech: if speech.is_empty() { None } else { Some(speech) },
         payload: Some(serde_json::json!({
-            "category": category,
-            "decision": decision,
-            "tool": tool,
-            "event": event,
-            "context_injected": context,
+            "category": alert.category,
+            "decision": alert.decision,
+            "tool": alert.tool,
+            "event": alert.event,
+            "context_injected": alert.context,
         })),
     };
-    datagram::emit(&datagram);
+    datagram_io::emit(&datagram);
+}
+
+// ── Tests ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── HookInput::target_path ───────────────────────────────────
+
+    #[test]
+    fn target_path_from_file_path() {
+        let input = HookInput {
+            tool_name: Some("Read".into()),
+            tool_input: serde_json::json!({ "file_path": "/src/main.rs" }),
+        };
+        assert_eq!(input.target_path(), Some("/src/main.rs"));
+    }
+
+    #[test]
+    fn target_path_from_path() {
+        let input = HookInput {
+            tool_name: Some("Grep".into()),
+            tool_input: serde_json::json!({ "path": "/src/" }),
+        };
+        assert_eq!(input.target_path(), Some("/src/"));
+    }
+
+    #[test]
+    fn target_path_file_path_wins_over_path() {
+        let input = HookInput {
+            tool_name: Some("Read".into()),
+            tool_input: serde_json::json!({ "file_path": "/a.rs", "path": "/b.rs" }),
+        };
+        assert_eq!(input.target_path(), Some("/a.rs"));
+    }
+
+    #[test]
+    fn target_path_neither_field() {
+        let input = HookInput {
+            tool_name: Some("Read".into()),
+            tool_input: serde_json::json!({}),
+        };
+        assert!(input.target_path().is_none());
+    }
+
+    #[test]
+    fn target_path_null_value() {
+        let input = HookInput {
+            tool_name: Some("Read".into()),
+            tool_input: serde_json::json!({ "file_path": null }),
+        };
+        assert!(input.target_path().is_none());
+    }
+
+    // ── HookInput::command ───────────────────────────────────────
+
+    #[test]
+    fn command_present() {
+        let input = HookInput {
+            tool_name: Some("Bash".into()),
+            tool_input: serde_json::json!({ "command": "ls -la" }),
+        };
+        assert_eq!(input.command(), "ls -la");
+    }
+
+    #[test]
+    fn command_missing() {
+        let input = HookInput {
+            tool_name: Some("Bash".into()),
+            tool_input: serde_json::json!({}),
+        };
+        assert_eq!(input.command(), "");
+    }
+
+    #[test]
+    fn command_null_value() {
+        let input = HookInput {
+            tool_name: Some("Bash".into()),
+            tool_input: serde_json::json!({ "command": null }),
+        };
+        assert_eq!(input.command(), "");
+    }
+
+    // ── PostHookInput::target_path ───────────────────────────────
+
+    #[test]
+    fn post_target_path_from_file_path() {
+        let input = PostHookInput {
+            tool_name: Some("Write".into()),
+            tool_input: serde_json::json!({ "file_path": "/out/file.py" }),
+            tool_result: None,
+        };
+        assert_eq!(input.target_path(), Some("/out/file.py"));
+    }
+
+    #[test]
+    fn post_target_path_from_path() {
+        let input = PostHookInput {
+            tool_name: Some("Glob".into()),
+            tool_input: serde_json::json!({ "path": "/search/" }),
+            tool_result: None,
+        };
+        assert_eq!(input.target_path(), Some("/search/"));
+    }
+
+    #[test]
+    fn post_target_path_neither_field() {
+        let input = PostHookInput {
+            tool_name: Some("Write".into()),
+            tool_input: serde_json::json!({}),
+            tool_result: None,
+        };
+        assert!(input.target_path().is_none());
+    }
 }
 
 // ── PostToolUse contract ─────────────────────────────────────────
@@ -271,6 +414,17 @@ pub struct PostHookInput {
     pub tool_input: serde_json::Value,
     #[serde(default)]
     pub tool_result: Option<serde_json::Value>,
+}
+
+impl PostHookInput {
+    /// Extract target file path from tool_input.
+    /// Read/Write/Edit use "file_path", Grep/Glob use "path".
+    pub fn target_path(&self) -> Option<&str> {
+        self.tool_input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .or_else(|| self.tool_input.get("path").and_then(|v| v.as_str()))
+    }
 }
 
 /// Run a PostToolUse hook: read stdin, parse, assess, output.

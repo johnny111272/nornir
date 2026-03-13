@@ -9,6 +9,7 @@
 //!
 //! Exit codes: 0=success, 1=stdin/parse error, 2=arg parse error
 
+use clap::Parser;
 use compaction_inject_core::{inject_compaction_system_block, COMPACTION_INSTRUCTIONS};
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -18,39 +19,17 @@ use std::process;
 // Types
 // =============================================================================
 
-#[derive(Debug)]
+/// Inject compaction summary instructions into a JSON request on stdin.
+#[derive(Debug, Parser)]
+#[command(name = "rewrite_compaction_summary")]
 struct Args {
+    /// Write pre/post debug snapshots to disk
+    #[arg(long)]
     debug: bool,
+
+    /// Directory for debug snapshot files
+    #[arg(long)]
     output_dir: Option<String>,
-}
-
-// =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Args, String> {
-    let mut debug = false;
-    let mut output_dir = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--debug" => debug = true,
-            "--output-dir" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err("--output-dir requires a path".to_string());
-                }
-                output_dir = Some(args[i].clone());
-            }
-            other => {
-                return Err(format!("unknown argument: {other}"));
-            }
-        }
-        i += 1;
-    }
-
-    Ok(Args { debug, output_dir })
 }
 
 // =============================================================================
@@ -76,13 +55,13 @@ fn serialize_json(value: &serde_json::Value) -> Result<String, String> {
     serde_json::to_string(value).map_err(|e| format!("JSON serialization: {e}"))
 }
 
-fn write_debug_snapshot(dir: &str, prefix: &str, content: &str) {
+fn write_debug_snapshot(directory: &str, prefix: &str, content: &str) {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let path = Path::new(dir).join(format!("{prefix}_{timestamp}.json"));
+    let path = Path::new(directory).join(format!("{prefix}_{timestamp}.json"));
 
     if let Err(e) = std::fs::write(&path, content) {
         eprintln!("warning: debug write failed for {}: {e}", path.display());
@@ -125,15 +104,7 @@ fn run(args: &Args) -> Result<(), String> {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let args = match parse_args(&args) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("error: {e}");
-            process::exit(2);
-        }
-    };
+    let args = Args::parse();
 
     match run(&args) {
         Ok(()) => {}
@@ -148,47 +119,40 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     // =========================================================================
-    // parse_args
+    // arg parsing (clap)
     // =========================================================================
 
     #[test]
     fn parse_args_no_flags() {
-        let a = args(&[]);
-        let parsed = parse_args(&a).unwrap();
+        let parsed = Args::try_parse_from(["rewrite_compaction_summary"]).unwrap();
         assert!(!parsed.debug);
         assert!(parsed.output_dir.is_none());
     }
 
     #[test]
     fn parse_args_debug_flag() {
-        let a = args(&["--debug"]);
-        let parsed = parse_args(&a).unwrap();
+        let parsed = Args::try_parse_from(["rewrite_compaction_summary", "--debug"]).unwrap();
         assert!(parsed.debug);
     }
 
     #[test]
     fn parse_args_output_dir() {
-        let a = args(&["--output-dir", "/tmp/out"]);
-        let parsed = parse_args(&a).unwrap();
+        let parsed = Args::try_parse_from(["rewrite_compaction_summary", "--output-dir", "/tmp/out"]).unwrap();
         assert_eq!(parsed.output_dir.as_deref(), Some("/tmp/out"));
     }
 
     #[test]
     fn parse_args_output_dir_missing_value() {
-        let a = args(&["--output-dir"]);
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--output-dir"), "error should mention flag: {err}");
+        let result = Args::try_parse_from(["rewrite_compaction_summary", "--output-dir"]);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("output-dir"), "error should mention flag: {err}");
     }
 
     #[test]
     fn parse_args_unknown_flag() {
-        let a = args(&["--banana"]);
-        let err = parse_args(&a).unwrap_err();
+        let result = Args::try_parse_from(["rewrite_compaction_summary", "--banana"]);
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("--banana"), "error should mention unknown flag: {err}");
     }
 

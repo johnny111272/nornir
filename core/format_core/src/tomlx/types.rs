@@ -77,8 +77,8 @@ pub enum ExpandMode {
 
 impl ExpandMode {
     /// Parse expand mode from string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.trim().to_lowercase().as_str() {
+    pub fn from_str(input: &str) -> Option<Self> {
+        match input.trim().to_lowercase().as_str() {
             "user" => Some(ExpandMode::User),
             "env" => Some(ExpandMode::Env),
             "all" => Some(ExpandMode::All),
@@ -134,8 +134,8 @@ pub fn parse_type_annotation(type_str: &str) -> Option<TypeAnnotation> {
     parse_scalar_type(&type_str)
 }
 
-fn parse_scalar_type(s: &str) -> Option<TypeAnnotation> {
-    match s {
+fn parse_scalar_type(type_str: &str) -> Option<TypeAnnotation> {
+    match type_str {
         "int" | "integer" => Some(TypeAnnotation::Int),
         "float" | "number" => Some(TypeAnnotation::Float),
         "str" | "string" => Some(TypeAnnotation::Str),

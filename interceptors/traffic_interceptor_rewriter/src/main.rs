@@ -15,7 +15,7 @@
 
 use clap::Parser;
 use compaction_inject_core::inject_compaction_system_block;
-use datagram::{Datagram, DatagramKind, Priority};
+use datagram_io::{Datagram, DatagramKind, Priority};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -192,9 +192,9 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
     let precompact_path = config.traffic_dir
         .join(&config.workspace)
         .join(format!("precomp_{}.jsonl", config.session_id));
-    let precompact_ref = format!("{}:{}", datagram::compact_path(&precompact_path.to_string_lossy()), line);
+    let precompact_ref = format!("{}:{}", datagram_io::compact_path(&precompact_path.to_string_lossy()), line);
     let dg = Datagram {
-        timestamp: datagram::now(),
+        timestamp: datagram_io::now(),
         source: "bifrost".into(),
         kind: DatagramKind::Alert,
         classifier: None,
@@ -207,7 +207,7 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
             "line": line,
         })),
     };
-    datagram::emit(&dg);
+    datagram_io::emit(&dg);
 
     inject_compaction_system_block(value)?;
 

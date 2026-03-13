@@ -17,8 +17,8 @@ pub enum Severity {
 /// Parse a severity string from a CLI argument.
 ///
 /// Returns `None` for unrecognized values, which hooks treat as "disabled."
-pub fn parse_severity(s: &str) -> Option<Severity> {
-    match s {
+pub fn parse_severity(level: &str) -> Option<Severity> {
+    match level {
         "warn" => Some(Severity::Warn),
         "block" => Some(Severity::Block),
         _ => None,
@@ -46,10 +46,10 @@ pub fn parse_rule_array(table: &toml::Table, key: &str) -> Vec<RawRule> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| {
-                    let t = item.as_table()?;
+                    let entry = item.as_table()?;
                     Some(RawRule {
-                        pattern: t.get("pattern")?.as_str()?.to_string(),
-                        description: t.get("description")?.as_str()?.to_string(),
+                        pattern: entry.get("pattern")?.as_str()?.to_string(),
+                        description: entry.get("description")?.as_str()?.to_string(),
                     })
                 })
                 .collect()

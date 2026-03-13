@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use datagram::{Datagram, DatagramKind, Priority, emit_validated, now, workspace_name};
+use datagram_io::{Datagram, DatagramKind, Priority, emit_validated, now, workspace_name};
 
 // =============================================================================
 // CLI enum types (local ValueEnum wrappers for tier isolation)

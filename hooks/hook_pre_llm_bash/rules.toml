@@ -96,3 +96,41 @@ description = "Copying CLAUDE.md (possible replacement attack)"
 pattern = "git.*config.*hooks"
 description = "Modifying git hook configuration"
 
+# ─── Destruction: scorched-earth git commands that discard work ────────
+#
+# These are NEVER legitimate during an LLM session. A panicking LLM will
+# revert files to hide evidence of its own mess. Block unconditionally.
+
+[[destruction]]
+pattern = "git\\s+reset\\s+--hard"
+description = "Hard reset discards all uncommitted changes"
+
+[[destruction]]
+pattern = "git\\s+(checkout|restore)\\s+(--\\s+)?\\.($|\\s|[;&|])"
+description = "Reverting all modified files at once"
+
+[[destruction]]
+pattern = "git\\s+clean\\s+.*-[fdxn]*f"
+description = "Clean -f permanently deletes untracked files"
+
+# ─── Revert: file-specific git reverts (user decides) ─────────────────
+#
+# These MIGHT be legitimate but are the primary vector for panicky LLM
+# behavior — reverting a file instead of fixing the problem. Ask the user.
+
+[[revert]]
+pattern = "git\\s+checkout(\\s+\\S+)?\\s+--\\s"
+description = "Reverting file(s) to a previous state"
+
+[[revert]]
+pattern = "git\\s+restore\\s+[^-\\.]"
+description = "Restoring file to last committed state"
+
+[[revert]]
+pattern = "git\\s+stash\\s*($|[;&|])"
+description = "Bare git stash hides all uncommitted work"
+
+[[revert]]
+pattern = "git\\s+stash\\s+(push|save)"
+description = "Git stash push/save hides uncommitted work"
+

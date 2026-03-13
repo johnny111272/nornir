@@ -8,4 +8,4 @@ name = "send_warning"
 path = "src/main.rs"
 
 [dependencies]
-datagram = { path = "../../capability/datagram" }
+datagram_io = { path = "../../capability/datagram_io" }

@@ -64,16 +64,16 @@ fn validate(data: &str) -> Result<Value, String> {
 
 ## Composition Patterns
 
-### Writers (declarative on write_core)
+### Writers (declarative on write_engine)
 
-Writers are ~16-line binaries. They define config, call `write_core::run()`. All validation, path safety, atomic writes, and fsync are handled by write_core.
+Writers are ~16-line binaries. They define config, call `write_engine::run()`. All validation, path safety, atomic writes, and fsync are handled by write_engine.
 
 ```rust
 use schemas_embedded::MY_SCHEMA;
-use write_core::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
+use write_engine::{OutputFormat, OutputPath, WriteFrequency, WriterConfig};
 
 fn main() {
-    match write_core::run(&WriterConfig {
+    match write_engine::run(&WriterConfig {
         name: "append_my_thing",
         schema: &MY_SCHEMA,
         schema_source_path: "...",
@@ -94,7 +94,7 @@ fn main() {
 3. Create the writer crate in `writers/` with the template above
 4. Add to workspace `Cargo.toml` and `deploy_writers.py`
 
-Do NOT write custom file I/O in writer binaries. If write_core doesn't support what you need, extend write_core.
+Do NOT write custom file I/O in writer binaries. If write_engine doesn't support what you need, extend write_engine.
 
 ### Hooks (pure decision functions on hook_io)
 
@@ -117,9 +117,9 @@ fn decide(input: &HookInput) -> HookDecision {
 
 ### Senders (thin wrappers on datagram)
 
-Simple senders are ~25-line binaries that construct a datagram and call `datagram::emit()`. The socket path, serialization, and fire-and-forget behavior are all in datagram.
+Simple senders are ~25-line binaries that construct a datagram and call `datagram_io::emit()`. The socket path, serialization, and fire-and-forget behavior are all in datagram.
 
-**The socket path `/tmp/ai_logger.sock` lives ONLY in datagram.** Never hardcode it in a binary.
+**The socket path `/tmp/ai_logger.sock` lives ONLY in datagram_io.** Never hardcode it in a binary.
 
 ### QA Report Consumers (report_render_core)
 
@@ -159,8 +159,8 @@ Before adding a dependency or writing logic, check:
 | Schema validation | `schema_core` + `schemas_embedded` |
 | Error types with educational formatting | `error_core` |
 | Path field extraction from schema | `path_core` |
-| Path existence checks | `path_verify` |
-| Atomic file writes with schema validation | `write_core` |
+| Path existence checks | `path_verify_io` |
+| Atomic file writes with schema validation | `write_engine` |
 | QA report generation | `saga_runner` |
 | QA report grouping/formatting | `report_render_core` |
 | AST guardrails | `gleipnir_core` |
@@ -168,7 +168,7 @@ Before adding a dependency or writing logic, check:
 | Hook stdin/stdout/decision contract | `hook_io` |
 | Hook rule parsing from TOML | `hook_io::rules` |
 | Gate I/O orchestration | `gate_io` |
-| Datagram emission to Hlidskjalf | `datagram` |
+| Datagram emission to Hlidskjalf | `datagram_io` |
 | Schema constants | `schemas_embedded` |
 | stdin-validate-stdout filtering | `io_filter` |
 | File-arg diagnostic CLI contract | `io_check` |
@@ -261,11 +261,11 @@ Tests verify that tool definition equals tool behavior. "Does `severity_rank("er
 
 | Before writing... | Check... |
 |---|---|
-| Any file I/O | Does write_core or saga_runner handle this? |
+| Any file I/O | Does write_engine or saga_runner handle this? |
 | Any validation | Does a schema exist in schemas/? |
 | Any formatting | Does report_render_core or format_core handle this? |
 | Any directory walk | Does saga_runner::walk_files handle this? |
-| Any datagram | Does datagram handle this? |
+| Any datagram | Does datagram_io handle this? |
 | Any hook logic | Does hook_io handle the contract? |
 | Any process::exit | Is this in main()? If not, return Result instead. |
 | Any duplicated code | Should this be in a core/capability crate? |

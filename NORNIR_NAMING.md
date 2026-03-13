@@ -21,8 +21,12 @@ All binaries follow **verb-prefix** naming. The verb tells you what category the
 | `rewrite_` | rewriters | `rewriters/` | Reads JSON on stdin, modifies content, writes JSON on stdout |
 | `split_` | dispatchers | `dispatchers/` | Splits input into batches for parallel processing |
 | `watch_` | watchers | `watchers/` | Monitors files for changes and emits datagrams |
+| `intercept_` | interceptors | `interceptors/` | Intercepts and transforms live traffic streams |
+| `record_` | daemons | `daemons/` | Long-running background process that records data |
 
 **Specialist tools** (`saga`, `syn`) are proper nouns — they do not take a verb prefix. These are rare and require explicit justification.
+
+**Known naming exception:** `traffic_interceptor_rewriter` in `interceptors/` does not follow the `intercept_` verb prefix convention. It predates the convention and has not yet been renamed. The correct name would be `intercept_traffic_rewrite` (verb=intercept, domain=traffic, specifics=rewrite).
 
 ### Binary Name Structure
 
@@ -76,14 +80,14 @@ Capability crates provide specific features and may have I/O side effects. No ma
 | Name | Purpose |
 |------|---------|
 | `schemas_embedded` | All schema definitions via `include_str!()` |
-| `path_verify` | Filesystem path existence checks |
+| `path_verify_io` | Filesystem path existence checks |
 | `io_filter` | stdin-validate-stdout filter contract |
 | `io_check` | File-arg diagnostic output contract |
 | `gate_io` | Gate I/O orchestration (read/validate/write) |
 | `hook_io` | Hook input parsing, response formatting, shared rule types |
-| `datagram` | Dual-transport datagram emission (Unix stream + UDP multicast) |
+| `datagram_io` | Dual-transport datagram emission (Unix stream + UDP multicast) |
 | `intercept_io` | PyO3 module: json_to_toml + append_jsonl_line for bifrost |
-| `write_core` | Config-driven atomic writes with fsync |
+| `write_engine` | Config-driven atomic writes with fsync |
 | `saga_runner` | QA report generation, directory walker, sidecar I/O |
 
 ### Gate Modules (`gates/`)
@@ -115,6 +119,8 @@ Every crate lives under exactly one category directory. The category determines 
 | `converters/` | `convert_*` binaries | Executable |
 | `dispatchers/` | `split_*` binaries | Executable |
 | `watchers/` | Watcher binaries | Executable |
+| `interceptors/` | `intercept_*` binaries | Executable |
+| `daemons/` | `record_*` binaries | Executable |
 | `schemas/` | `.schema.json` files | Data (not compiled) |
 
 ### Crate Directory Name = Crate Name

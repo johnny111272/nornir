@@ -29,9 +29,9 @@ Tier 1: CORE (pure libraries, no I/O)
          │
          ▼
 Tier 2: CAPABILITY (feature libraries, may have I/O)
-    schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, datagram, intercept_io,
-    write_core, saga_runner
+    schemas_embedded, path_verify_io, io_filter, io_check,
+    gate_io, hook_io, datagram_io, intercept_io,
+    write_engine, saga_runner
          │
          ▼
 Tier 3: BINARIES (executables and Python extensions)
@@ -82,14 +82,14 @@ nornir/
 │
 ├── capability/             # Tier 2: Feature libraries (may have I/O)
 │   ├── schemas_embedded/   # All schemas via include_str!()
-│   ├── path_verify/        # Filesystem path existence checks
+│   ├── path_verify_io/     # Filesystem path existence checks
 │   ├── io_filter/          # stdin→validate→stdout contract
 │   ├── io_check/           # File-arg diagnostic output contract
 │   ├── gate_io/            # Gate orchestration (read/validate/write)
 │   ├── hook_io/            # Hook input parsing + response format + shared rule types
-│   ├── datagram/           # Dual-transport datagram emission
+│   ├── datagram_io/        # Dual-transport datagram emission
 │   ├── intercept_io/       # PyO3 module: json_to_toml + append_jsonl_line for bifrost
-│   ├── write_core/         # Atomic write engine (config, fsync)
+│   ├── write_engine/         # Atomic write engine (config, fsync)
 │   └── saga_runner/        # QA report generation, directory walker, sidecar I/O
 │
 ├── gates/                  # Tier 3: PyO3 pipeline gate modules
@@ -186,11 +186,11 @@ fn main() {
 
 ### Declarative Writers
 
-Writers are ~16-line binaries. Define a `WriterConfig` and call `write_core::run()`:
+Writers are ~16-line binaries. Define a `WriterConfig` and call `write_engine::run()`:
 
 ```rust
 fn main() {
-    match write_core::run(&WriterConfig { name: "...", schema: &SCHEMA, ... }) {
+    match write_engine::run(&WriterConfig { name: "...", schema: &SCHEMA, ... }) {
         Ok(msg) => println!("{msg}"),
         Err(msg) => { eprintln!("{msg}"); process::exit(1); }
     }
@@ -207,35 +207,11 @@ Hook binaries use `hook_io::run_hook(decide)` where `decide` is a pure function 
 - saga_runner generates reports, walks directories, manages sidecars (I/O — used by saga, syn)
 - report_render_core formats/groups reports (pure — used by syn, svalinn, future consumers)
 - datagram_types defines Datagram, DatagramKind, Priority (pure — used by diff_core)
-- datagram emits datagrams (impure — used by all senders, syn, hooks)
+- datagram_io emits datagrams (impure — used by all senders, syn, hooks)
 
 ## Test Coverage
 
-576 tests across 21 crates. All pass.
-
-| Tier | Crate | Tests |
-|------|-------|-------|
-| Core | gleipnir_core | 134 |
-| Core | format_core | 74 |
-| Core | report_render_core | 38 |
-| Core | error_core | 10 |
-| Core | schema_core | 9 |
-| Core | diff_core | 40 |
-| Core | path_core | 7 |
-| Core | saga_core | 6 |
-| Capability | schemas_embedded | 26 |
-| Capability | hook_io | 18 |
-| Capability | write_core | 11 |
-| Capability | path_verify | 3 |
-| Tier 3 | hook_pre_subagent_bash | 58 |
-| Tier 3 | syn_cli | 43 |
-| Tier 3 | hook_pre_llm_bash | 37 |
-| Tier 3 | hook_pre_llm_tool | 24 |
-| Tier 3 | split_jsonl_batches | 17 |
-| Tier 3 | hook_pre_subagent_tool | 14 |
-| Tier 3 | rewrite_compaction_summary | 14 |
-| Tier 3 | send_datagram | 12 |
-| Tier 3 | hook_post_llm_tool | 10 |
+All tests must pass. Run `cargo test -p {crate_name}` per crate, or exclude gate crates for a full workspace run.
 
 Zero-test Tier 3 crates are trivial delegation (~16–25 lines): declarative writers, simple senders, check_* binaries, convert_json_to_toml, and the 33 gate crates. Testing them would test the framework, not the crate.
 

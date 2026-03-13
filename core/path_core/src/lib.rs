@@ -24,93 +24,131 @@ pub fn extract_path_fields(
         .map_err(|e| SchemaError::InvalidInput(format!("Invalid data JSON: {}", e)))?;
 
     let mut fields = Vec::new();
-    walk_schema(&schema, &data, String::new(), &mut fields);
+    walk_schema(&schema, &data, "", &mut fields);
     Ok(fields)
 }
 
 /// Recursively walk the schema, accumulating path fields found in the data.
-fn walk_schema(schema: &Value, data: &Value, pointer: String, fields: &mut Vec<PathField>) {
-    let obj = match schema.as_object() {
-        Some(o) => o,
+fn walk_schema(schema: &Value, data: &Value, pointer: &str, fields: &mut Vec<PathField>) {
+    let schema_map = match schema.as_object() {
+        Some(m) => m,
         None => return,
     };
 
-    // Check if THIS schema node has format: path_exists_absolute
-    if let Some(Value::String(fmt)) = obj.get("format") {
-        if fmt == "path_exists_absolute" {
-            // This is a leaf path field — extract value from data
-            if let Some(Value::String(path_value)) = resolve_pointer(data, &pointer) {
-                fields.push(PathField {
-                    json_pointer: if pointer.is_empty() {
-                        "/".to_string()
-                    } else {
-                        pointer.clone()
-                    },
-                    value: path_value.clone(),
-                });
-            }
-            return;
-        }
+    if try_extract_leaf(schema_map, data, pointer, fields) {
+        return;
     }
 
-    // Walk properties
-    if let Some(Value::Object(props)) = obj.get("properties") {
-        for (key, prop_schema) in props {
-            let child_pointer = format!("{}/{}", pointer, key);
-            walk_schema(prop_schema, data, child_pointer, fields);
-        }
-    }
+    walk_properties(schema_map, data, pointer, fields);
+    walk_combinators(schema_map, data, pointer, fields);
+    walk_conditionals(schema_map, data, pointer, fields);
+    walk_items(schema_map, data, pointer, fields);
+}
 
-    // Walk allOf
-    if let Some(Value::Array(all_of)) = obj.get("allOf") {
-        for sub_schema in all_of {
-            walk_schema(sub_schema, data, pointer.clone(), fields);
-        }
+/// If this schema node is a path leaf (format: path_exists_absolute), extract the value.
+/// Returns true if it was a leaf (caller should stop recursing).
+fn try_extract_leaf(
+    schema_map: &serde_json::Map<String, Value>,
+    data: &Value,
+    pointer: &str,
+    fields: &mut Vec<PathField>,
+) -> bool {
+    let fmt = match schema_map.get("format").and_then(|v| v.as_str()) {
+        Some(f) => f,
+        None => return false,
+    };
+    if fmt != "path_exists_absolute" {
+        return false;
     }
+    if let Some(Value::String(path_value)) = resolve_pointer(data, pointer) {
+        let json_pointer = if pointer.is_empty() { "/" } else { pointer };
+        fields.push(PathField {
+            json_pointer: json_pointer.to_string(),
+            value: path_value.to_string(),
+        });
+    }
+    true
+}
 
-    // Walk oneOf
-    if let Some(Value::Array(one_of)) = obj.get("oneOf") {
-        for sub_schema in one_of {
-            walk_schema(sub_schema, data, pointer.clone(), fields);
-        }
+/// Walk `properties` — each property gets a child pointer segment.
+fn walk_properties(
+    schema_map: &serde_json::Map<String, Value>,
+    data: &Value,
+    pointer: &str,
+    fields: &mut Vec<PathField>,
+) {
+    let props = match schema_map.get("properties").and_then(|v| v.as_object()) {
+        Some(p) => p,
+        None => return,
+    };
+    for (key, prop_schema) in props {
+        let child_pointer = format!("{}/{}", pointer, key);
+        walk_schema(prop_schema, data, &child_pointer, fields);
     }
+}
 
-    // Walk anyOf
-    if let Some(Value::Array(any_of)) = obj.get("anyOf") {
-        for sub_schema in any_of {
-            walk_schema(sub_schema, data, pointer.clone(), fields);
-        }
-    }
-
-    // Walk if/then/else
-    if let Some(then_schema) = obj.get("then") {
-        walk_schema(then_schema, data, pointer.clone(), fields);
-    }
-    if let Some(else_schema) = obj.get("else") {
-        walk_schema(else_schema, data, pointer.clone(), fields);
-    }
-
-    // Walk items (array elements)
-    if let Some(items_schema) = obj.get("items") {
-        if let Some(Value::Array(data_items)) = resolve_pointer(data, &pointer) {
-            match items_schema {
-                Value::Object(_) => {
-                    for (i, _item) in data_items.iter().enumerate() {
-                        let item_pointer = format!("{}/{}", pointer, i);
-                        walk_schema(items_schema, data, item_pointer, fields);
-                    }
-                }
-                Value::Array(item_schemas) => {
-                    for (i, item_schema) in item_schemas.iter().enumerate() {
-                        if i < data_items.len() {
-                            let item_pointer = format!("{}/{}", pointer, i);
-                            walk_schema(item_schema, data, item_pointer, fields);
-                        }
-                    }
-                }
-                _ => {}
+/// Walk `allOf`, `oneOf`, `anyOf` — same pointer, multiple sub-schemas.
+fn walk_combinators(
+    schema_map: &serde_json::Map<String, Value>,
+    data: &Value,
+    pointer: &str,
+    fields: &mut Vec<PathField>,
+) {
+    for key in &["allOf", "oneOf", "anyOf"] {
+        if let Some(Value::Array(schemas)) = schema_map.get(*key) {
+            for sub_schema in schemas {
+                walk_schema(sub_schema, data, pointer, fields);
             }
         }
+    }
+}
+
+/// Walk `if/then/else` — same pointer through conditional branches.
+fn walk_conditionals(
+    schema_map: &serde_json::Map<String, Value>,
+    data: &Value,
+    pointer: &str,
+    fields: &mut Vec<PathField>,
+) {
+    if let Some(then_schema) = schema_map.get("then") {
+        walk_schema(then_schema, data, pointer, fields);
+    }
+    if let Some(else_schema) = schema_map.get("else") {
+        walk_schema(else_schema, data, pointer, fields);
+    }
+}
+
+/// Walk `items` — each array element gets an indexed pointer segment.
+fn walk_items(
+    schema_map: &serde_json::Map<String, Value>,
+    data: &Value,
+    pointer: &str,
+    fields: &mut Vec<PathField>,
+) {
+    let items_schema = match schema_map.get("items") {
+        Some(s) => s,
+        None => return,
+    };
+    let data_items = match resolve_pointer(data, pointer).and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return,
+    };
+    match items_schema {
+        Value::Object(_) => {
+            for (i, _item) in data_items.iter().enumerate() {
+                let item_pointer = format!("{}/{}", pointer, i);
+                walk_schema(items_schema, data, &item_pointer, fields);
+            }
+        }
+        Value::Array(item_schemas) => {
+            for (i, item_schema) in item_schemas.iter().enumerate() {
+                if i < data_items.len() {
+                    let item_pointer = format!("{}/{}", pointer, i);
+                    walk_schema(item_schema, data, &item_pointer, fields);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -121,6 +159,39 @@ fn resolve_pointer<'a>(data: &'a Value, pointer: &str) -> Option<&'a Value> {
         return Some(data);
     }
     data.pointer(pointer)
+}
+
+// =============================================================================
+// Filename component validation
+// =============================================================================
+
+/// Validate an untrusted filename component (single path segment).
+///
+/// Rejects path traversal (`..`, `/`, `\`, null bytes), hidden files
+/// (leading `.`), flag injection (leading `-`), and empty strings.
+///
+/// Use this for any LLM-provided or user-provided filename, directory name,
+/// or path segment that will be joined into a filesystem path.
+pub fn validate_path_segment(input: &str) -> Result<(), String> {
+    if input.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if input.contains("..") {
+        return Err(format!("\"..\" forbidden in name: \"{input}\""));
+    }
+    if input.contains('/') || input.contains('\\') {
+        return Err(format!("path separators forbidden in name: \"{input}\""));
+    }
+    if input.contains('\0') {
+        return Err(format!("null byte in name: \"{input}\""));
+    }
+    if input.starts_with('.') {
+        return Err(format!("name cannot start with \".\" (no hidden files): \"{input}\""));
+    }
+    if input.starts_with('-') {
+        return Err(format!("name cannot start with \"-\" (no flag injection): \"{input}\""));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -388,5 +459,49 @@ mod tests {
         assert!(values.contains(&"/config/tools.json"));
         assert!(values.contains(&"/instructions/step1.md"));
         assert!(values.contains(&"/instructions/step3.md"));
+    }
+
+    // ── validate_path_segment ───────────────────────────────────────
+
+    #[test]
+    fn path_segment_valid() {
+        assert!(super::validate_path_segment("entry-123").is_ok());
+        assert!(super::validate_path_segment("my_file_name").is_ok());
+        assert!(super::validate_path_segment("report2024").is_ok());
+    }
+
+    #[test]
+    fn path_segment_empty() {
+        assert!(super::validate_path_segment("").is_err());
+    }
+
+    #[test]
+    fn path_segment_traversal() {
+        assert!(super::validate_path_segment("..").is_err());
+        assert!(super::validate_path_segment("../etc/passwd").is_err());
+        assert!(super::validate_path_segment("foo/../bar").is_err());
+    }
+
+    #[test]
+    fn path_segment_separators() {
+        assert!(super::validate_path_segment("foo/bar").is_err());
+        assert!(super::validate_path_segment("foo\\bar").is_err());
+    }
+
+    #[test]
+    fn path_segment_null() {
+        assert!(super::validate_path_segment("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn path_segment_hidden() {
+        assert!(super::validate_path_segment(".hidden").is_err());
+        assert!(super::validate_path_segment(".").is_err());
+    }
+
+    #[test]
+    fn path_segment_flag_injection() {
+        assert!(super::validate_path_segment("-flag").is_err());
+        assert!(super::validate_path_segment("--verbose").is_err());
     }
 }

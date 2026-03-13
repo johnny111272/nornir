@@ -1,6 +1,7 @@
 //! Dispatcher utility: split_jsonl_batches
 //! Splits a JSONL file into optimally-sized batch files for parallel agent dispatch.
 
+use clap::Parser;
 use serde::Serialize;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -11,12 +12,42 @@ use std::process;
 // Types
 // =============================================================================
 
-#[derive(Debug)]
-struct Config {
+/// Split a JSONL file into optimally-sized batches for parallel agent dispatch.
+#[derive(Debug, Parser)]
+#[command(name = "split_jsonl_batches")]
+struct Args {
+    /// Path to input .jsonl file
+    #[arg(long)]
     input: PathBuf,
+
+    /// Temp directory name (created under /tmp/)
+    #[arg(long)]
     directory: String,
+
+    /// Minimum records per batch
+    #[arg(long)]
     min_batch: usize,
+
+    /// Maximum records per batch
+    #[arg(long)]
     max_batch: usize,
+}
+
+fn validate_args(args: &Args) -> Result<(), String> {
+    if args.min_batch == 0 {
+        return Err("--min-batch must be at least 1".into());
+    }
+    if args.max_batch == 0 {
+        return Err("--max-batch must be at least 1".into());
+    }
+    if args.min_batch > args.max_batch {
+        return Err(format!(
+            "--min-batch ({}) cannot be greater than --max-batch ({})",
+            args.min_batch, args.max_batch
+        ));
+    }
+    validate_directory_name(&args.directory)?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -66,145 +97,23 @@ fn compute_batches(total: usize, min_batch: usize, max_batch: usize) -> Vec<usiz
     }
 }
 
-// =============================================================================
-// Arg parsing
-// =============================================================================
-
-fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut input = None;
-    let mut directory = None;
-    let mut min_batch = None;
-    let mut max_batch = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--input" => {
-                i += 1;
-                input = Some(PathBuf::from(
-                    args.get(i).ok_or("--input requires a value")?,
-                ));
-            }
-            "--directory" => {
-                i += 1;
-                directory = Some(args.get(i).ok_or("--directory requires a value")?.clone());
-            }
-            "--min-batch" => {
-                i += 1;
-                let val = args.get(i).ok_or("--min-batch requires a value")?;
-                min_batch = Some(val.parse::<usize>().map_err(|_| {
-                    format!("--min-batch must be a positive integer, got '{val}'")
-                })?);
-            }
-            "--max-batch" => {
-                i += 1;
-                let val = args.get(i).ok_or("--max-batch requires a value")?;
-                max_batch = Some(val.parse::<usize>().map_err(|_| {
-                    format!("--max-batch must be a positive integer, got '{val}'")
-                })?);
-            }
-            other => {
-                return Err(format!(
-                    "unknown argument '{other}'\n  Run with --help for usage"
-                ));
-            }
-        }
-        i += 1;
-    }
-
-    let input = input.ok_or("--input is required")?;
-    let directory = directory.ok_or("--directory is required")?;
-    let min_batch = min_batch.ok_or("--min-batch is required")?;
-    let max_batch = max_batch.ok_or("--max-batch is required")?;
-
-    if min_batch == 0 {
-        return Err("--min-batch must be at least 1".to_string());
-    }
-    if max_batch == 0 {
-        return Err("--max-batch must be at least 1".to_string());
-    }
-    if min_batch > max_batch {
-        return Err(format!(
-            "--min-batch ({min_batch}) cannot be greater than --max-batch ({max_batch})"
-        ));
-    }
-
-    // Path traversal protection on directory name
-    if directory.contains("..") {
-        return Err(
-            "directory name must not contain \"..\" — path traversal blocked".to_string(),
-        );
-    }
-    if directory.contains('/') || directory.contains('\\') {
-        return Err(
-            "directory name must not contain path separators — path traversal blocked".to_string(),
-        );
-    }
-    if directory.contains('\0') {
-        return Err("directory name must not contain null bytes".to_string());
-    }
-    if directory.is_empty() {
-        return Err("directory name cannot be empty".to_string());
-    }
-
-    Ok(Config {
-        input,
-        directory,
-        min_batch,
-        max_batch,
-    })
-}
-
-// =============================================================================
-// Help
-// =============================================================================
-
-fn print_help() {
-    let help = "\
-split_jsonl_batches — Split a JSONL file into optimally-sized batches
-
-USAGE:
-  split_jsonl_batches --input FILE --directory DIR --min-batch N --max-batch M
-
-ARGUMENTS:
-  --input FILE       Path to input .jsonl file
-  --directory DIR    Temp directory name (created under /tmp/)
-  --min-batch N      Minimum records per batch
-  --max-batch M      Maximum records per batch
-
-OUTPUT:
-  Writes batch files to /tmp/DIR/batch_001.jsonl, batch_002.jsonl, ...
-  Outputs JSONL manifest to stdout (one line per batch):
-    {\"batch\":1,\"file\":\"/tmp/DIR/batch_001.jsonl\",\"records\":50}
-
-OPTIMIZATION:
-  Minimizes number of batches while keeping all batch sizes in [min, max].
-  Records are distributed as evenly as possible across batches.
-
-EXIT CODES:
-  0  success (manifest on stdout)
-  1  failure (FAIL:<reason> on stdout)";
-    eprintln!("{help}");
+/// Delegates to path_core::validate_path_segment (shared across workspace).
+fn validate_directory_name(directory: &str) -> Result<(), String> {
+    path_core::validate_path_segment(directory)
 }
 
 // =============================================================================
 // Core logic
 // =============================================================================
 
-fn run(config: &Config) -> Result<(), String> {
-    // 1. Read input file
-    if !config.input.exists() {
-        return Err(format!(
-            "input file does not exist — {}",
-            config.input.display()
-        ));
+fn read_validated_lines(input: &std::path::Path) -> Result<Vec<String>, String> {
+    if !input.exists() {
+        return Err(format!("input file does not exist — {}", input.display()));
     }
 
-    let file =
-        fs::File::open(&config.input).map_err(|e| format!("cannot read input file — {e}"))?;
+    let file = fs::File::open(input).map_err(|e| format!("cannot read input file — {e}"))?;
     let reader = BufReader::new(file);
 
-    // 2. Read and validate all JSON lines
     let mut lines: Vec<String> = Vec::new();
     for (i, line_result) in reader.lines().enumerate() {
         let line = line_result.map_err(|e| format!("cannot read line {} — {e}", i + 1))?;
@@ -212,70 +121,58 @@ fn run(config: &Config) -> Result<(), String> {
         if trimmed.is_empty() {
             continue;
         }
-        // Validate JSON
         serde_json::from_str::<serde_json::Value>(&trimmed).map_err(|e| {
-            let preview = if trimmed.len() > 80 {
-                &trimmed[..80]
-            } else {
-                &trimmed
-            };
+            let preview = if trimmed.len() > 80 { &trimmed[..80] } else { &trimmed };
             format!("line {} is not valid JSON — {e}\n  Content: {preview}", i + 1)
         })?;
         lines.push(trimmed);
     }
 
-    let total = lines.len();
-    if total == 0 {
+    if lines.is_empty() {
         return Err("0 records in input file — nothing to split".to_string());
     }
+    Ok(lines)
+}
 
-    // 3. Compute batch sizes
-    let batch_sizes = compute_batches(total, config.min_batch, config.max_batch);
+fn write_batch(lines: &[String], path: &std::path::Path) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|e| format!("cannot create batch file {} — {e}", path.display()))?;
+    let mut writer = BufWriter::new(file);
 
-    // 4. Create output directory
-    let output_dir = PathBuf::from("/tmp").join(&config.directory);
+    for line in lines {
+        writeln!(writer, "{line}")
+            .map_err(|e| format!("cannot write to {} — {e}", path.display()))?;
+    }
+
+    writer.flush().map_err(|e| format!("cannot flush {} — {e}", path.display()))?;
+    let inner = writer.into_inner().map_err(|e| format!("cannot finalize {} — {e}", path.display()))?;
+    inner.sync_all().map_err(|e| format!("cannot fsync {} — {e}", path.display()))?;
+    Ok(())
+}
+
+fn run(args: &Args) -> Result<(), String> {
+    let lines = read_validated_lines(&args.input)?;
+    let batch_sizes = compute_batches(lines.len(), args.min_batch, args.max_batch);
+
+    let output_dir = PathBuf::from("/tmp").join(&args.directory);
     fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("cannot create directory /tmp/{} — {e}", config.directory))?;
+        .map_err(|e| format!("cannot create directory /tmp/{} — {e}", args.directory))?;
 
-    // 5. Write batch files
     let mut manifest: Vec<ManifestEntry> = Vec::with_capacity(batch_sizes.len());
     let mut offset = 0;
 
     for (i, &size) in batch_sizes.iter().enumerate() {
         let batch_num = i + 1;
-        let filename = format!("batch_{:03}.jsonl", batch_num);
-        let path = output_dir.join(&filename);
-
-        let file = fs::File::create(&path)
-            .map_err(|e| format!("cannot create batch file {} — {e}", path.display()))?;
-        let mut writer = BufWriter::new(file);
-
-        for line in &lines[offset..offset + size] {
-            writeln!(writer, "{line}")
-                .map_err(|e| format!("cannot write to {} — {e}", path.display()))?;
-        }
-
-        // Flush and fsync
-        writer
-            .flush()
-            .map_err(|e| format!("cannot flush {} — {e}", path.display()))?;
-        let inner = writer
-            .into_inner()
-            .map_err(|e| format!("cannot finalize {} — {e}", path.display()))?;
-        inner
-            .sync_all()
-            .map_err(|e| format!("cannot fsync {} — {e}", path.display()))?;
-
+        let path = output_dir.join(format!("batch_{:03}.jsonl", batch_num));
+        write_batch(&lines[offset..offset + size], &path)?;
         manifest.push(ManifestEntry {
             batch: batch_num,
             file: path.to_string_lossy().to_string(),
             records: size,
         });
-
         offset += size;
     }
 
-    // 6. Output manifest to stdout
     let stdout = io::stdout();
     let mut out = stdout.lock();
     for entry in &manifest {
@@ -292,25 +189,17 @@ fn run(config: &Config) -> Result<(), String> {
 // =============================================================================
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args = Args::parse();
 
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        print_help();
-        process::exit(0);
+    if let Err(e) = validate_args(&args) {
+        eprintln!("FAIL:{e}");
+        process::exit(1);
     }
 
-    let config = match parse_args(&args[1..]) {
-        Ok(c) => c,
-        Err(e) => {
-            println!("FAIL:{e}");
-            process::exit(1);
-        }
-    };
-
-    match run(&config) {
+    match run(&args) {
         Ok(()) => process::exit(0),
         Err(e) => {
-            println!("FAIL:{e}");
+            eprintln!("FAIL:{e}");
             process::exit(1);
         }
     }
@@ -417,113 +306,83 @@ mod tests {
         assert_eq!(batches, vec![1]);
     }
 
-    // -- parse_args --
+    // -- arg parsing (clap + validate_args) --
+
+    fn parse_and_validate(items: &[&str]) -> Result<Args, String> {
+        let args = Args::try_parse_from(items).map_err(|e| e.to_string())?;
+        validate_args(&args)?;
+        Ok(args)
+    }
 
     #[test]
     fn test_parse_valid_args() {
-        let args: Vec<String> = vec![
-            "--input",
-            "/path/to/file.jsonl",
-            "--directory",
-            "f3c67b",
-            "--min-batch",
-            "35",
-            "--max-batch",
-            "50",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-
-        let config = parse_args(&args).unwrap();
-        assert_eq!(config.input, PathBuf::from("/path/to/file.jsonl"));
-        assert_eq!(config.directory, "f3c67b");
-        assert_eq!(config.min_batch, 35);
-        assert_eq!(config.max_batch, 50);
+        let args = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--input", "/path/to/file.jsonl",
+            "--directory", "f3c67b",
+            "--min-batch", "35",
+            "--max-batch", "50",
+        ]).unwrap();
+        assert_eq!(args.input, PathBuf::from("/path/to/file.jsonl"));
+        assert_eq!(args.directory, "f3c67b");
+        assert_eq!(args.min_batch, 35);
+        assert_eq!(args.max_batch, 50);
     }
 
     #[test]
     fn test_parse_missing_input() {
-        let args: Vec<String> = vec!["--directory", "abc", "--min-batch", "10", "--max-batch", "20"]
-            .into_iter()
-            .map(String::from)
-            .collect();
-        assert!(parse_args(&args).is_err());
+        let result = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--directory", "abc", "--min-batch", "10", "--max-batch", "20",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_min_greater_than_max() {
-        let args: Vec<String> = vec![
-            "--input",
-            "/f.jsonl",
-            "--directory",
-            "abc",
-            "--min-batch",
-            "60",
-            "--max-batch",
-            "50",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let err = parse_args(&args).unwrap_err();
+        let err = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--input", "/f.jsonl",
+            "--directory", "abc",
+            "--min-batch", "60",
+            "--max-batch", "50",
+        ]).unwrap_err();
         assert!(err.contains("cannot be greater than"));
     }
 
     #[test]
     fn test_parse_path_traversal_dotdot() {
-        let args: Vec<String> = vec![
-            "--input",
-            "/f.jsonl",
-            "--directory",
-            "../etc",
-            "--min-batch",
-            "10",
-            "--max-batch",
-            "20",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let err = parse_args(&args).unwrap_err();
-        assert!(err.contains("path traversal"));
+        let err = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--input", "/f.jsonl",
+            "--directory", "../etc",
+            "--min-batch", "10",
+            "--max-batch", "20",
+        ]).unwrap_err();
+        assert!(err.contains("forbidden"));
     }
 
     #[test]
     fn test_parse_path_traversal_slash() {
-        let args: Vec<String> = vec![
-            "--input",
-            "/f.jsonl",
-            "--directory",
-            "foo/bar",
-            "--min-batch",
-            "10",
-            "--max-batch",
-            "20",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let err = parse_args(&args).unwrap_err();
-        assert!(err.contains("path traversal"));
+        let err = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--input", "/f.jsonl",
+            "--directory", "foo/bar",
+            "--min-batch", "10",
+            "--max-batch", "20",
+        ]).unwrap_err();
+        assert!(err.contains("forbidden"));
     }
 
     #[test]
     fn test_parse_zero_batch_size() {
-        let args: Vec<String> = vec![
-            "--input",
-            "/f.jsonl",
-            "--directory",
-            "abc",
-            "--min-batch",
-            "0",
-            "--max-batch",
-            "50",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let err = parse_args(&args).unwrap_err();
+        let err = parse_and_validate(&[
+            "split_jsonl_batches",
+            "--input", "/f.jsonl",
+            "--directory", "abc",
+            "--min-batch", "0",
+            "--max-batch", "50",
+        ]).unwrap_err();
         assert!(err.contains("at least 1"));
     }
 }

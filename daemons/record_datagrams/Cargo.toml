@@ -11,5 +11,5 @@ path = "src/main.rs"
 serde_json = { workspace = true }
 clap = { workspace = true }
 libc = { workspace = true }
-datagram = { path = "../../capability/datagram" }
+datagram_io = { path = "../../capability/datagram_io" }
 write_engine = { path = "../../capability/write_engine" }

@@ -1,5 +1,5 @@
 [package]
-name = "path_verify"
+name = "path_verify_io"
 version = "0.1.0"
 edition = "2021"
 

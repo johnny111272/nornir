@@ -8,5 +8,6 @@ name = "send_datagram"
 path = "src/main.rs"
 
 [dependencies]
-datagram = { path = "../../capability/datagram" }
+datagram_io = { path = "../../capability/datagram_io" }
 serde_json = { workspace = true }
+clap = { workspace = true }

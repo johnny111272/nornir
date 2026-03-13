@@ -311,7 +311,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -323,7 +323,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -335,7 +335,6 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
  "schema_core",
  "schemas_embedded",
 ]
@@ -347,7 +346,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -359,7 +358,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -371,7 +370,6 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
  "schema_core",
  "schemas_embedded",
 ]
@@ -383,7 +381,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -395,7 +393,7 @@ dependencies = [
  "error_core",
  "format_core",
  "io_check",
- "path_verify",
+ "path_verify_io",
  "schema_core",
  "schemas_embedded",
 ]
@@ -632,7 +630,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "datagram"
+name = "datagram_io"
 version = "0.1.0"
 dependencies = [
  "datagram_types",
@@ -1126,7 +1124,7 @@ version = "0.1.0"
 dependencies = [
  "error_core",
  "format_core",
- "path_verify",
+ "path_verify_io",
  "schema_core",
 ]
 
@@ -1337,7 +1335,7 @@ checksum = "0a7763b98ba8a24f59e698bf9ab197e7676c640d6455d1580b4ce7dc560f0f0d"
 name = "hook_io"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_io",
  "serde",
  "serde_json",
  "toml",
@@ -2130,7 +2128,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "path_verify"
+name = "path_verify_io"
 version = "0.1.0"
 dependencies = [
  "error_core",
@@ -2342,7 +2340,7 @@ name = "record_datagrams"
 version = "0.1.0"
 dependencies = [
  "clap",
- "datagram",
+ "datagram_io",
  "libc",
  "serde_json",
  "write_engine",
@@ -2581,7 +2579,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "send_alert"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_io",
 ]
 
 [[package]]
@@ -2589,7 +2587,7 @@ name = "send_datagram"
 version = "0.1.0"
 dependencies = [
  "clap",
- "datagram",
+ "datagram_io",
  "serde_json",
 ]
 
@@ -2597,21 +2595,21 @@ dependencies = [
 name = "send_heartbeat"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_io",
 ]
 
 [[package]]
 name = "send_notification"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_io",
 ]
 
 [[package]]
 name = "send_warning"
 version = "0.1.0"
 dependencies = [
- "datagram",
+ "datagram_io",
 ]
 
 [[package]]
@@ -2840,9 +2838,10 @@ name = "syn_cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "datagram",
+ "datagram_io",
  "report_render_core",
  "saga_runner",
+ "serde",
  "serde_json",
  "syn_core",
  "toml",
@@ -3144,7 +3143,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "compaction_inject_core",
- "datagram",
+ "datagram_io",
  "serde_json",
  "write_engine",
 ]
@@ -3424,7 +3423,7 @@ name = "watch_and_diff_exchange_intercepts"
 version = "0.1.0"
 dependencies = [
  "clap",
- "datagram",
+ "datagram_io",
  "diff_core",
  "serde",
  "serde_json",

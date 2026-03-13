@@ -1,6 +1,6 @@
 use clap::Parser;
 use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, DatagramContext, Exchange};
-use datagram::emit_validated_or_alert;
+use datagram_io::emit_validated_or_alert;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -113,10 +113,10 @@ fn diff_and_emit(
                 &[],
                 &DatagramContext {
                     workspace,
-                    priority: datagram::Priority::Low,
+                    priority: datagram_io::Priority::Low,
                     source_ref,
                     is_startup: true,
-                    timestamp: datagram::now(),
+                    timestamp: datagram_io::now(),
                 },
             );
             if !emit_validated_or_alert(&dg, "bifrost_watcher") {
@@ -143,7 +143,7 @@ fn diff_and_emit(
                     priority,
                     source_ref,
                     is_startup: false,
-                    timestamp: datagram::now(),
+                    timestamp: datagram_io::now(),
                 },
             );
             if !emit_validated_or_alert(&dg, "bifrost_watcher") {
@@ -163,7 +163,7 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
-    let compact = datagram::compact_path(&path.to_string_lossy());
+    let compact = datagram_io::compact_path(&path.to_string_lossy());
 
     let transcript_path = transcript_path_for(path);
     let mut transcript = open_transcript(&transcript_path)?;
@@ -276,7 +276,7 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let mut transcript = open_transcript(&transcript_path)?;
 
     let mut state = WatchState {
-        filename: datagram::compact_path(&path.to_string_lossy()),
+        filename: datagram_io::compact_path(&path.to_string_lossy()),
         previous: None,
         datagrams_emitted: 0,
         exchanges_processed: 0,

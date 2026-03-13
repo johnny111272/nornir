@@ -93,8 +93,8 @@ pub fn total_issues(groups: &[CheckGroup]) -> usize {
 // Severity ordering
 // =============================================================================
 
-pub fn severity_rank(s: &str) -> u8 {
-    match s {
+pub fn severity_rank(severity: &str) -> u8 {
+    match severity {
         "info" => 0,
         "warning" => 1,
         "error" => 2,
@@ -243,12 +243,15 @@ fn format_toon(groups: &[CheckGroup]) -> String {
     }
 
     let json = groups_to_json(groups);
-    match format_core::serialize::to_toon(&json) {
+    let body = match format_core::serialize::to_toon(&json) {
         Ok(toon) => toon,
         Err(_) => {
             serde_json::to_string_pretty(&json).unwrap_or_default()
         }
-    }
+    };
+    format!(
+        "{body}\n\nWho wrote this code? You did. Every violation above is yours to fix or explicitly defer with a reason."
+    )
 }
 
 fn format_colored(groups: &[CheckGroup]) -> String {
@@ -271,125 +274,145 @@ fn format_colored(groups: &[CheckGroup]) -> String {
     sections.push(format!("{BOLD}{RED}{bar}{RESET}"));
 
     for group in groups {
-        let color = severity_color(&group.severity);
-        let files_word = if group.file_count == 1 { "file" } else { "files" };
-
-        let code_display = if is_opaque_code(&group.code) && !group.representative_message.is_empty() {
-            let msg = &group.representative_message;
-            let short = msg.find(". ")
-                .map(|i| &msg[..i])
-                .unwrap_or(msg);
-            let short = if short.len() > 60 {
-                let truncated = &short[..short[..57].rfind(' ').unwrap_or(57)];
-                format!("{}...", truncated)
-            } else {
-                short.to_string()
-            };
-            format!("{} — {}", group.code, short)
-        } else {
-            group.code.clone()
-        };
-
-        sections.push(format!(
-            "\n{color}┌─ {code_display}{RESET}  {DIM}{severity}{RESET}  {BOLD}{WHITE}{count}{RESET} in {file_count} {files_word}",
-            severity = group.severity,
-            count = group.issues.len(), file_count = group.file_count,
-        ));
-        sections.push(format!("{color}│{RESET}"));
-
-        let gutter = format!("{color}│{RESET}  ");
-        let continuation = format!("{color}│{RESET}    ");
-        let cont_width = MAX_WIDTH - 5;
-
-        if !group.signal.is_empty() {
-            let lines = wrap_adaptive(&group.signal, MAX_WIDTH - 11, cont_width);
-            sections.push(format!("{gutter}{BOLD}{CYAN}Signal:{RESET} {}", lines[0]));
-            for line in &lines[1..] {
-                sections.push(format!("{continuation}{line}"));
-            }
-        }
-        if !group.direction.is_empty() {
-            let lines = wrap_adaptive(&group.direction, MAX_WIDTH - 14, cont_width);
-            sections.push(format!("{gutter}{BOLD}{CYAN}Direction:{RESET} {}", lines[0]));
-            for line in &lines[1..] {
-                sections.push(format!("{continuation}{line}"));
-            }
-        }
-        if !group.canary.is_empty() {
-            let lines = wrap_adaptive(&group.canary, MAX_WIDTH - 11, cont_width);
-            sections.push(format!("{gutter}{BOLD}{YELLOW}Canary:{RESET} {}", lines[0]));
-            for line in &lines[1..] {
-                sections.push(format!("{continuation}{line}"));
-            }
-        }
-
-        sections.push(format!("{color}│{RESET}"));
-        let mut file_lines: Vec<(&str, Vec<usize>)> = Vec::new();
-        for issue in &group.issues {
-            if let Some(last) = file_lines.last_mut() {
-                if last.0 == issue.file {
-                    last.1.push(issue.line);
-                    continue;
-                }
-            }
-            file_lines.push((&issue.file, vec![issue.line]));
-        }
-        for (file, lines) in &file_lines {
-            let line_list = format!("[{}]", collapse_line_numbers(lines));
-            let avail = MAX_WIDTH - 3;
-
-            if 3 + file.len() + 1 + line_list.len() <= MAX_WIDTH {
-                let pad = avail - file.len() - line_list.len();
-                sections.push(format!(
-                    "{color}│{RESET}  {DIM}{file}{}{line_list}{RESET}",
-                    " ".repeat(pad),
-                ));
-            } else {
-                sections.push(format!(
-                    "{color}│{RESET}  {DIM}{file}{RESET}",
-                ));
-                if line_list.len() <= avail {
-                    let pad = avail - line_list.len();
-                    sections.push(format!(
-                        "{color}│{RESET}  {DIM}{}{line_list}{RESET}",
-                        " ".repeat(pad),
-                    ));
-                } else {
-                    let collapsed = collapse_line_numbers(lines);
-                    let parts: Vec<&str> = collapsed.split(',').collect();
-                    let mut rows: Vec<String> = Vec::new();
-                    let mut current = String::from("[");
-                    for part in &parts {
-                        let entry = if current == "[" {
-                            part.to_string()
-                        } else {
-                            format!(",{}", part)
-                        };
-                        if current.len() + entry.len() + 1 > avail {
-                            current.push(',');
-                            rows.push(current);
-                            current = part.to_string();
-                        } else {
-                            current.push_str(&entry);
-                        }
-                    }
-                    current.push(']');
-                    rows.push(current);
-
-                    for row in &rows {
-                        let pad = if row.len() < avail { avail - row.len() } else { 0 };
-                        sections.push(format!(
-                            "{color}│{RESET}  {DIM}{}{row}{RESET}",
-                            " ".repeat(pad),
-                        ));
-                    }
-                }
-            }
-        }
-        sections.push(format!("{color}└{bar}{RESET}", bar = "─".repeat(MAX_WIDTH - 1)));
+        format_colored_group(group, &mut sections);
     }
 
     sections.join("\n")
+}
+
+fn format_colored_group(group: &CheckGroup, sections: &mut Vec<String>) {
+    let color = severity_color(&group.severity);
+    let files_word = if group.file_count == 1 { "file" } else { "files" };
+    let code_display = format_code_display(group);
+
+    sections.push(format!(
+        "\n{color}┌─ {code_display}{RESET}  {DIM}{severity}{RESET}  {BOLD}{WHITE}{count}{RESET} in {file_count} {files_word}",
+        severity = group.severity,
+        count = group.issues.len(), file_count = group.file_count,
+    ));
+    sections.push(format!("{color}│{RESET}"));
+
+    let gutter = format!("{color}│{RESET}  ");
+    let continuation = format!("{color}│{RESET}    ");
+    let cont_width = MAX_WIDTH - 5;
+
+    let layout = GutterLayout { gutter: &gutter, continuation: &continuation, cont_width };
+    format_guidance_field(&group.signal, "Signal", CYAN, &layout, sections);
+    format_guidance_field(&group.direction, "Direction", CYAN, &layout, sections);
+    format_guidance_field(&group.canary, "Canary", YELLOW, &layout, sections);
+
+    sections.push(format!("{color}│{RESET}"));
+
+    let file_lines = collect_file_lines(&group.issues);
+    for (file, lines) in &file_lines {
+        format_file_location(file, lines, color, sections);
+    }
+    sections.push(format!("{color}└{bar}{RESET}", bar = "─".repeat(MAX_WIDTH - 1)));
+}
+
+fn format_code_display(group: &CheckGroup) -> String {
+    if is_opaque_code(&group.code) && !group.representative_message.is_empty() {
+        let message = &group.representative_message;
+        let short = message.find(". ").map(|i| &message[..i]).unwrap_or(message);
+        let short = if short.len() > 60 {
+            let truncated = &short[..short[..57].rfind(' ').unwrap_or(57)];
+            format!("{}...", truncated)
+        } else {
+            short.to_string()
+        };
+        format!("{} — {}", group.code, short)
+    } else {
+        group.code.clone()
+    }
+}
+
+struct GutterLayout<'a> {
+    gutter: &'a str,
+    continuation: &'a str,
+    cont_width: usize,
+}
+
+fn format_guidance_field(
+    text: &str, label: &str, label_color: &str,
+    layout: &GutterLayout, sections: &mut Vec<String>,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let first_width = MAX_WIDTH - 4 - label.len() - 1;
+    let lines = wrap_adaptive(text, first_width, layout.cont_width);
+    sections.push(format!("{}{BOLD}{label_color}{label}:{RESET} {}", layout.gutter, lines[0]));
+    for line in &lines[1..] {
+        sections.push(format!("{}{line}", layout.continuation));
+    }
+}
+
+fn collect_file_lines<'a>(issues: &'a [LocatedIssue]) -> Vec<(&'a str, Vec<usize>)> {
+    let mut file_lines: Vec<(&str, Vec<usize>)> = Vec::new();
+    for issue in issues {
+        if let Some(last) = file_lines.last_mut() {
+            if last.0 == issue.file {
+                last.1.push(issue.line);
+                continue;
+            }
+        }
+        file_lines.push((&issue.file, vec![issue.line]));
+    }
+    file_lines
+}
+
+fn format_file_location(file: &str, lines: &[usize], color: &str, sections: &mut Vec<String>) {
+    let line_list = format!("[{}]", collapse_line_numbers(lines));
+    let avail = MAX_WIDTH - 3;
+
+    if 3 + file.len() + 1 + line_list.len() <= MAX_WIDTH {
+        let pad = avail - file.len() - line_list.len();
+        sections.push(format!(
+            "{color}│{RESET}  {DIM}{file}{}{line_list}{RESET}",
+            " ".repeat(pad),
+        ));
+        return;
+    }
+
+    sections.push(format!("{color}│{RESET}  {DIM}{file}{RESET}"));
+
+    if line_list.len() <= avail {
+        let pad = avail - line_list.len();
+        sections.push(format!(
+            "{color}│{RESET}  {DIM}{}{line_list}{RESET}",
+            " ".repeat(pad),
+        ));
+        return;
+    }
+
+    let collapsed = collapse_line_numbers(lines);
+    let parts: Vec<&str> = collapsed.split(',').collect();
+    let mut rows: Vec<String> = Vec::new();
+    let mut current = String::from("[");
+    for part in &parts {
+        let entry = if current == "[" {
+            part.to_string()
+        } else {
+            format!(",{}", part)
+        };
+        if current.len() + entry.len() + 1 > avail {
+            current.push(',');
+            rows.push(current);
+            current = part.to_string();
+        } else {
+            current.push_str(&entry);
+        }
+    }
+    current.push(']');
+    rows.push(current);
+
+    for row in &rows {
+        let pad = if row.len() < avail { avail - row.len() } else { 0 };
+        sections.push(format!(
+            "{color}│{RESET}  {DIM}{}{row}{RESET}",
+            " ".repeat(pad),
+        ));
+    }
 }
 
 fn format_json(groups: &[CheckGroup]) -> String {

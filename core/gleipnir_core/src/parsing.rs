@@ -8,87 +8,87 @@ use crate::structures::ParsedSource;
 use tree_sitter::{Node, Parser, Tree};
 
 /// Parse Python source bytes into a tree-sitter Tree.
-pub fn parse_python(source_bytes: &[u8]) -> Tree {
+pub fn parse_python(source_bytes: &[u8]) -> Result<Tree, String> {
     let mut parser = Parser::new();
     let language = tree_sitter_python::LANGUAGE;
     parser
         .set_language(&language.into())
-        .expect("failed to set Python language");
+        .map_err(|e| format!("failed to set Python language: {e}"))?;
     parser
         .parse(source_bytes, None)
-        .expect("tree-sitter parse failed")
+        .ok_or_else(|| "tree-sitter parse returned None".to_string())
 }
 
 /// Parse Rust source bytes into a tree-sitter Tree.
-pub fn parse_rust(source_bytes: &[u8]) -> Tree {
+pub fn parse_rust(source_bytes: &[u8]) -> Result<Tree, String> {
     let mut parser = Parser::new();
     let language = tree_sitter_rust::LANGUAGE;
     parser
         .set_language(&language.into())
-        .expect("failed to set Rust language");
+        .map_err(|e| format!("failed to set Rust language: {e}"))?;
     parser
         .parse(source_bytes, None)
-        .expect("tree-sitter parse failed")
+        .ok_or_else(|| "tree-sitter parse returned None".to_string())
 }
 
 /// Build a ParsedSource from file path and source content (Python).
-pub fn build_parsed_source<'a>(file_path: &'a str, source: &'a [u8]) -> ParsedSource<'a> {
-    let tree = parse_python(source);
+pub fn build_parsed_source<'a>(file_path: &'a str, source: &'a [u8]) -> Result<ParsedSource<'a>, String> {
+    let tree = parse_python(source)?;
     let lines = std::str::from_utf8(source)
         .unwrap_or("")
         .lines()
         .collect();
-    ParsedSource {
+    Ok(ParsedSource {
         file_path,
         source_bytes: source,
         lines,
         tree,
-    }
+    })
 }
 
 /// Build a ParsedSource from file path and source content (Rust).
-pub fn build_parsed_source_rust<'a>(file_path: &'a str, source: &'a [u8]) -> ParsedSource<'a> {
-    let tree = parse_rust(source);
+pub fn build_parsed_source_rust<'a>(file_path: &'a str, source: &'a [u8]) -> Result<ParsedSource<'a>, String> {
+    let tree = parse_rust(source)?;
     let lines = std::str::from_utf8(source)
         .unwrap_or("")
         .lines()
         .collect();
-    ParsedSource {
+    Ok(ParsedSource {
         file_path,
         source_bytes: source,
         lines,
         tree,
-    }
+    })
 }
 
 /// Parse TypeScript source bytes into a tree-sitter Tree.
-pub fn parse_typescript(source_bytes: &[u8]) -> Tree {
+pub fn parse_typescript(source_bytes: &[u8]) -> Result<Tree, String> {
     let mut parser = Parser::new();
     let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT;
     parser
         .set_language(&language.into())
-        .expect("failed to set TypeScript language");
+        .map_err(|e| format!("failed to set TypeScript language: {e}"))?;
     parser
         .parse(source_bytes, None)
-        .expect("tree-sitter parse failed")
+        .ok_or_else(|| "tree-sitter parse returned None".to_string())
 }
 
 /// Build a ParsedSource from file path and TypeScript source content.
 pub fn build_parsed_source_typescript<'a>(
     file_path: &'a str,
     source: &'a [u8],
-) -> ParsedSource<'a> {
-    let tree = parse_typescript(source);
+) -> Result<ParsedSource<'a>, String> {
+    let tree = parse_typescript(source)?;
     let lines = std::str::from_utf8(source)
         .unwrap_or("")
         .lines()
         .collect();
-    ParsedSource {
+    Ok(ParsedSource {
         file_path,
         source_bytes: source,
         lines,
         tree,
-    }
+    })
 }
 
 /// Extracted `<script>` block from a Svelte file.
@@ -401,7 +401,7 @@ mod tests {
     fn parse(code: &str) -> ParsedSource<'static> {
         // Leak for test convenience — tests don't care about cleanup
         let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
-        build_parsed_source("/test/file.py", source)
+        build_parsed_source("/test/file.py", source).unwrap()
     }
 
     #[test]

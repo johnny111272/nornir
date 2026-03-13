@@ -11,3 +11,4 @@ path = "src/main.rs"
 hook_io = { path = "../../capability/hook_io" }
 serde_json = { workspace = true }
 regex = { workspace = true }
+path_core = { path = "../../core/path_core" }

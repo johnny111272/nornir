@@ -49,17 +49,18 @@ fn parse_args() -> Config {
 
     for arg in &args {
         match arg.as_str() {
-            "--writer" => current = Some("writer"),
-            "--inspect" => current = Some("inspect"),
-            _ => match current {
-                Some("writer") => writers.push(arg.clone()),
-                Some("inspect") => {
-                    if let Some((name, path)) = arg.split_once('=') {
-                        inspect.insert(name.to_string(), path.to_string());
-                    }
+            "--writer" => { current = Some("writer"); continue; }
+            "--inspect" => { current = Some("inspect"); continue; }
+            _ => {}
+        }
+        match current {
+            Some("writer") => writers.push(arg.clone()),
+            Some("inspect") => {
+                if let Some((name, path)) = arg.split_once('=') {
+                    inspect.insert(name.to_string(), path.to_string());
                 }
-                _ => {}
-            },
+            }
+            _ => {}
         }
     }
 
@@ -69,25 +70,20 @@ fn parse_args() -> Config {
 // ── Shell safety ───────────────────────────────────────────────────
 
 /// Characters that indicate shell chaining.
-fn has_chain_chars(s: &str) -> bool {
+fn has_chain_chars(command: &str) -> bool {
     // Check for ;  |  &  `  $() outside of normal pipe usage
     // We explicitly allow a single | for the heredoc-pipe pattern
-    s.contains(';')
-        || s.contains('`')
-        || s.contains("&&")
-        || s.contains("||")
-        || s.contains("$(")
+    command.contains(';')
+        || command.contains('`')
+        || command.contains("&&")
+        || command.contains("||")
+        || command.contains("$(")
 }
 
 /// Validate that a name arg is a bare filename (no path parts).
-fn is_bare_name(s: &str) -> bool {
-    !s.is_empty()
-        && !s.contains('/')
-        && !s.contains('\\')
-        && !s.contains("..")
-        && !s.contains('\0')
-        && !s.starts_with('.')
-        && !s.starts_with('-')
+/// Delegates to path_core::validate_path_segment (shared across workspace).
+fn is_bare_name(name: &str) -> bool {
+    path_core::validate_path_segment(name).is_ok()
 }
 
 // ── Writer validation ──────────────────────────────────────────────
@@ -98,9 +94,9 @@ fn parse_heredoc_header(first_line: &str) -> Option<(String, String, Option<Stri
     // Match: cat <<'DELIM' | writer_name [name_arg]
     let caps = HEREDOC_RE.captures(first_line)?;
     Some((
-        caps.get(1).unwrap().as_str().to_string(),
-        caps.get(2).unwrap().as_str().to_string(),
-        caps.get(3).map(|m| m.as_str().to_string()),
+        caps.get(1)?.as_str().to_string(),
+        caps.get(2)?.as_str().to_string(),
+        caps.get(3).map(|cap| cap.as_str().to_string()),
     ))
 }
 
@@ -119,9 +115,10 @@ fn validate_writer(command: &str, writers: &[String]) -> HookDecision {
 
     // Also allow: echo '...' | writer_name [name_arg]
     if let Some(caps) = ECHO_PIPE_RE.captures(command) {
-        let writer_name = caps.get(1).unwrap().as_str();
-        let name_arg = caps.get(2).map(|m| m.as_str());
-        return check_writer_and_name(writer_name, name_arg, writers);
+        if let Some(writer_match) = caps.get(1) {
+            let name_arg = caps.get(2).map(|cap| cap.as_str());
+            return check_writer_and_name(writer_match.as_str(), name_arg, writers);
+        }
     }
 
     deny_bad_writer_pattern()
@@ -232,11 +229,7 @@ fn warn_chaining(command: &str) -> HookDecision {
 fn decide(input: &HookInput) -> HookDecision {
     let config = parse_args();
 
-    let command = input
-        .tool_input
-        .get("command")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let command = input.command();
 
     if command.trim().is_empty() {
         return HookDecision::Deny {
@@ -815,16 +808,13 @@ mod tests {
 
     #[test]
     fn decide_empty_command_denied() {
-        // decide() denies empty commands for subagent bash
         let input = make_bash_input("");
-        let command = input.tool_input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(command.trim().is_empty());
+        assert!(input.command().trim().is_empty());
     }
 
     #[test]
     fn decide_command_extraction_works() {
         let input = make_bash_input("cat <<'RECORD' | my_writer\n{}\nRECORD");
-        let command = input.tool_input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        assert_eq!(command, "cat <<'RECORD' | my_writer\n{}\nRECORD");
+        assert_eq!(input.command(), "cat <<'RECORD' | my_writer\n{}\nRECORD");
     }
 }

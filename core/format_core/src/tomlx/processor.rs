@@ -16,6 +16,18 @@ use super::types::{
 use super::units::{convert_unit, lookup_unit, suggest_units, target_family, target_unit_name, UnitFamily};
 use super::validation::{validate_tomlx, ValidatedSection, ValidationResult};
 
+/// Identity of a field being processed (name + source line).
+struct FieldRef<'a> {
+    name: &'a str,
+    line: usize,
+}
+
+/// Context for path resolution operations.
+struct PathContext<'a> {
+    registry: &'a PathRegistry,
+    config_dir: Option<&'a Path>,
+}
+
 /// Parse a .tomlx string and return the converted output.
 pub fn parse_tomlx(
     source: &str,
@@ -78,7 +90,8 @@ fn process_sections(
     for (section_path, section) in &validation.sections {
         if section_path.is_empty() {
             if let Some(ann) = &section.annotation {
-                process_root_fields(&mut data, section, ann, &path_registry, config_dir, &mut issues)?;
+                let paths = PathContext { registry: &path_registry, config_dir };
+                process_root_fields(&mut data, section, ann, &paths, &mut issues)?;
             }
             continue;
         }
@@ -112,8 +125,9 @@ fn process_sections(
                         }
                     }
                     Some(TargetFamily::Path) => {
+                        let paths = PathContext { registry: &path_registry, config_dir };
                         process_path_section(
-                            section_data, section, ann, &path_registry, config_dir, &mut issues,
+                            section_data, section, ann, &paths, &mut issues,
                         )?;
 
                         let bases: HashMap<String, String> = path_registry
@@ -225,21 +239,23 @@ fn get_section_mut<'a>(data: &'a mut Value, path: &str) -> Option<&'a mut Value>
 fn process_root_fields(
     data: &mut Value,
     section: &ValidatedSection,
-    ann: &super::types::SectionAnnotation,
-    path_registry: &PathRegistry,
-    config_dir: Option<&Path>,
+    annotation: &super::types::SectionAnnotation,
+    paths: &PathContext,
     issues: &mut TomlxIssues,
 ) -> Result<(), FormatError> {
     if let Value::Object(map) = data {
         for field in &section.fields {
-            let field_name = field.field_path.rsplit('.').next().unwrap_or(&field.field_path);
-            if let Some(value) = map.get_mut(field_name) {
-                match (&ann.target, &field.annotation_type) {
+            let field_ref = FieldRef {
+                name: field.field_path.rsplit('.').next().unwrap_or(&field.field_path),
+                line: field.line,
+            };
+            if let Some(value) = map.get_mut(field_ref.name) {
+                match (&annotation.target, &field.annotation_type) {
                     (Some(target @ (TargetFamily::Time(_) | TargetFamily::Size)), FieldAnnotationType::Unit(unit)) => {
-                        convert_field_unit(value, unit, target, field_name, field.line, issues)?;
+                        convert_field_unit(value, unit, target, &field_ref, issues)?;
                     }
                     (Some(TargetFamily::Path), FieldAnnotationType::Path(reference)) => {
-                        convert_field_path(value, reference, path_registry, config_dir, field_name, field.line, issues)?;
+                        convert_field_path(value, reference, paths, &field_ref, issues)?;
                     }
                     _ => {}
                 }
@@ -252,20 +268,23 @@ fn process_root_fields(
 fn process_unit_section(
     section_data: &mut Value,
     section: &ValidatedSection,
-    ann: &super::types::SectionAnnotation,
+    annotation: &super::types::SectionAnnotation,
     issues: &mut TomlxIssues,
 ) -> Result<(), FormatError> {
-    let target = match &ann.target {
+    let target = match &annotation.target {
         Some(t) => t,
         None => return Ok(()),
     };
 
     if let Value::Object(map) = section_data {
         for field in &section.fields {
-            let field_name = field.field_path.rsplit('.').next().unwrap_or(&field.field_path);
-            if let Some(value) = map.get_mut(field_name) {
+            let field_ref = FieldRef {
+                name: field.field_path.rsplit('.').next().unwrap_or(&field.field_path),
+                line: field.line,
+            };
+            if let Some(value) = map.get_mut(field_ref.name) {
                 if let FieldAnnotationType::Unit(unit) = &field.annotation_type {
-                    convert_field_unit(value, unit, target, field_name, field.line, issues)?;
+                    convert_field_unit(value, unit, target, &field_ref, issues)?;
                 }
             }
         }
@@ -277,8 +296,7 @@ fn convert_field_unit(
     value: &mut Value,
     unit: &str,
     target: &TargetFamily,
-    field_name: &str,
-    line: usize,
+    field: &FieldRef,
     issues: &mut TomlxIssues,
 ) -> Result<(), FormatError> {
     let num = match value {
@@ -290,8 +308,8 @@ fn convert_field_unit(
         Some(info) => info,
         None => {
             issues.unknown_units.push(UnknownUnit {
-                location: issues.loc(line),
-                field_name: field_name.to_string(),
+                location: issues.loc(field.line),
+                field_name: field.name.to_string(),
                 unit: unit.to_string(),
                 suggestions: suggest_units(unit),
             });
@@ -308,8 +326,8 @@ fn convert_field_unit(
                 _ => ("unknown", "unknown"),
             };
             issues.incompatible_unit_families.push(IncompatibleUnitFamily {
-                location: issues.loc(line),
-                field_name: field_name.to_string(),
+                location: issues.loc(field.line),
+                field_name: field.name.to_string(),
                 unit: unit.to_string(),
                 unit_family: unit_fam.to_string(),
                 target: target_unit_name(target).to_string(),
@@ -337,16 +355,18 @@ fn process_path_section(
     section_data: &mut Value,
     section: &ValidatedSection,
     _ann: &super::types::SectionAnnotation,
-    path_registry: &PathRegistry,
-    config_dir: Option<&Path>,
+    paths: &PathContext,
     issues: &mut TomlxIssues,
 ) -> Result<(), FormatError> {
     if let Value::Object(map) = section_data {
         for field in &section.fields {
-            let field_name = field.field_path.rsplit('.').next().unwrap_or(&field.field_path);
-            if let Some(value) = map.get_mut(field_name) {
+            let field_ref = FieldRef {
+                name: field.field_path.rsplit('.').next().unwrap_or(&field.field_path),
+                line: field.line,
+            };
+            if let Some(value) = map.get_mut(field_ref.name) {
                 if let FieldAnnotationType::Path(reference) = &field.annotation_type {
-                    convert_field_path(value, reference, path_registry, config_dir, field_name, field.line, issues)?;
+                    convert_field_path(value, reference, paths, &field_ref, issues)?;
                 }
             }
         }
@@ -357,10 +377,8 @@ fn process_path_section(
 fn convert_field_path(
     value: &mut Value,
     reference: &str,
-    path_registry: &PathRegistry,
-    config_dir: Option<&Path>,
-    field_name: &str,
-    line: usize,
+    paths: &PathContext,
+    field: &FieldRef,
     issues: &mut TomlxIssues,
 ) -> Result<(), FormatError> {
     let path_str = match value {
@@ -368,17 +386,17 @@ fn convert_field_path(
         _ => return Ok(()),
     };
 
-    if !PathRegistry::is_builtin(reference) && !path_registry.user_defined.contains_key(reference) {
+    if !PathRegistry::is_builtin(reference) && !paths.registry.user_defined.contains_key(reference) {
         issues.undefined_path_references.push(UndefinedPathReference {
-            location: issues.loc(line),
-            field_name: field_name.to_string(),
+            location: issues.loc(field.line),
+            field_name: field.name.to_string(),
             reference: reference.to_string(),
-            defined_refs: path_registry.user_defined.keys().cloned().collect(),
+            defined_refs: paths.registry.user_defined.keys().cloned().collect(),
         });
         return Ok(());
     }
 
-    match expand_path(&path_str, reference, path_registry, config_dir) {
+    match expand_path(&path_str, reference, paths.registry, paths.config_dir) {
         Ok(expanded) => { *value = Value::String(expanded); }
         Err(_) => {}
     }

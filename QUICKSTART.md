@@ -52,9 +52,9 @@ Tier 1: CORE (10 pure libraries, no I/O)
     report_render_core, compaction_inject_core
 
 Tier 2: CAPABILITY (10 feature libraries, may have I/O)
-    schemas_embedded, path_verify, io_filter, io_check,
-    gate_io, hook_io, datagram, intercept_io,
-    write_core, saga_runner
+    schemas_embedded, path_verify_io, io_filter, io_check,
+    gate_io, hook_io, datagram_io, intercept_io,
+    write_engine, saga_runner
 
 Tier 3: BINARIES (62 executables and Python extensions)
     gates/*, cli/*, writers/*, hooks/*, senders/*,
@@ -112,7 +112,7 @@ Rules are embedded TOML parsed at startup. Three severity layers: floor (always 
 
 ## Writers
 
-Declarative ~16-line binaries. Define config, call `write_core::run()`:
+Declarative ~16-line binaries. Define config, call `write_engine::run()`:
 
 ```bash
 # Append a record (schema-validated, fsync'd)
@@ -126,7 +126,7 @@ echo '{"key":"value"}' | append_raw_jsonl traffic-log
 
 ## Senders (Hlidskjalf Datagrams)
 
-Fire-and-forget messages to the Hlidskjalf Unix socket via `datagram`:
+Fire-and-forget messages to the Hlidskjalf Unix socket via `datagram_io`:
 
 ```bash
 send_alert --source saga --detail "Quality regression detected"
@@ -165,7 +165,7 @@ Exit codes: 0 = valid, 1 = invalid, 2 = operational error.
 
 ## Test Coverage
 
-576 tests across 21 crates, all passing. Security-critical hooks have dual-direction testing: every detection rule verified for true positives AND true negatives.
+All tests must pass. Security-critical hooks have dual-direction testing: every detection rule verified for true positives AND true negatives.
 
 Run tests: `cargo test -p {crate_name}` (avoid full workspace `cargo test` due to PyO3 gate linker requirements).
 

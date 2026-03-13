@@ -32,13 +32,18 @@ use report_render_core::{OutputMode, total_issues, groups_to_json, format_output
 // Config loading (.syn/warn.toml, .syn/deny.toml)
 // =============================================================================
 
+#[derive(serde::Deserialize)]
+struct SynFilterToml {
+    filter: Option<String>,
+}
+
 fn load_filter_config(config_path: &Path, default_expr: &str) -> Result<(String, syn_core::CompiledFilter), String> {
     let expr = if config_path.exists() {
         std::fs::read_to_string(config_path)
             .ok()
             .and_then(|content| {
-                let table: toml::Table = content.parse().ok()?;
-                table.get("filter")?.as_str().map(String::from)
+                let config: SynFilterToml = toml::from_str(&content).ok()?;
+                config.filter
             })
             .unwrap_or_else(|| default_expr.to_string())
     } else {
@@ -276,15 +281,15 @@ fn broadcast(groups: &[report_render_core::CheckGroup], decision: &str, deny_cou
     let payload = groups_to_json(groups);
     let classifier = if scan_path.is_file() { "file" } else { "directory" };
 
-    let datagram = datagram::Datagram {
-        timestamp: datagram::now(),
+    let datagram = datagram_io::Datagram {
+        timestamp: datagram_io::now(),
         source: "syn".to_string(),
-        kind: datagram::DatagramKind::Quality,
+        kind: datagram_io::DatagramKind::Quality,
         classifier: Some(classifier.into()),
         priority: match decision {
-            "deny" => datagram::Priority::High,
-            "warn" => datagram::Priority::Normal,
-            _ => datagram::Priority::Low,
+            "deny" => datagram_io::Priority::High,
+            "warn" => datagram_io::Priority::Normal,
+            _ => datagram_io::Priority::Low,
         },
         workspace,
         detail: Some(format!(
@@ -294,7 +299,7 @@ fn broadcast(groups: &[report_render_core::CheckGroup], decision: &str, deny_cou
         speech: None,
         payload: Some(payload),
     };
-    datagram::emit_validated_or_alert(&datagram, "syn");
+    datagram_io::emit_validated_or_alert(&datagram, "syn");
 }
 
 // =============================================================================
@@ -361,7 +366,7 @@ fn run(args: &Args) -> Result<i32, String> {
 
     if !args.silent && !result.warn_groups.is_empty() {
         let scan_path = args.path.as_deref().unwrap_or(project_dir);
-        let workspace = datagram::workspace_from_path(project_dir);
+        let workspace = datagram_io::workspace_from_path(project_dir);
         broadcast(&result.warn_groups, result.decision, result.deny_issues, workspace, scan_path);
     }
 

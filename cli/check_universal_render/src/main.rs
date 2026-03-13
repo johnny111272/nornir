@@ -15,7 +15,7 @@ fn check(input: &str) -> Result<CheckResult, NornirError> {
             message: result.message,
         });
     }
-    path_verify::verify_paths(UNIVERSAL_RENDER.schema_json(), &json)?;
+    path_verify_io::verify_paths(UNIVERSAL_RENDER.schema_json(), &json)?;
     Ok(CheckResult {
         valid: true,
         message: result.message,

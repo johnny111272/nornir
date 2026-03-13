@@ -192,9 +192,20 @@ const FORBIDDEN_MACROS: &[&str] = &[
     "dbg",
 ];
 
-/// Check if the file path ends with main.rs (binary crate entry point).
-fn is_binary_main(file_path: &str) -> bool {
-    file_path.rsplit('/').next() == Some("main.rs")
+/// Check if a node is inside fn main() (binary entry point uses stdout).
+fn in_main_function(node: tree_sitter::Node, source: &[u8]) -> bool {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if ancestor.kind() == "function_item" {
+            let name = ancestor
+                .child_by_field_name("name")
+                .map(|n| node_text(n, source))
+                .unwrap_or("");
+            return name == "main";
+        }
+        current = ancestor.parent();
+    }
+    false
 }
 
 /// Check if a node is inside a function whose name indicates stdout output.
@@ -221,13 +232,12 @@ fn in_output_function(node: tree_sitter::Node, source: &[u8]) -> bool {
 ///
 /// Skips:
 /// - Test contexts (#[test], #[cfg(test)])
-/// - println! in main.rs files (binary crates use stdout as their interface)
+/// - println! inside fn main() (binary crates use stdout as their interface)
 /// - println! inside output functions (print_*, emit_*, display_*)
 ///
 /// dbg!() is always flagged — it is never intentional in production code.
 pub fn check_no_println(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     let mut violations = Vec::new();
-    let in_binary = is_binary_main(source.file_path);
 
     for node in find_nodes_by_type(source.tree.root_node(), "macro_invocation") {
         let macro_node = match node.child_by_field_name("macro") {
@@ -246,7 +256,7 @@ pub fn check_no_println(source: &ParsedSource, _config: &CheckConfig) -> Vec<Vio
         }
 
         // println! gets contextual treatment; dbg! is always caught
-        if name == "println" && (in_binary || in_output_function(node, source.source_bytes)) {
+        if name == "println" && (in_main_function(node, source.source_bytes) || in_output_function(node, source.source_bytes)) {
             continue;
         }
 
@@ -771,7 +781,7 @@ mod tests {
 
     #[test]
     fn println_caught() {
-        let parsed = parse(r#"fn main() { println!("hello"); }"#);
+        let parsed = parse(r#"fn process() { println!("hello"); }"#);
         let violations = check_no_println(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("println"));
@@ -810,12 +820,32 @@ mod tests {
     }
 
     #[test]
-    fn println_in_main_rs_ok() {
+    fn println_in_fn_main_ok() {
         let source: &'static [u8] =
             Box::leak(b"fn main() { println!(\"starting\"); }".to_vec().into_boxed_slice());
         let parsed = build_parsed_source_rust("/app/src/main.rs", source).unwrap();
         let violations = check_no_println(&parsed, &default_config());
-        assert!(violations.is_empty(), "println in main.rs should be skipped");
+        assert!(violations.is_empty(), "println inside fn main() should be allowed");
+    }
+
+    #[test]
+    fn println_in_helper_within_main_rs_caught() {
+        let source: &'static [u8] = Box::leak(
+            b"fn helper() { println!(\"debug\"); }\nfn main() { helper(); }"
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/app/src/main.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "println in helper within main.rs must be caught");
+    }
+
+    #[test]
+    fn println_in_fn_main_non_binary_ok() {
+        // fn main() is exempt regardless of file path
+        let parsed = parse(r#"fn main() { println!("starting"); }"#);
+        let violations = check_no_println(&parsed, &default_config());
+        assert!(violations.is_empty(), "println inside fn main() should be allowed even in non-binary files");
     }
 
     #[test]

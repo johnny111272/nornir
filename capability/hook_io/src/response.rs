@@ -47,17 +47,17 @@ impl Default for Universal {
 }
 
 impl Universal {
-    fn apply(&self, obj: &mut serde_json::Map<String, Value>) {
+    fn apply(&self, fields: &mut serde_json::Map<String, Value>) {
         if self.suppress_output {
-            obj.insert("suppressOutput".into(), Value::Bool(true));
+            fields.insert("suppressOutput".into(), Value::Bool(true));
         }
         if let Some(ref msg) = self.system_message {
-            obj.insert("systemMessage".into(), Value::String(msg.clone()));
+            fields.insert("systemMessage".into(), Value::String(msg.clone()));
         }
         if self.stop_session {
-            obj.insert("continue".into(), Value::Bool(false));
+            fields.insert("continue".into(), Value::Bool(false));
             if let Some(ref reason) = self.stop_reason {
-                obj.insert("stopReason".into(), Value::String(reason.clone()));
+                fields.insert("stopReason".into(), Value::String(reason.clone()));
             }
         }
     }
@@ -76,8 +76,8 @@ pub trait WithUniversal: Sized {
         self
     }
 
-    fn system_message(mut self, msg: impl Into<String>) -> Self {
-        self.universal_mut().system_message = Some(msg.into());
+    fn system_message(mut self, message: impl Into<String>) -> Self {
+        self.universal_mut().system_message = Some(message.into());
         self
     }
 
@@ -139,8 +139,8 @@ impl PreToolUseResponse {
         }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 
@@ -246,9 +246,9 @@ impl PermissionRequestResponse {
         self
     }
 
-    pub fn with_message(mut self, msg: impl Into<String>) -> Self {
+    pub fn with_message(mut self, text: impl Into<String>) -> Self {
         if let PermissionDecisionKind::Deny { ref mut message, .. } = self.decision {
-            *message = Some(msg.into());
+            *message = Some(text.into());
         }
         self
     }
@@ -333,8 +333,8 @@ impl PostToolUseResponse {
         }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }
@@ -382,8 +382,8 @@ impl PostToolUseFailureResponse {
         Self { universal: Universal::default(), context: None }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }
@@ -440,8 +440,8 @@ impl UserPromptSubmitResponse {
         }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }
@@ -623,8 +623,8 @@ impl SessionStartResponse {
         Self { universal: Universal::default(), context: None }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }
@@ -663,8 +663,8 @@ impl SubagentStartResponse {
         Self { universal: Universal::default(), context: None }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }
@@ -703,8 +703,8 @@ impl NotificationResponse {
         Self { universal: Universal::default(), context: None }
     }
 
-    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.context = Some(ctx.into());
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
         self
     }
 }

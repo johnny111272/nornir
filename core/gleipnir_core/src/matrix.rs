@@ -14,14 +14,14 @@ struct MatrixEntry {
 }
 
 // Shorthand constructors
-const fn blocked(name: &'static str, f: CheckFn) -> MatrixEntry {
-    MatrixEntry { name, severity: Severity::Blocked, check_fn: f }
+const fn blocked(name: &'static str, check_fn: CheckFn) -> MatrixEntry {
+    MatrixEntry { name, severity: Severity::Blocked, check_fn }
 }
-const fn error(name: &'static str, f: CheckFn) -> MatrixEntry {
-    MatrixEntry { name, severity: Severity::Error, check_fn: f }
+const fn error(name: &'static str, check_fn: CheckFn) -> MatrixEntry {
+    MatrixEntry { name, severity: Severity::Error, check_fn }
 }
-const fn warning(name: &'static str, f: CheckFn) -> MatrixEntry {
-    MatrixEntry { name, severity: Severity::Warning, check_fn: f }
+const fn warning(name: &'static str, check_fn: CheckFn) -> MatrixEntry {
+    MatrixEntry { name, severity: Severity::Warning, check_fn }
 }
 
 // =========================================================================

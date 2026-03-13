@@ -100,15 +100,7 @@ fn decide(input: &HookInput) -> HookDecision {
 
 /// Core decision logic, separated from config/rules parsing for testability.
 fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecision {
-    let tool_input = &input.tool_input;
-
-    // Extract path from tool_input (same fields as subagent_tool)
-    let target = tool_input
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .or_else(|| tool_input.get("path").and_then(|v| v.as_str()));
-
-    let target = match target {
+    let target = match input.target_path() {
         Some(t) => t,
         None => return HookDecision::Allow,
     };
