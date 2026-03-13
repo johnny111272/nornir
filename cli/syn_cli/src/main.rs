@@ -359,7 +359,7 @@ fn run(args: &Args) -> Result<i32, String> {
         );
     }
 
-    if !args.silent {
+    if !args.silent && !result.warn_groups.is_empty() {
         let scan_path = args.path.as_deref().unwrap_or(project_dir);
         let workspace = datagram::workspace_from_path(project_dir);
         broadcast(&result.warn_groups, result.decision, result.deny_issues, workspace, scan_path);
