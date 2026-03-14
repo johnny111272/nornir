@@ -649,6 +649,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "default_apply_core"
+version = "0.1.0"
+dependencies = [
+ "error_core",
+ "serde_json",
+]
+
+[[package]]
+name = "default_apply_io"
+version = "0.1.0"
+dependencies = [
+ "default_apply_core",
+ "error_core",
+ "format_core",
+ "schema_core",
+ "serde_json",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1169,6 +1188,15 @@ name = "gate_permissions_resolved_output"
 version = "0.1.0"
 dependencies = [
  "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_raw_definition_defaults"
+version = "0.1.0"
+dependencies = [
+ "default_apply_io",
  "pyo3",
  "schemas_embedded",
 ]

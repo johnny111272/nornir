@@ -1,0 +1,13 @@
+[package]
+name = "gate_raw_definition_defaults"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "gate_raw_definition_defaults"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { workspace = true }
+schemas_embedded = { path = "../../capability/schemas_embedded" }
+default_apply_io = { path = "../../capability/default_apply_io" }

@@ -110,6 +110,7 @@ cli_crates = [
 cli_verify = "help"
 gate_crates = [
     "gate_raw_definition_input",
+    "gate_raw_definition_defaults",
     "gate_paths_verified_input",
     "gate_includes_merged_input",
     "gate_permissions_resolved_input",
