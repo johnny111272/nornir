@@ -204,10 +204,15 @@ pub fn groups_to_json(groups: &[CheckGroup]) -> serde_json::Value {
                 file_lines.push((&li.file, vec![li.line]));
             }
             let locations: Vec<serde_json::Value> = file_lines.iter().map(|(file, lines)| {
-                if lines.len() == 1 {
-                    serde_json::json!({ "file": file, "line": lines[0] })
+                let path = if file.starts_with('/') || file.starts_with('@') {
+                    file.to_string()
                 } else {
-                    serde_json::json!({ "file": file, "lines": lines })
+                    format!("@{file}")
+                };
+                if lines.len() == 1 {
+                    serde_json::json!({ "file": path, "line": lines[0] })
+                } else {
+                    serde_json::json!({ "file": path, "lines": lines })
                 }
             }).collect();
 
@@ -766,9 +771,9 @@ mod tests {
         let locations = g["locations"].as_array().unwrap();
         assert_eq!(locations.len(), 2);
         // Each location is a different file with a single line
-        assert_eq!(locations[0]["file"], "src/a.py");
+        assert_eq!(locations[0]["file"], "@src/a.py");
         assert_eq!(locations[0]["line"], 10);
-        assert_eq!(locations[1]["file"], "src/b.py");
+        assert_eq!(locations[1]["file"], "@src/b.py");
         assert_eq!(locations[1]["line"], 20);
     }
 
@@ -786,7 +791,7 @@ mod tests {
 
         let locations = json["groups"][0]["locations"].as_array().unwrap();
         assert_eq!(locations.len(), 1, "same file should collapse into one location");
-        assert_eq!(locations[0]["file"], "src/a.py");
+        assert_eq!(locations[0]["file"], "@src/a.py");
         // Multiple lines → "lines" array (not "line" scalar)
         let lines = locations[0]["lines"].as_array().unwrap();
         assert_eq!(lines, &[10, 25]);

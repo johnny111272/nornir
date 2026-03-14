@@ -11,6 +11,7 @@
 |----------|-------------|-----------|
 | `NORNIR_CONVENTIONS.md` | Before writing ANY code | CURRENT — consolidated 2026-03-13 from naming/org/building docs |
 | `CLAUDE.md` | Auto-loaded every session | CURRENT — restructured 2026-03-13 as Layer 2 |
+| `MUST_READ_BEFORE_BUILDING.md` | Before ANY build/deploy operation | CURRENT — nornir_deploy CLI reference |
 | `audit/AUDIT_GUIDE.md` | When auditing or reviewing code | CURRENT — priorities P1-P10 match codebase |
 | `hooks/HOOK_DESIGN.md` | When working on hooks | CURRENT — wire format, dispatch architecture, runner separation |
 | `cli/syn_cli/SYN_DESIGN.md` | When working on syn/saga quality pipeline | MOSTLY CURRENT — Phase 1 done, ratchet comparison not yet built |
@@ -22,6 +23,7 @@
 | `NORNIR_CONVENTIONS.md` | CURRENT | Single source of truth for conventions |
 | `CLAUDE.md` | CURRENT | Session entry point, Layer 2 context protocol |
 | `CONTEXT_MAP.md` | CURRENT | This file — regenerate after significant changes |
+| `MUST_READ_BEFORE_BUILDING.md` | CURRENT | nornir_deploy usage, build process guidance |
 | `audit/AUDIT_GUIDE.md` | CURRENT | Architectural invariants P1-P10 |
 | `hooks/HOOK_DESIGN.md` | CURRENT | Hook subsystem design |
 | `cli/syn_cli/SYN_DESIGN.md` | MOSTLY CURRENT | syn_core extraction done, line counts updated |
@@ -96,7 +98,7 @@ If you need to understand... read...
 | Which tier a crate belongs in | `NORNIR_CONVENTIONS.md` > Architecture section |
 | How to structure a binary | `NORNIR_CONVENTIONS.md` > Binary Structure section |
 | What crate to import for a task | `NORNIR_CONVENTIONS.md` > Dependency Lookup table |
-| How to deploy | `NORNIR_CONVENTIONS.md` > Deploying section |
+| How to deploy | `MUST_READ_BEFORE_BUILDING.md` + `NORNIR_CONVENTIONS.md` > Deploying section |
 | How hooks work (wire format, dispatch) | `hooks/HOOK_DESIGN.md` |
 | How syn/saga quality pipeline works | `cli/syn_cli/SYN_DESIGN.md` |
 | What architectural violations look like | `audit/AUDIT_GUIDE.md` |
@@ -120,4 +122,4 @@ If you need to understand... read...
 
 ## Test Summary
 
-877 tests across workspace, 0 failures (2026-03-13). Gate crates excluded from workspace test runs (PyO3 linker requirements — use `deploy_gates.py`).
+877 tests across workspace, 0 failures (2026-03-13). Gate crates excluded from workspace test runs (PyO3 linker requirements — use `nornir_deploy --build gates`).

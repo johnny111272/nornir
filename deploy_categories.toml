@@ -1,0 +1,146 @@
+# Crate-to-category mapping for nornir_deploy.
+#
+# Each table is a deploy category. Fields:
+#   crates         — list of cargo package names to build
+#   verify         — verification method: "help", "stdin", "exit_codes", "python_import"
+#   verify_input   — JSON string piped to stdin (for verify = "stdin")
+#   valid_exit_codes — accepted exit codes (for verify = "exit_codes")
+#   binary_names   — optional: map crate name -> binary name when they differ
+#
+# Gates are special: separate cli_crates (cargo) and gate_crates (maturin).
+# Default build method is "cargo". Gates override gate_crates to "maturin".
+
+[hooks]
+crates = [
+    "hook_pre_subagent_tool",
+    "hook_pre_subagent_bash",
+    "hook_pre_llm_tool",
+    "hook_pre_llm_bash",
+    "hook_post_llm_tool",
+]
+verify = "stdin"
+verify_input = '{"tool_name":"Test","tool_input":{}}'
+
+[writers]
+crates = [
+    "append_truth_qc_report_record",
+    "write_truth_glossary_record",
+    "append_embedding_normalize_batch_20",
+    "append_interview_summaries_record",
+    "append_raw_jsonl",
+]
+verify = "help"
+
+[senders]
+crates = [
+    "send_heartbeat",
+    "send_notification",
+    "send_warning",
+    "send_alert",
+    "send_datagram",
+]
+verify = "exit_codes"
+valid_exit_codes = [0, 1, 2]
+
+[tools]
+crates = [
+    "saga_cli",
+    "syn_cli",
+]
+verify = "exit_codes"
+valid_exit_codes = [0, 2]
+# These crates produce binaries with different names
+[tools.binary_names]
+saga_cli = "saga"
+syn_cli = "syn"
+
+[converters]
+crates = [
+    "convert_json_to_toml",
+]
+verify = "stdin"
+verify_input = '{"test": true}'
+
+[dispatchers]
+crates = [
+    "split_jsonl_batches",
+]
+verify = "help"
+
+[watchers]
+crates = [
+    "watch_and_diff_exchange_intercepts",
+]
+verify = "exit_codes"
+valid_exit_codes = [2]
+
+[rewriters]
+crates = [
+    "rewrite_compaction_summary",
+]
+verify = "stdin"
+verify_input = '{"system":[],"tools":[],"messages":[]}'
+
+[daemons]
+crates = [
+    "record_datagrams",
+]
+verify = "help"
+
+[interceptors]
+crates = [
+    "traffic_interceptor_rewriter",
+]
+verify = "exit_codes"
+valid_exit_codes = [0, 1, 2]
+
+[gates]
+build = "maturin"
+python_version = "python3.13"
+cli_crates = [
+    "check_raw_definition",
+    "check_paths_resolved",
+    "check_paths_verified",
+    "check_includes_merged",
+    "check_permissions_resolved",
+    "check_universal_format",
+    "check_universal_render",
+    "check_anthropic_render",
+]
+cli_verify = "help"
+gate_crates = [
+    "gate_raw_definition_input",
+    "gate_paths_verified_input",
+    "gate_includes_merged_input",
+    "gate_permissions_resolved_input",
+    "gate_universal_format_input",
+    "gate_universal_render_input",
+    "gate_anthropic_render_input",
+    "gate_guardrails_reduced_input",
+    "gate_success_reduced_input",
+    "gate_criteria_merged_input",
+    "gate_instructions_reduced_input",
+    "gate_examples_reduced_input",
+    "gate_execution_merged_input",
+    "gate_paths_resolved_output",
+    "gate_includes_merged_output",
+    "gate_permissions_resolved_output",
+    "gate_universal_format_output",
+    "gate_universal_render_output",
+    "gate_anthropic_render_output",
+    "gate_guardrails_reduced_output",
+    "gate_success_reduced_output",
+    "gate_criteria_merged_output",
+    "gate_instructions_reduced_output",
+    "gate_examples_reduced_output",
+    "gate_execution_merged_output",
+    "gate_paths_verified",
+    "gate_include_success_criteria_input",
+    "gate_include_failure_criteria_input",
+    "gate_include_execution_instructions_input",
+    "gate_include_example_entries_input",
+    "gate_include_example_group_input",
+    "gate_include_guardrails_constraints_input",
+    "gate_include_guardrails_anti_patterns_input",
+]
+gate_verify = "python_import"

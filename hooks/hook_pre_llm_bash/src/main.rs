@@ -5,7 +5,7 @@
 //! LLM sessions.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_pre_llm_bash --subversion block --truncation warn --evasion warn
+//!     hook_pre_llm_bash --subversion block --truncation warn --evasion warn --workflow ask
 //!
 //! Env var:
 //!     HOOK_LLM_ALLOW_BASH=pattern_name1:pattern_name2  — exempt specific patterns
@@ -51,6 +51,7 @@ struct Rules {
     evasion: Vec<CompiledRule>,
     destruction: Vec<CompiledRule>,
     revert: Vec<CompiledRule>,
+    workflow: Vec<CompiledRule>,
 }
 
 fn parse_rules(toml_str: &str) -> Result<Rules, String> {
@@ -69,6 +70,7 @@ fn parse_rules(toml_str: &str) -> Result<Rules, String> {
         evasion: compile_array("evasion"),
         destruction: compile_array("destruction"),
         revert: compile_array("revert"),
+        workflow: compile_array("workflow"),
     })
 }
 
@@ -81,6 +83,7 @@ struct Config {
     evasion: Option<Severity>,
     destruction: Option<Severity>,
     revert: Option<Severity>,
+    workflow: Option<Severity>,
     allow_patterns: Vec<String>,
 }
 
@@ -91,6 +94,7 @@ fn parse_config() -> Config {
     let mut evasion = None;
     let mut destruction = None;
     let mut revert = None;
+    let mut workflow = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -115,6 +119,10 @@ fn parse_config() -> Config {
                 revert = parse_severity(&args[i + 1]);
                 i += 2;
             }
+            "--workflow" if i + 1 < args.len() => {
+                workflow = parse_severity(&args[i + 1]);
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -132,6 +140,7 @@ fn parse_config() -> Config {
         evasion,
         destruction,
         revert,
+        workflow,
         allow_patterns,
     }
 }
@@ -193,6 +202,14 @@ fn decide(input: &HookInput) -> HookDecision {
     if let Some(severity) = config.revert {
         if let Some(decision) = check_category(
             command, &rules.revert, severity, "revert", &config.allow_patterns,
+        ) {
+            return decision;
+        }
+    }
+
+    if let Some(severity) = config.workflow {
+        if let Some(decision) = check_category(
+            command, &rules.workflow, severity, "workflow", &config.allow_patterns,
         ) {
             return decision;
         }
@@ -935,7 +952,7 @@ mod tests {
     }
 
     #[test]
-    fn benign_cargo_build_not_flagged() {
+    fn benign_cargo_build_not_flagged_by_security_categories() {
         let rules = make_rules_from_toml();
         let result_sub = check_category("cargo build", &rules.subversion, Severity::Block, "subversion", &[]);
         let result_trunc = check_category("cargo build", &rules.truncation, Severity::Block, "truncation", &[]);
@@ -1072,5 +1089,132 @@ mod tests {
             }
             _ => panic!("Must be Deny"),
         }
+    }
+
+    // -- Workflow detections (must catch) --
+
+    #[test]
+    fn workflow_cargo_build_release_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo build --release -p hook_pre_llm_bash",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_some(), "cargo build --release must be caught");
+    }
+
+    #[test]
+    fn workflow_cargo_build_release_reordered_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo build -p hook_pre_llm_bash --release",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_some(), "cargo build -p X --release must be caught");
+    }
+
+    #[test]
+    fn workflow_cargo_install_release_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo install --release --path .",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_some(), "cargo install --release must be caught");
+    }
+
+    #[test]
+    fn workflow_cargo_build_debug_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo build -p hook_pre_llm_bash",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_some(), "cargo build (debug) must be caught by workflow");
+    }
+
+    #[test]
+    fn workflow_maturin_build_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "maturin build --release -i python3.13",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_some(), "maturin build must be caught");
+    }
+
+    // -- Workflow: benign commands that must NOT match --
+
+    #[test]
+    fn workflow_cargo_test_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test --workspace",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_none(), "cargo test must not be caught by workflow");
+    }
+
+    #[test]
+    fn workflow_cargo_check_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo check -p hook_io",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_none(), "cargo check must not be caught by workflow");
+    }
+
+    #[test]
+    fn workflow_cargo_clippy_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo clippy -- -D warnings",
+            &rules.workflow,
+            Severity::Ask,
+            "workflow",
+            &[],
+        );
+        assert!(result.is_none(), "cargo clippy must not be caught by workflow");
+    }
+
+    // -- Workflow: per-rule severity overrides --
+
+    #[test]
+    fn workflow_debug_build_has_warn_severity_override() {
+        let rules = make_rules_from_toml();
+        // The debug build rule (general cargo\s+build) has severity = "warn"
+        let debug_rule = rules.workflow.iter().find(|r| r.description.contains("Debug build"));
+        assert!(debug_rule.is_some(), "Debug build rule must exist");
+        assert_eq!(debug_rule.unwrap().severity, Some(Severity::Warn));
+    }
+
+    #[test]
+    fn workflow_release_build_has_ask_severity_override() {
+        let rules = make_rules_from_toml();
+        let release_rule = rules.workflow.iter().find(|r| r.description.contains("Direct release"));
+        assert!(release_rule.is_some(), "Release build rule must exist");
+        assert_eq!(release_rule.unwrap().severity, Some(Severity::Ask));
     }
 }

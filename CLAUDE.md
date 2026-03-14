@@ -30,7 +30,7 @@ A binary starts at 50 lines. A "quick feature" adds a pure function directly to 
 
 ### Manual deployment
 
-`cargo build && ln -s` works in the moment. The next session won't know the binary exists, the next rebuild misses it, the deploy script's verification step doesn't cover it. **Always use deploy scripts.**
+`cargo build --release && ln -s` works in the moment. The next session won't know the binary exists, the next rebuild misses it, and other binaries sharing the same dependency are now stale. **Always use `nornir_deploy`.** See `MUST_READ_BEFORE_BUILDING.md`.
 
 ### Fixing errors one by one
 
@@ -50,6 +50,7 @@ If you notice yourself doing any of these, STOP immediately:
 - **Reimplementing TOML rule parsing in a hook** — Use `hook_io::rules`.
 - **Hardcoding `/Users/johnny/`** — Use `write_engine::ai_home()` for runtime resolution.
 - **Adding `std::env` reads to a core/ crate** — Core crates are pure. Inject via parameter.
+- **Running `cargo build --release` directly** — Use `nornir_deploy`. See `MUST_READ_BEFORE_BUILDING.md`.
 - **Feeling confident and fast** — You are probably pattern matching, not thinking.
 
 ---
@@ -59,16 +60,17 @@ If you notice yourself doing any of these, STOP immediately:
 When uncertain, read these in order:
 
 1. **`NORNIR_CONVENTIONS.md`** — All naming, organization, composition, and building rules
-2. **`CONTEXT_MAP.md`** — Current crate inventory, freshness flags, "if you need X read Y" guide
-3. **`audit/AUDIT_GUIDE.md`** — Architectural invariants and what "correct" looks like
-4. **`hooks/HOOK_DESIGN.md`** — Hook subsystem architecture (when working on hooks)
-5. **`cli/syn_cli/SYN_DESIGN.md`** — Quality pipeline architecture (when working on syn/saga)
+2. **`MUST_READ_BEFORE_BUILDING.md`** — Why `cargo build --release` is wrong, how to use `nornir_deploy`
+3. **`CONTEXT_MAP.md`** — Current crate inventory, freshness flags, "if you need X read Y" guide
+4. **`audit/AUDIT_GUIDE.md`** — Architectural invariants and what "correct" looks like
+5. **`hooks/HOOK_DESIGN.md`** — Hook subsystem architecture (when working on hooks)
+6. **`cli/syn_cli/SYN_DESIGN.md`** — Quality pipeline architecture (when working on syn/saga)
 
 ---
 
 ## Key Rules
 
-- Schemas are embedded at compile time via `include_str!()`. Changed `.schema.json` files have no effect until the deploy script runs.
+- Schemas are embedded at compile time via `include_str!()`. Changed `.schema.json` files have no effect until `nornir_deploy` runs.
 - All helper functions return `Result`. Only `main()` calls `process::exit()`.
 - Do not hand-write validation logic in Python. Import the gate module and call `validate()`.
 - Do not bypass the gate API. Every gate returns `{"ok": bool, "data": ..., "error": ...}`. Check `ok` before using `data`.

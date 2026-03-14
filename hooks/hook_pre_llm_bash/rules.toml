@@ -13,6 +13,7 @@
 #   --evasion     warn|ask|block  — other adversarial shortcuts
 #   --destruction warn|ask|block  — scorched-earth git commands
 #   --revert      warn|ask|block  — file-specific git reverts
+#   --workflow    warn|ask|block  — build process guidance
 #
 # Per-rule severity: add severity = "warn|ask|block" to override the category default.
 # HOOK_LLM_ALLOW_BASH env var: colon-separated pattern names to relax.
@@ -136,4 +137,25 @@ description = "Bare git stash hides all uncommitted work"
 [[revert]]
 pattern = "git\\s+stash\\s+(push|save)"
 description = "Git stash push/save hides uncommitted work"
+
+# ─── Workflow: build process guidance ─────────────────────────────────
+#
+# LLMs reach for `cargo build --release` directly, creating stale binaries
+# when shared dependencies change. nornir_deploy ensures all crates in a
+# category rebuild together. See MUST_READ_BEFORE_BUILDING.md.
+
+[[workflow]]
+pattern = "cargo\\s+(build|install).*--release"
+description = "Direct release build — use nornir_deploy for correct deployment with dependency coherence"
+severity = "ask"
+
+[[workflow]]
+pattern = "maturin\\s+build"
+description = "Direct maturin build — use nornir_deploy --build gates"
+severity = "ask"
+
+[[workflow]]
+pattern = "cargo\\s+build"
+description = "Debug build — consider nornir_deploy for deployment; cargo build alone does not deploy"
+severity = "warn"
 

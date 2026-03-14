@@ -181,25 +181,19 @@ Before writing logic, check if it already exists:
 
 ## Deploying
 
-Every binary category has a deploy script. Do NOT use bare `cargo build` — deploy scripts handle symlinks, verification, and (for gates) Python module extraction.
+Do NOT use bare `cargo build --release` — it skips symlinks, verification, and dependency coherence. Use `nornir_deploy` (available in `$PATH` via `~/.ai/tools/scripts/`). See `MUST_READ_BEFORE_BUILDING.md` for rationale.
 
 ```bash
-cd /Users/johnny/.ai/smidja/nornir
-
-./deploy_gates.py         # CLI check tools + PyO3 gate modules
-./deploy_hooks.py         # Hook binaries
-./deploy_writers.py       # Writer binaries
-./deploy_rewriters.py     # Rewriter binaries
-./deploy_senders.py       # Sender binaries
-./deploy_converters.py    # Converter binaries
-./deploy_watchers.py      # Watcher binaries
-./deploy_dispatchers.py   # Dispatcher binaries
-./deploy_interceptors.py  # Interceptor binaries
-./deploy_daemons.py       # Daemon binaries
-./deploy_tools.py         # Specialist tools (saga, syn)
+nornir_deploy --all                  # rebuild + deploy everything
+nornir_deploy --non-pyo3             # all cargo crates, skip maturin gates
+nornir_deploy --build gates          # single category
+nornir_deploy --build hooks,writers  # multiple categories
+nornir_deploy --list                 # show categories and crate counts
 ```
 
-After schema changes (draupnir regeneration): `./deploy_gates.py`
+Categories and crate lists are defined in `deploy_categories.toml`.
+
+After schema changes (draupnir regeneration): `nornir_deploy --build gates`
 
 ---
 
@@ -211,8 +205,8 @@ After schema changes (draupnir regeneration): `./deploy_gates.py`
 4. Create `Cargo.toml` with `name` matching directory name, `{ workspace = true }` for shared deps
 5. Create `src/main.rs` (binary) or `src/lib.rs` (library)
 6. Add to workspace `Cargo.toml` members list
-7. Add to the appropriate deploy script
-8. Run `cargo check` to verify, then run the deploy script
+7. Add to the appropriate category in `deploy_categories.toml`
+8. Run `cargo check` to verify, then `nornir_deploy --build <category>`
 
 ---
 
