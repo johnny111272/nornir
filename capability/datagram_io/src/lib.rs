@@ -104,10 +104,29 @@ fn try_unix_stream(json: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 
 fn try_udp_multicast(json: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
+    // Default SO_SNDBUF is 9216 on macOS — too small for quality datagrams
+    // with many check groups. Raise to 65535 (IP-layer max).
+    set_send_buffer(&socket, 65535)?;
     socket.set_multicast_ttl_v4(1)?;
     set_multicast_interface(&socket, Ipv4Addr::LOCALHOST)?;
     socket.send_to(json, (MULTICAST_ADDR, MULTICAST_PORT))?;
     Ok(())
+}
+
+/// Set SO_SNDBUF on a UDP socket.
+fn set_send_buffer(socket: &UdpSocket, size: i32) -> Result<(), std::io::Error> {
+    use std::os::unix::io::AsRawFd;
+    let fd = socket.as_raw_fd();
+    let ret = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &size as *const i32 as *const libc::c_void,
+            std::mem::size_of::<i32>() as libc::socklen_t,
+        )
+    };
+    if ret == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
 /// Bind multicast output to a specific interface via IP_MULTICAST_IF.
