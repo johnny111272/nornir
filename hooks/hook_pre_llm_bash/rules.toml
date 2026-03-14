@@ -8,10 +8,13 @@
 # After editing: cargo build --release (recompile to embed changes)
 #
 # Categories (severity from CLI flags):
-#   --subversion warn|block  — lock file manipulation
-#   --truncation warn|block  — partial reading of constraint files
-#   --evasion    warn|block  — other adversarial shortcuts
+#   --subversion  warn|ask|block  — lock file manipulation
+#   --truncation  warn|ask|block  — partial reading of constraint files
+#   --evasion     warn|ask|block  — other adversarial shortcuts
+#   --destruction warn|ask|block  — scorched-earth git commands
+#   --revert      warn|ask|block  — file-specific git reverts
 #
+# Per-rule severity: add severity = "warn|ask|block" to override the category default.
 # HOOK_LLM_ALLOW_BASH env var: colon-separated pattern names to relax.
 
 # ─── Subversion: lock file and constraint manipulation ──────────────

@@ -50,7 +50,7 @@ them a local target: don't make THIS file worse.
 ## Filter Layers
 
 Two filter layers define what matters. Both use jq expressions evaluated
-by jaq-core against each issue object.
+by jaq-interpret against each issue object.
 
 ### `.syn/warn.toml` — Noise Filter
 
@@ -316,21 +316,22 @@ On session initialization or other trigger events:
 ## Dependencies
 
 ### Already Built
-- **format_core** — JSON, YAML, TOML, TOON parse/serialize/convert (74 tests)
-- **TOMLX parser** — 7 files, 42 tests
-- **error_core** — educational error types (10 tests)
-- **saga_core** — canonical SanityReport/Issue pure types (6 tests)
+- **syn_core** — jq filter compilation, three-tier filtering engine, SynConfig types
+- **format_core** — JSON, YAML, TOML, TOON parse/serialize/convert
+- **error_core** — educational error types
+- **saga_core** — canonical SanityReport/Issue pure types
 - **saga_runner** — generates .qa reports, directory walker, sidecar I/O
-- **report_render_core** — grouping, formatting, severity ordering for QA consumers (38 tests)
-- **datagram** — fire-and-forget Hlidskjalf broadcast
-- **jaq-interpret 1.5** — embedded jq filter evaluation
+- **report_render_core** — grouping, formatting, severity ordering for QA consumers
+- **datagram_io** — fire-and-forget Hlidskjalf broadcast
+- **jaq-interpret 1.5** — embedded jq filter evaluation (used by syn_core)
 
 ### Current State (Phase 1 DONE)
-- Report mode: working (filter, format, broadcast) — 43 tests
+- Report mode: working (filter, format, broadcast)
 - Gate mode: filtering works, decision logic works, **ratchet comparison NOT YET IMPLEMENTED**
 - Deployed to `~/.ai/tools/bin/syn`
-- Pure rendering logic extracted to `core/report_render_core/` (38 tests) — shared with svalinn
-- syn is 478 lines (down from 909 after report_render_core extraction)
+- Pure rendering logic in `core/report_render_core/` — shared with svalinn
+- Pure filter engine in `core/syn_core/` — extracted from syn_cli
+- syn_cli is thin orchestration (~457 lines); syn_core owns filter compilation + policy logic
 - hook_post_llm_tool wired: saga → syn pipeline operational
 
 ### Remaining

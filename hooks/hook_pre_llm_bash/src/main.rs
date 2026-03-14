@@ -28,6 +28,7 @@ fn main() -> ExitCode {
 struct CompiledRule {
     pattern: String,
     description: String,
+    severity: Option<Severity>,
     compiled: Regex,
 }
 
@@ -38,6 +39,7 @@ impl CompiledRule {
         Some(Self {
             pattern: rule.pattern,
             description: rule.description,
+            severity: rule.severity,
             compiled,
         })
     }
@@ -202,16 +204,16 @@ fn decide(input: &HookInput) -> HookDecision {
 fn check_category(
     command: &str,
     rules: &[CompiledRule],
-    severity: Severity,
+    default_severity: Severity,
     category: &str,
     allow_patterns: &[String],
 ) -> Option<HookDecision> {
     for rule in rules {
         if rule.compiled.is_match(command) {
-            // Check if this pattern is exempted
             if allow_patterns.iter().any(|p| rule.pattern.contains(p.as_str())) {
                 return None;
             }
+            let severity = rule.severity.unwrap_or(default_severity);
             return Some(make_decision(severity, category, &rule.description, command));
         }
     }
@@ -231,18 +233,33 @@ fn make_decision(
         command.to_string()
     };
 
+    let event = format!("{} \u{2014} {}", description.to_lowercase(), short_cmd);
     match severity {
         Severity::Block => HookDecision::Deny {
             category: category.into(),
-            event: format!("{} \u{2014} {}", description.to_lowercase(), short_cmd),
+            event,
             reason: format!(
                 "Command blocked ({}: {}).\n{}",
                 category, description, short_cmd
             ),
         },
+        Severity::Ask => HookDecision::Ask {
+            category: category.into(),
+            event,
+            reason: format!(
+                "LLM wants to run '{}' ({}: {}). Allow or deny?",
+                short_cmd, category, description
+            ),
+            llm_context: format!(
+                "Your command requires user approval ({}: {}). \
+                 The user is being asked whether to allow this. \
+                 Do NOT retry without permission.",
+                category, description
+            ),
+        },
         Severity::Warn => HookDecision::Warn {
             category: category.into(),
-            event: format!("{} \u{2014} {}", description.to_lowercase(), short_cmd),
+            event,
             user_reason: format!(
                 "LLM ran '{}' ({}: {}). Behavior flagged.",
                 short_cmd, category, description
@@ -316,6 +333,7 @@ mod tests {
         let raw = RawRule {
             pattern: r"rm.*\.lock".to_string(),
             description: "test rule".to_string(),
+            severity: None,
         };
         let compiled = CompiledRule::from_raw(raw);
         assert!(compiled.is_some(), "Valid regex must compile");
@@ -328,6 +346,7 @@ mod tests {
         let raw = RawRule {
             pattern: r"[invalid".to_string(),
             description: "bad regex".to_string(),
+            severity: None,
         };
         let compiled = CompiledRule::from_raw(raw);
         assert!(compiled.is_none(), "Invalid regex must return None");
@@ -338,6 +357,7 @@ mod tests {
         let raw = RawRule {
             pattern: String::new(),
             description: "empty".to_string(),
+            severity: None,
         };
         let compiled = CompiledRule::from_raw(raw);
         // Empty string is valid regex (matches everything)

@@ -244,12 +244,10 @@ Gleipnir runs automatically as a post-edit hook via `syn`. Every check is a sign
 
 ## Reference Documents
 
-- **MANDATORY_READ_BEFORE_CODING.md** — compliance declaration, deploy script requirement, pre-coding checklist
-- **NORNIR_BUILDING_AND_COMPOSITION.md** — binary structure template, composition patterns, dependency lookup
-- **NORNIR_NAMING.md** — verb prefix table, directory conventions, naming rules
-- **NORNIR_ORGANIZATION.md** — tier breakdown, crate inventory, test expectations
+- **NORNIR_CONVENTIONS.md** — single source of truth for naming, organization, composition, building, deploying, testing
+- **CONTEXT_MAP.md** — current crate inventory, doc freshness flags, known issues
 
-**This guide is the "why" and "what to look for." Those documents are the "how to do it right."**
+**This guide is the "why" and "what to look for." NORNIR_CONVENTIONS.md is the "how to do it right."**
 
 ---
 

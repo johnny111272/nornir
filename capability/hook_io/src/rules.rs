@@ -7,10 +7,16 @@
 //! This module extracts those shared types so each hook crate can
 //! focus on its domain-specific decision logic.
 
-/// Severity level for a rule match — controls whether the hook warns or blocks.
+/// Severity level for a rule match.
+///
+/// Four tiers (ascending enforcement):
+///   Warn  — allow, notify user + LLM (informational)
+///   Ask   — pause, user decides allow/deny (interactive)
+///   Block — hard deny, no override
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Severity {
     Warn,
+    Ask,
     Block,
 }
 
@@ -20,6 +26,7 @@ pub enum Severity {
 pub fn parse_severity(level: &str) -> Option<Severity> {
     match level {
         "warn" => Some(Severity::Warn),
+        "ask" => Some(Severity::Ask),
         "block" => Some(Severity::Block),
         _ => None,
     }
@@ -27,18 +34,21 @@ pub fn parse_severity(level: &str) -> Option<Severity> {
 
 /// A single rule entry from a TOML rules file.
 ///
-/// Each rule has a pattern (substring or regex, depending on the hook)
-/// and a human-readable description used in log messages.
+/// Each rule has a pattern (substring or regex, depending on the hook),
+/// a human-readable description, and an optional per-rule severity override.
+/// When `severity` is `Some`, it takes precedence over the category default.
 #[derive(Debug)]
 pub struct RawRule {
     pub pattern: String,
     pub description: String,
+    pub severity: Option<Severity>,
 }
 
 /// Parse one named array of rules from a TOML table.
 ///
 /// Reads `[[key]]` entries, each expected to have `pattern` and `description`
-/// string fields. Entries missing either field are silently skipped.
+/// string fields. Optional `severity` field overrides the category default.
+/// Entries missing pattern or description are silently skipped.
 pub fn parse_rule_array(table: &toml::Table, key: &str) -> Vec<RawRule> {
     table
         .get(key)
@@ -50,6 +60,10 @@ pub fn parse_rule_array(table: &toml::Table, key: &str) -> Vec<RawRule> {
                     Some(RawRule {
                         pattern: entry.get("pattern")?.as_str()?.to_string(),
                         description: entry.get("description")?.as_str()?.to_string(),
+                        severity: entry
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .and_then(parse_severity),
                     })
                 })
                 .collect()
@@ -90,6 +104,11 @@ mod tests {
     #[test]
     fn parse_severity_empty_string() {
         assert_eq!(parse_severity(""), None);
+    }
+
+    #[test]
+    fn parse_severity_ask() {
+        assert_eq!(parse_severity("ask"), Some(Severity::Ask));
     }
 
     #[test]
@@ -232,12 +251,63 @@ pattern = "not_an_array"
     }
 
     #[test]
-    fn parse_rule_array_entry_with_extra_fields_still_parses() {
+    fn parse_rule_array_per_rule_severity_block() {
         let toml_str = r#"
 [[rules]]
 pattern = "test"
 description = "test rule"
 severity = "block"
+"#;
+        let table = parse_toml_table(toml_str).unwrap();
+        let rules = parse_rule_array(&table, "rules");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].severity, Some(Severity::Block));
+    }
+
+    #[test]
+    fn parse_rule_array_per_rule_severity_ask() {
+        let toml_str = r#"
+[[rules]]
+pattern = "test"
+description = "test rule"
+severity = "ask"
+"#;
+        let table = parse_toml_table(toml_str).unwrap();
+        let rules = parse_rule_array(&table, "rules");
+        assert_eq!(rules[0].severity, Some(Severity::Ask));
+    }
+
+    #[test]
+    fn parse_rule_array_no_severity_is_none() {
+        let toml_str = r#"
+[[rules]]
+pattern = "test"
+description = "test rule"
+"#;
+        let table = parse_toml_table(toml_str).unwrap();
+        let rules = parse_rule_array(&table, "rules");
+        assert_eq!(rules[0].severity, None);
+    }
+
+    #[test]
+    fn parse_rule_array_invalid_severity_is_none() {
+        let toml_str = r#"
+[[rules]]
+pattern = "test"
+description = "test rule"
+severity = "nuke"
+"#;
+        let table = parse_toml_table(toml_str).unwrap();
+        let rules = parse_rule_array(&table, "rules");
+        assert_eq!(rules[0].severity, None);
+    }
+
+    #[test]
+    fn parse_rule_array_extra_fields_still_parses() {
+        let toml_str = r#"
+[[rules]]
+pattern = "test"
+description = "test rule"
 extra_field = 42
 "#;
         let table = parse_toml_table(toml_str).unwrap();

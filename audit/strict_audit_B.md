@@ -1,364 +1,174 @@
-# Strict Audit B — Nornir Workspace
+# Strict Audit B -- 2026-03-13
 
-Date: 2026-03-12
-Auditor: Claude Opus 4.6 (strict mode)
-Scope: All priorities P1-P10 from AUDIT_GUIDE.md
+Auditor: Claude Opus 4.6 (Auditor B, independent)
 
----
+## Summary
 
-## P1: Pure Logic in Binary Crates
+| Priority | Findings | Critical | High | Medium | Low |
+|----------|----------|----------|------|--------|-----|
+| P1       | 2        | 0        | 1    | 1      | 0   |
+| P2       | 1        | 0        | 0    | 1      | 0   |
+| P3       | 1        | 0        | 0    | 1      | 0   |
+| P4       | 2        | 0        | 1    | 1      | 0   |
+| P5       | 1        | 0        | 0    | 0      | 1   |
+| P6       | 0        | 0        | 0    | 0      | 0   |
+| P7       | 2        | 0        | 0    | 1      | 1   |
+| P8       | 0        | 0        | 0    | 0      | 0   |
+| P9       | 0        | 0        | 0    | 0      | 0   |
+| P10      | 2        | 0        | 0    | 1      | 1   |
+| **Total**| **11**   | **0**    | **2**| **6**  | **3**|
 
-> Rule: Business logic belongs in core or capability crates. Binaries should be thin orchestrators: parse args, call library, handle exit.
+**Overall Assessment:** The workspace is in strong health. The two previous audit rounds and the 10-item improvement plan have resolved the most damaging structural issues (gleipnir_core I/O in Tier 1, static mut unsoundness, JSONL-append duplication, hardcoded paths in writers). The three-tier architecture is well enforced. Binary crates are thin and compose correctly from core/capability crates. All deploy scripts are consistent with the actual crate directories. There are no critical findings.
 
-### Findings
-
-**P1-01: syn_cli contains entire jq filter engine inline**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 32-59
-- `compile_filter()`, `matches_filter()` — jq compile+eval logic is pure computation. This is a reusable filter engine embedded in a binary crate. Should live in a core crate (e.g., `filter_core` or within `report_render_core`).
-- Rule violated: "If it has no I/O, it belongs in a core crate."
-
-**P1-02: syn_cli contains config loading logic inline**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 65-99
-- `SynConfig`, `load_filter_config()`, `load_config()` — config file parsing and default management. The pattern of reading `.syn/warn.toml` and `.syn/deny.toml` is pure except for `std::fs::read_to_string`. The expression parsing and default handling is testable pure logic embedded in a binary.
-- Rule violated: "Pure logic in binaries that could be unit-tested independently."
-
-**P1-03: syn_cli contains three-tier filtering engine inline**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 306-386
-- `FilteredOutput`, `is_visible()`, `apply_filters()` — this is the core decision engine for syn. 80 lines of pure computation that decides warn/deny/allow. Should be in a library crate, not inlined in a 493-line main.rs.
-- Rule violated: "Logic that makes decisions belongs in libraries."
-
-**P1-04: syn_cli contains broadcast logic inline**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 392-414
-- `broadcast()` — constructs datagram and calls `emit_validated_or_alert`. This is a reusable pattern but is embedded in the binary.
-
-**P1-05: hook_pre_llm_tool contains parse_config with manual arg parsing**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs`, lines 50-82
-- Manual arg parsing loop. However, this is a deliberate design choice for hooks (lightweight, no clap dependency). Noted but severity is lower given hook constraints.
-
-**P1-06: hook_pre_llm_bash contains make_decision display logic**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_bash/src/main.rs`, lines 191-228
-- Command truncation logic (`if command.len() > 60`) is presentation logic embedded in a binary. Could be a shared utility.
-
-### Summary: 6 findings
+The remaining findings are medium and low severity: a few pockets of pure logic trapped in binary crates, one composition bypass in the interceptor's raw-append path, zero test coverage for `io_filter`, and an orphaned workspace member (`io_filter` is defined but never imported by any crate). None of these are urgent, but each represents architectural drift that will compound if left.
 
 ---
 
-## P2: Three-Tier Dependency Model
+## Findings
 
-> Rule: core/ crates depend only on other core/ crates and workspace deps. capability/ crates depend on core/ crates. Binaries depend on capability/ or core/. No upward dependencies.
+### P1-01
 
-### Findings
+**Priority:** P1 -- Pure Logic Must Not Live in Binary Crates
+**Severity:** High
+**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 27-116
+**What:** The `classify_exchange` function and its helpers (`is_main_agent`, `tool_count`, `is_web_search_only`) plus the `ExchangeKind` enum and `MAIN_AGENT_IDENTITY` constant are pure logic trapped in a binary crate. These functions take a `serde_json::Value` and return a classification -- no I/O, no side effects, fully deterministic.
+**Why it matters:** The watcher binary (`watch_and_diff_exchange_intercepts`) already delegates its diff logic to `diff_core`. But if any future tool needs to classify exchanges (e.g., a replay analyzer, a traffic summary tool, a compaction counter), that classification logic is locked inside this binary and will be reimplemented. The `MAIN_AGENT_IDENTITY` constant is especially concerning -- if the identity string changes, the hardcoded copy here and any future copies will diverge.
+**Fix:** Extract `ExchangeKind`, `classify_exchange`, `is_main_agent`, `tool_count`, `is_web_search_only`, and `MAIN_AGENT_IDENTITY` into `diff_core` (which already handles exchange splitting and diffing). The interceptor binary becomes thinner orchestration.
 
-**P2-01: diff_core (core) depends on datagram_types (core) — acceptable**
-- File: `/Users/johnny/.ai/smidja/nornir/core/diff_core/Cargo.toml`, line 13
-- This is core-to-core, which is allowed. No violation.
+### P1-02
 
-**P2-02: report_render_core (core) depends on saga_core and format_core (both core) — acceptable**
-- File: `/Users/johnny/.ai/smidja/nornir/core/report_render_core/Cargo.toml`, lines 13-14
-- Core-to-core is allowed.
+**Priority:** P1 -- Pure Logic Must Not Live in Binary Crates
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/watchers/watch_and_diff_exchange_intercepts/src/main.rs` lines 58-91
+**What:** The functions `parse_pace` and `jitter_sleep` (xorshift64 PRNG) are pure logic in a binary crate. `workspace_from_parent_dir` is also a pure function that extracts a workspace name from a path -- a different implementation from `datagram_io::workspace_from_path` but serving a related purpose.
+**Why it matters:** `parse_pace` and `jitter_sleep` are generic utility functions. If another daemon or watcher ever needs rate-limited polling with natural variation, this logic will be reimplemented. `workspace_from_parent_dir` is particularly notable because `datagram_io` already has `workspace_from_path` -- having two workspace derivation functions in different places (one in a binary, one in a capability crate) is exactly the divergence pattern P1 warns about.
+**Fix:** `workspace_from_parent_dir` should be consolidated with `datagram_io::workspace_from_path` or exposed alongside it. The pace/jitter functions are lower priority but could live in a utility module if another binary needs them.
 
-**P2-03: io_check (capability) uses println! for structured output**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/io_check/src/lib.rs`, lines 103-152
-- `io_check` is a capability crate that contains 17 `println!` calls. While this is I/O (appropriate for capability tier), the `print_help` function at lines 137-152 has 16 `println!` calls — this is extensive stdout usage that resembles a binary entry point more than a capability library.
-- Rule: Capability crates do I/O but should not own user-facing presentation.
+### P2-01
 
-**P2-04: datagram (capability) uses libc directly, not through workspace**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/datagram/Cargo.toml`, line 12
-- `libc = "0.2"` is specified directly rather than through workspace dependencies. All other shared dependencies use `{ workspace = true }`. This is inconsistent.
-- Rule violated: Workspace dependency consistency.
+**Priority:** P2 -- The Three-Tier Dependency Model
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/core/datagram_types/Cargo.toml` line 2
+**What:** The `datagram_types` crate sits in `core/` but its package name is `datagram_types`, not `datagram_types_core`. Per the naming convention, core crates use the `_core` suffix, and the suffix and directory must agree.
+**Why it matters:** An LLM encountering `datagram_types` (no `_core` suffix) in the `core/` directory receives conflicting signals about its tier. The name suggests capability tier; the directory says core tier. A future session might incorrectly add I/O to it (because the name doesn't signal purity), or might place a new types-only crate outside `core/` (following the naming pattern rather than the directory pattern). The crate is genuinely pure (only serde derives, no I/O) and correctly placed in `core/`, so the fix is the name.
+**Fix:** Rename `datagram_types` to `datagram_types_core` (package name, directory name, and all `use` statements). Alternatively, if the `_core` suffix feels redundant for a types-only crate, document this as an explicit naming exception in `NORNIR_NAMING.md` alongside the saga_cli/syn_cli exceptions.
 
-**P2-05: intercept_io (capability) depends on format_core (core) — this is correct tier direction but crate-type includes cdylib**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/intercept_io/Cargo.toml`, line 8
-- `crate-type = ["cdylib", "rlib"]` — this is a PyO3 gate module in the capability tier. The cdylib is necessary for Python FFI but the crate is under `capability/` not `gates/`. If it is a gate, it should be under `gates/`. If it is a capability, cdylib is unexpected.
+### P3-01
 
-### Summary: 3 findings (P2-03, P2-04, P2-05)
+**Priority:** P3 -- process::exit and Panic Discipline
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/core/schema_core/src/lib.rs` lines 49-53
+**What:** Two `.expect()` calls in `EmbeddedValidator::get_validator()`:
+```rust
+let schema: Value = serde_json::from_str(self.schema_json)
+    .expect("embedded schema must be valid JSON");
+Validator::new(&schema)
+    .expect("embedded schema must be valid JSON Schema")
+```
+These are in a `OnceLock::get_or_init` closure, which means they execute lazily on first use rather than at program startup.
+**Why it matters:** These `.expect()` calls are in a core library crate. While the schemas are embedded at compile time via `include_str!()` and a malformed schema would be caught at build time (the include would fail or tests would fail), the `.expect()` pattern is a panic site in production code. If a schema file somehow became corrupted after build (unlikely but not impossible in a dynamic linking scenario), this would panic the entire process without the caller having any opportunity to handle the error gracefully. The improvement plan item #1 (gleipnir_core `.expect()` to `Result`) was completed for gleipnir_core but this parallel pattern in schema_core was not addressed.
+**Fix:** Change `get_validator` to return `Result<&Validator, String>` and propagate the error. The `validate` and `is_valid` methods already return `Result`, so they can propagate naturally. This does change the `OnceLock` pattern slightly (would need `OnceLock<Result<Validator, String>>` or similar), so the risk/reward should be weighed. Given that these are compile-time-embedded schemas, this is medium severity -- the risk is theoretical, not practical.
 
----
+### P4-01
 
-## P3: process::exit and Panic Discipline
+**Priority:** P4 -- Composition Over Reimplementation
+**Severity:** High
+**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 122-138
+**What:** The `append_raw` function does its own `OpenOptions::new().create(true).append(true).open()` + `write_all` + `flush()` instead of using `write_engine::append_line_fsync`. Critically, it calls `.flush()` but NOT `.sync_all()` (fsync). Every other JSONL append in the workspace uses `write_engine::append_line_fsync` which does call `sync_all()`.
+**Why it matters:** This is a durability inconsistency. `append_raw` writes raw bytes to `rawdata_{session_id}.jsonl` without fsync. If the process crashes or the machine loses power between `flush()` (which only pushes to the OS buffer) and the OS flushing to disk, the rawdata file can lose the last entry. Every other append path in the workspace uses `append_line_fsync` which calls `sync_all()` for durability. The interceptor specifically handles compaction detection -- losing a rawdata entry during a compaction event means losing the evidence of what was compacted. The `append_raw` function exists because it writes raw bytes (not a single JSON line) and needs to append both the bytes and a newline separately, but `write_engine::append_line_fsync` already handles the "line + newline" pattern.
+**Fix:** Use `write_engine::append_line_fsync` if the raw bytes are a single JSON line (which they are -- stdin is one JSON object). If raw-byte fidelity is needed (avoiding re-serialization), extend `write_engine` with an `append_bytes_fsync` function and use that.
 
-> Rule: Only main() calls process::exit(). Helper functions return Result. No .unwrap()/.expect() in production library code.
+### P4-02
 
-### Findings
+**Priority:** P4 -- Composition Over Reimplementation
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/watchers/watch_and_diff_exchange_intercepts/src/main.rs` lines 345-364
+**What:** The `transcript_path_for`, `open_transcript`, and `append_transcript` functions implement their own file append pattern (OpenOptions + write_all) without using `write_engine::append_line_fsync`. The transcript append does not fsync.
+**Why it matters:** Same pattern as P4-01 -- a parallel file append implementation that lacks fsync. The transcript is a structured log of datagram payloads that the watcher emitted. Losing transcript entries on crash means the replay-vs-watch comparison loses fidelity. Using `write_engine::append_line_fsync` would provide consistency and durability.
+**Fix:** Replace `append_transcript` with `write_engine::append_line_fsync`. The transcript content is already serialized JSON, so it fits the append_line_fsync contract exactly.
 
-**P3-01: record_datagrams shutdown_handler calls process::exit(0)**
-- File: `/Users/johnny/.ai/smidja/nornir/daemons/record_datagrams/src/main.rs`, line 175
-- `std::process::exit(0)` inside `extern "C" fn shutdown_handler()`, which is a signal handler — not main(). While this is a signal handler (special case), the AUDIT_GUIDE rule is absolute: "Only main() calls process::exit()."
-- Rule violated: process::exit outside main().
+### P5-01
 
-**P3-02: gleipnir_core uses .expect() in static initializer**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/lib.rs`, line 26
-- `toml::from_str(MESSAGES_TOML).expect("gleipnir_messages.toml parse error")` — This is a core crate using `.expect()`. While this is a `LazyLock` static initializer (runs once on first access), the embedded TOML is compile-time constant. The expect will never fire unless someone edits the TOML incorrectly. However, the rule says "All helper functions return Result."
-- Rule violated: .expect() in core crate production code.
+**Priority:** P5 -- Naming Encodes Architecture
+**Severity:** Low
+**File(s):** `/Users/johnny/.ai/smidja/nornir/core/datagram_types/Cargo.toml` line 2
+**What:** Same as P2-01. The package name `datagram_types` lacks the `_core` suffix required for crates in `core/`. This is listed separately under P5 because it is also a naming violation independent of the tier model.
+**Why it matters:** Addressed in P2-01.
+**Fix:** Addressed in P2-01.
 
-**P3-03: schema_core uses .expect() in static initializer**
-- File: `/Users/johnny/.ai/smidja/nornir/core/schema_core/src/lib.rs`, lines 51, 53
-- `.expect("embedded schema must be valid JSON")` and `.expect("embedded schema must be valid JSON Schema")` — same pattern as P3-02. Static initializer with compile-time constants.
-- Rule violated: .expect() in core crate production code.
+### P7-01
 
-**P3-04: hook_pre_subagent_bash uses Regex::new(...).unwrap() in LazyLock statics**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_subagent_bash/src/main.rs`, lines 22, 26, 30
-- Three `Regex::new(...).unwrap()` calls inside `LazyLock` statics. These are compile-time constant regex patterns, so they will never fail. However, these are in a binary crate's module scope, not in main().
-- Rule: .unwrap() in production code.
+**Priority:** P7 -- Schema-First Data Validation
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs` lines 36-63
+**What:** The `.syn/warn.toml` and `.syn/deny.toml` configuration files are parsed with ad-hoc TOML deserialization (`SynFilterToml` struct with a single `filter` field) without any schema validation. There is no `.schema.json` file defining what a valid syn configuration looks like.
+**Why it matters:** Without a schema, the configuration format is defined implicitly by the Rust struct. If the format grows (e.g., adding a `severity_threshold` field, or `exclude_tools`), there is no schema to validate against, and malformed config files silently fall through to defaults (the `unwrap_or_else` on line 48). A user who writes `filtere = "..."` (typo) gets no error -- the typo field is silently ignored and the default filter is used. This was identified in the previous improvement plan (item #8) as needing a schema, but the plan item was marked DONE while the actual schema was not added.
+**Fix:** Create `schemas/tools/syn-config.schema.json` defining the warn/deny config shape. Validate config files against it in `load_filter_config`. Add to `schemas_embedded`.
 
-**P3-05: record_datagrams uses static mut and unsafe blocks**
-- File: `/Users/johnny/.ai/smidja/nornir/daemons/record_datagrams/src/main.rs`, lines 144-180
-- `static mut SHUTDOWN_SOCKET_PATH: Option<PathBuf>` and `static mut SHUTDOWN_FLAG: bool` with 5 `unsafe` blocks. `static mut` is unsound in Rust unless you can guarantee single-threaded access. Signal handlers can interrupt any code, including code that holds partial writes to these statics.
-- Rule violated: Panic discipline — unsafe mutable statics are a soundness issue.
+### P7-02
 
-**P3-06: datagram crate uses unsafe for signal handling**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/datagram/src/lib.rs`, line 121
-- `unsafe { libc::signal(...) }` — necessary for signal handling but undocumented in safety comments.
+**Priority:** P7 -- Schema-First Data Validation
+**Severity:** Low
+**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 60-116
+**What:** The `classify_exchange` function performs procedural shape-checking on the exchange JSON (checking `system[1].text` contains an identity string, checking `tools` array length, checking tool name equals `"web_search"`). This is not schema validation -- it is manual field inspection.
+**Why it matters:** The classification logic checks specific JSON structure expectations (system is an array, index 1 exists, it has a text field, tools is an array, tools[0] has a name field). These structural expectations are not documented in any schema. If the Claude API exchange format changes (e.g., system blocks reorder, tools gain a wrapper), the classification will silently misclassify without any schema validation catching the mismatch. This is lower severity because the classification is inherently heuristic (there is no "exchange classification schema" that would make sense), but the structural expectations of what fields exist and where could be documented.
+**Fix:** This is a judgment call. The classification is heuristic by nature and a schema may not fit well. Consider at minimum documenting the structural expectations in the function's doc comment (currently undocumented: "expects system to be an array with identity at index 1").
 
-### Summary: 6 findings
+### P10-01
 
----
+**Priority:** P10 -- Orphaned Artifacts
+**Severity:** Medium
+**File(s):** `/Users/johnny/.ai/smidja/nornir/Cargo.toml` line 10, `/Users/johnny/.ai/smidja/nornir/capability/io_filter/`
+**What:** The `io_filter` crate is listed as a workspace member and exists on disk, but is not imported by ANY other crate in the workspace. No `Cargo.toml` in the entire workspace lists `io_filter` as a dependency. It has zero tests. It contains a single 36-line function (`run_filter`) that is never called.
+**Why it matters:** An orphaned crate creates confusion. A future session sees `io_filter` in the workspace, assumes it is used, and may try to compose with it or update it to stay consistent with changes elsewhere. The crate's purpose (stdin-validate-stdout filter contract) is served by `io_check` for the check_* binaries, and no binary currently uses the filter pattern that `io_filter` provides. It appears to have been created for a future use case that never materialized.
+**Fix:** Either remove `io_filter` from the workspace (delete directory, remove from `Cargo.toml` members) or add it as a dependency to the binary crates that should use it. If keeping it, add tests.
 
-## P4: Composition Over Reimplementation
+### P10-02
 
-> Rule: Use existing crates. Do not reimplement logic that already exists in the workspace.
-
-### Findings
-
-**P4-01: syn_cli reimplements broadcast datagram construction**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 392-414
-- Manually constructs a `datagram::Datagram` with hardcoded fields. The same pattern exists in `watch_and_diff_exchange_intercepts`. No shared helper for "build a quality datagram."
-
-**P4-02: format!("syn") and format!("directory") where string literals suffice**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 397, 399
-- `source: format!("syn")` and `classifier: Some(format!("directory"))` — these should be `"syn".to_string()` and `Some("directory".to_string())`. `format!()` with no arguments is wasteful.
-
-**P4-03: Multiple binaries have identical error-handling patterns**
-- Files: All writer binaries (`append_raw_jsonl`, `write_truth_glossary_record`, `append_truth_qc_report_record`, `append_embedding_normalize_batch_20`, `append_interview_summaries_record`)
-- All 5 writer mains have identical `Ok(msg) => println!("{msg}")` / `Err(msg) => { eprintln!("{msg}"); std::process::exit(1); }` pattern. This is already factored via `write_engine::run()` but the error handling wrapper is duplicated.
-
-**P4-04: Manual arg parsing in hook_pre_llm_tool and hook_pre_llm_bash duplicated**
-- Files: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs` (lines 50-82), `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_bash/src/main.rs` (lines 79-117)
-- Both hooks parse `--category severity` pairs from CLI args with near-identical while-loop patterns. This shared parsing pattern could be extracted to `hook_io::rules`.
-
-### Summary: 4 findings
-
----
-
-## P5: Naming Encodes Architecture
-
-> Rule: Directory name = package name = binary name. Verb-prefix naming required. Exceptions documented in NORNIR_NAMING.md.
-
-### Findings
-
-**P5-01: io_check name does not follow verb-prefix convention**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/io_check/Cargo.toml`
-- The capability crate `io_check` does not follow the `verb_noun` convention. It should be something like `check_io` to match the verb-prefix pattern. Other capability crates follow this: `gate_io`, `hook_io`, `write_engine`, `io_filter`.
-- Rule violated: Verb-prefix naming.
-
-**P5-02: io_filter name does not follow verb-prefix convention**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/io_filter/Cargo.toml`
-- `io_filter` puts the noun before the verb-like word. Should be `filter_io` for consistency.
-- Rule violated: Verb-prefix naming.
-
-**P5-03: intercept_io is under capability/ but behaves as a gate**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/intercept_io/Cargo.toml`
-- Has `cdylib` crate-type (PyO3 module). All other PyO3 modules are under `gates/`. If this is a gate, it should be under `gates/`. If it is truly a capability crate, the `cdylib` is misplaced.
-- Rule violated: Directory structure encodes architecture.
-
-**P5-04: path_verify naming inconsistency**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/path_verify/Cargo.toml`
-- Under capability/ which is correct (does I/O — checks filesystem paths). But the name `path_verify` follows `noun_verb` not `verb_noun`. Should be `verify_paths` or similar.
-- Rule violated: Verb-prefix naming.
-
-**P5-05: schemas_embedded naming convention**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/schemas_embedded/Cargo.toml`
-- `schemas_embedded` is a noun-adjective pattern, not verb-prefix. However, this is a data crate (compile-time embedded schemas), not an action crate. The naming convention primarily targets action crates, so this is borderline.
-
-### Summary: 4 findings (P5-01 through P5-04; P5-05 is borderline)
+**Priority:** P10 -- Orphaned Artifacts
+**Severity:** Low
+**File(s):** `/Users/johnny/.ai/smidja/nornir/capability/io_filter/src/lib.rs` line 28
+**What:** `io_filter::run_filter` uses `print!("{}", output)` instead of `println!` or `write!` to stdout. This is a minor inconsistency (no trailing newline) but more importantly, the function has zero test coverage, so this behavior is unverified.
+**Why it matters:** If `io_filter` were ever adopted by a binary, the lack of trailing newline on stdout output could cause subtle piping issues. Combined with zero tests, the crate is both unused and untested -- a dead artifact.
+**Fix:** Subsumed by P10-01. If keeping the crate, add tests and decide on newline behavior.
 
 ---
 
-## P6: Security Hook Coverage
+## Areas Verified Clean
 
-> Rule: Security hooks must test both directions — malicious input IS detected (no false negatives), benign input is NOT flagged (no false positives).
+The following areas were audited and found to be in compliance:
 
-### Findings
+**Tier model (P2):** All core crates (`error_core`, `format_core`, `schema_core`, `path_core`, `syn_core`, `saga_core`, `gleipnir_core`, `report_render_core`, `diff_core`, `compaction_inject_core`) are pure -- no `std::fs`, `std::io`, `std::net`, or `std::env` imports in any core crate source file. The one exception (`datagram_types` naming) is documented above. Capability crates correctly perform I/O. No binary-to-binary dependencies exist.
 
-**P6-01: hook_pre_llm_tool tests do not call decide() directly**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs`, lines 199-447
-- Tests verify rule parsing and path matching via `parse_rules()` and manual pattern checks, but do NOT test the full `decide()` function with constructed `HookInput` payloads. The `decide()` function calls `parse_config()` which reads CLI args, making it untestable. The test at line 422-432 explicitly acknowledges: "We can't call decide() directly due to parse_config() reading CLI args."
-- Rule violated: The core decision function has no integration test. Only its sub-components are tested.
+**process::exit discipline (P3):** Every `process::exit()` call is in a `main()` function. All helper functions return `Result`. The `.expect()` calls in `schema_core` (documented above) are the only panic sites outside test code and static initializers.
 
-**P6-02: hook_pre_llm_tool does not test gaming category**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs`, tests section
-- Tests verify floor rules and probing rules via `parse_rules()`, but there are no tests that exercise gaming-category rules with specific detection patterns (only that `gaming` rules exist in the TOML). No false-negative test for gaming.
-- Rule violated: Dual-direction test coverage incomplete for gaming category.
+**Composition (P4):** JSONL-append has been consolidated through `write_engine::append_line_fsync` across the workspace (record_datagrams, intercept_io, traffic_interceptor_rewriter's exchange/precompact paths). The two exceptions (rawdata append, transcript append) are documented above. Writer binaries correctly delegate to `write_engine::run()`. Schema validation correctly delegates to `schema_core` + `schemas_embedded`. Diff logic correctly delegates to `diff_core`. Hook contract correctly delegates to `hook_io`.
 
-**P6-03: hook_pre_subagent_tool does not test path traversal with encoded variants**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_subagent_tool/src/main.rs`, lines 314-335
-- Tests `../` traversal but not URL-encoded variants (`%2e%2e/`), null byte injection, or symlink-through-allowed-prefix attacks. The path traversal check (line 83: `target.contains("..")`) is substring-based and may miss encoded variants.
-- Rule violated: Security tests should cover adversarial evasion.
+**Naming (P5):** All binary directory names match their `Cargo.toml` package names. All verb prefixes match their category directories (check_ in cli/, gate_ in gates/, hook_ in hooks/, send_ in senders/, append_/write_ in writers/, convert_ in converters/, rewrite_ in rewriters/, split_ in dispatchers/, watch_ in watchers/, traffic_ in interceptors/, record_ in daemons/). The saga_cli/syn_cli naming exceptions are documented. The `datagram_types` naming issue is the only finding.
 
-**P6-04: hook_pre_llm_bash does not test env var override via subshell**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_bash/src/main.rs`
-- Tests cover `export HOOK_LLM_ALLOW_PATHS` and `env HOOK_LLM_ALLOW_BASH`, but do not test `bash -c 'export HOOK_...'` or `$(export HOOK_...)` subshell wrapping. An LLM could use a subshell to set the env var.
+**Security hook coverage (P6):** Hook test counts are healthy: hook_pre_llm_bash (57 tests), hook_pre_subagent_bash (58 tests), hook_pre_llm_tool (31 tests), hook_pre_subagent_tool (15 tests), hook_post_llm_tool (11 tests). The pre_llm_tool decide function has tests for both malicious detection (floor/probing/gaming deny) and benign allowance (benign_path_allowed, no_path_in_input_allowed). No gaps found in dual-direction coverage.
 
-### Summary: 4 findings
+**Schema-first validation (P7):** All agent pipeline stages have schemas in `schemas/agents/`. All tool data formats have schemas in `schemas/tools/`. The datagram schema exists and is used by `datagram_io::emit_validated`. Gate crates correctly use `schemas_embedded` validators. The syn config gap is documented above.
+
+**Stale tests (P8):** No evidence of stale tests. Test assertions match current struct shapes and function signatures. The improvement plan's contract changes (renames, new parameters like `resolve_env`) are reflected in tests.
+
+**Gleipnir check accuracy (P9):** Gleipnir_core has no I/O (verified: zero `std::fs`/`std::io`/`std::env` imports). The config loading I/O was extracted per improvement plan item #1. Check matrix, parsing, and classification are pure. No false positive patterns identified in the check definitions.
+
+**Deploy script consistency (P10):** Every deploy script's crate list matches the actual crate directories. No orphaned entries, no missing crates. Workspace `Cargo.toml` members list matches actual directories (verified: all 85 member paths exist).
 
 ---
 
-## P7: Schema-First Data Validation
+## Improvement Plan Status Verification
 
-> Rule: Data shapes should be enforced by JSON Schema, not procedural code. If you find yourself writing `if data.get("field")...`, there should be a schema.
+The 10-item improvement plan (`plans/IMPROVEMENT_PLAN.md`) was verified:
 
-### Findings
-
-**P7-01: hook_io HookInput uses serde_json::Value for tool_input**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/hook_io/src/lib.rs`, line 26
-- `pub tool_input: serde_json::Value` — the tool_input field is an untyped JSON blob. All hook binaries manually extract fields with `.get("file_path").and_then(|v| v.as_str())`. There is no schema validating the hook input structure.
-- Rule violated: Procedural shape-checking instead of schema validation.
-
-**P7-02: syn_cli SynConfig loads TOML without schema validation**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 75-99
-- The `.syn/warn.toml` and `.syn/deny.toml` files are parsed manually with `content.parse::<toml::Table>()` and `.get("filter")?.as_str()`. No schema validates the config file structure.
-- Rule violated: Config files parsed without schema.
-
-**P7-03: hook_pre_llm_bash / hook_pre_llm_tool rules.toml parsed without schema**
-- Files: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_bash/src/main.rs`, `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs`
-- Rules TOML files are parsed with `parse_toml_table()` + `parse_rule_array()` — manual field extraction. No JSON Schema validates the rules.toml structure.
-- Rule violated: Embedded config parsed without schema.
-
-**P7-04: PostHookInput tool_input is unvalidated serde_json::Value**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/hook_io/src/lib.rs`
-- Same issue as P7-01 but for PostHookInput. The `tool_input` and `tool_result` fields are untyped.
-
-### Summary: 4 findings
-
----
-
-## P8: Stale Tests After Contract Changes
-
-> Rule: When a contract changes, tests must be updated to match. Stale tests that pass vacuously are worse than no tests.
-
-### Findings
-
-**P8-01: hook_pre_llm_tool floor/probing/gaming tests do not verify the full rule set**
-- File: `/Users/johnny/.ai/smidja/nornir/hooks/hook_pre_llm_tool/src/main.rs`, lines 212-232
-- Tests check that `/.ssh/`, `/.aws/`, `/.gnupg/` exist in floor rules, and `/.claude/hooks/`, `/.gleipnir/`, `/.claude/settings` exist in probing rules. But if rules.toml adds new floor rules, no test will verify coverage of the new rules. Tests only verify a subset of expected patterns.
-- Rule violated: Tests should track contract completeness.
-
-**P8-02: Writer binaries have no tests**
-- Files: All 5 writer mains (`append_raw_jsonl`, `write_truth_glossary_record`, `append_truth_qc_report_record`, `append_embedding_normalize_batch_20`, `append_interview_summaries_record`)
-- Zero `#[cfg(test)]` modules. The writer binaries are thin wrappers around `write_engine::run()`, but they hardcode schema references, paths, and format choices that are never tested.
-- Rule violated: Contract between writer config and write_engine is untested.
-
-**P8-03: sender binaries (send_heartbeat, send_warning, send_notification) have no tests**
-- Files: `/Users/johnny/.ai/smidja/nornir/senders/send_heartbeat/src/main.rs`, `send_warning/src/main.rs`, `send_notification/src/main.rs`
-- These construct `Datagram` structs with hardcoded field values (e.g., `DatagramKind::Canary` for heartbeat, `Priority::High` for warning) but have no tests verifying the contract between the hardcoded values and the datagram schema.
-- Rule violated: Hardcoded contracts untested.
-
-**P8-04: convert_json_to_toml has no tests**
-- File: `/Users/johnny/.ai/smidja/nornir/converters/convert_json_to_toml/src/main.rs`
-- 60-line binary with no tests. The `run()` function is testable (takes args, returns Result) but untested.
-- Rule violated: Testable logic with no tests.
-
-### Summary: 4 findings
-
----
-
-## P9: Gleipnir Check Accuracy
-
-> Rule: Checks must have zero false positives and minimal false negatives. Every exception path must be tested.
-
-### Findings
-
-**P9-01: nesting_depth_rs includes match_expression but not match_arm**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/checks_rs/style.rs`, lines 135-141
-- `RUST_NESTING_TYPES` includes `match_expression` but not `match_arm`. A match with 10 arms each containing an if-expression is deeply nested code, but the nesting counter only increments for the `match` itself, not per-arm. This is documented as a known plan item in `plans/nesting_depth_rs_IMPROVEMENT.md` — the plan says to REMOVE `match_arm` from the types, meaning the current behavior is intentional. However, the opposite problem exists: `match_expression` counts as one nesting level, but a `match` inside a `match` inside a `match` would count as 3, which is correct.
-- Noted: This is a known accuracy concern with an existing improvement plan.
-
-**P9-02: no_clone_spam considers match_arm as ownership transfer context**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/checks_rs/prohibited.rs`, lines 369, 394
-- `match_arm` is treated as an ownership transfer context, exempting `.clone()` inside match arms. This can produce false negatives — a `.clone()` in a match arm that could use a reference is exempted.
-- Rule violated: False negatives in match arm clone detection.
-
-**P9-03: no_println exemption for main.rs could miss library println in binary crates**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/checks_rs/prohibited.rs`, lines 196-198, 249
-- `is_binary_main()` checks if `file_path.rsplit('/').next() == Some("main.rs")`. This exempts ALL `println!` in any `main.rs` file, including ones in library modules that happen to be named `main.rs` (unlikely but possible). Also, this exempts println in helper functions within main.rs that are not main() itself.
-- The current design (line 249) exempts println in main.rs files OR in output functions (`print_*`, `emit_*`, `display_*`). A `run()` function in main.rs that calls `println!` for user output is correctly exempted, but a `parse_config()` function in main.rs that accidentally uses `println!` is also exempted.
-
-**P9-04: no_unwrap does not check .expect() in match/if-let patterns**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/checks_rs/prohibited.rs`, lines 143-183
-- The check only looks for `call_expression` with `field_expression` where field is `unwrap` or `expect`. It correctly handles `.unwrap()` method calls. However, it does not detect `Option::unwrap()` or `Result::unwrap()` when called as a free function (though this pattern is rare in Rust).
-
-**P9-05: Rust checks do not have a matrix — checks are hardcoded in run_checks_rust()**
-- File: `/Users/johnny/.ai/smidja/nornir/core/gleipnir_core/src/lib.rs`, lines 113-130
-- Python checks use a `matrix.rs` with `FileKind`-based dispatch. Rust checks are hardcoded as a flat array in `run_checks_rust()`. There is no Rust-specific FileKind classification (binary vs library, core vs capability). All Rust files get the same checks regardless of their tier.
-- Rule violated: Rust checks lack the context-awareness of Python checks.
-
-### Summary: 5 findings
-
----
-
-## P10: Orphaned Artifacts
-
-> Rule: No dead code, orphaned files, stale references, or unused dependencies.
-
-### Findings
-
-**P10-01: Hardcoded absolute paths in all writer binaries**
-- Files: All 5 writer mains under `writers/`
-- Paths like `/Users/johnny/.ai/spaces/bragi/schemas/glossary.schema.json` and `/Users/johnny/.ai/spaces/bragi/truth/quarantine` are hardcoded. These are user-specific absolute paths that only work on one machine. If the repository is shared or the user changes their home directory, these paths break.
-- Rule violated: Hardcoded paths tied to a specific machine.
-
-**P10-02: schema_source_path in WriterConfig is informational-only**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/write_engine/src/lib.rs`, line 66
-- `schema_source_path` is documented as "Absolute path to the .schema.json source file (for --help display)." It is only used for display, but it contains absolute paths to files that may not exist at runtime. If the path is wrong, the --help output shows a stale path. No validation that schema_source_path actually exists.
-
-**P10-03: SynConfig has unused _warn_expr and _deny_expr fields**
-- File: `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs`, lines 71-72
-- Fields `_warn_expr: String` and `_deny_expr: String` are prefixed with `_` to suppress dead-code warnings. These are stored but never read. If they are not needed, they should be removed. If they are for debugging, they should be properly named.
-- Rule violated: Dead fields suppressed with underscore prefix.
-
-**P10-04: audit/ directory referenced in MEMORY.md but was empty**
-- Directory: `/Users/johnny/.ai/smidja/nornir/audit/`
-- MEMORY.md references multiple audit files (`structural_audit.md`, `contract_audit.md`, etc.) but the directory was empty at audit time. The git status shows `audit/` as untracked (`??`), suggesting the directory exists but no audit files have been committed.
-- Rule violated: Stale documentation references.
-
-**P10-05: MEMORY.md references plans/ directory with unexecuted plans**
-- File: `/Users/johnny/.ai/smidja/nornir/MEMORY.md`
-- References 4 plans in `plans/` that are "Not Yet Executed." If these plans exist as files, they are in-progress work. If the plans directory does not exist or is stale, the references are orphaned.
-
-**P10-06: `#[allow(private_interfaces)]` in hook_io response.rs**
-- File: `/Users/johnny/.ai/smidja/nornir/capability/hook_io/src/response.rs`, line 1
-- `#![allow(private_interfaces)]` is a crate-level suppression. The gleipnir checks explicitly exempt `private_interfaces` (line 66 of suppression.rs), but this is still a compiler warning being suppressed at the crate level rather than at the specific item level.
-
-**P10-07: Only 1 schema file exists under schemas/**
-- Directory: `/Users/johnny/.ai/smidja/nornir/schemas/`
-- Only `schemas/tools/raw-jsonl.schema.json` was found. The `schemas_embedded` crate embeds multiple schemas (RAW_DEFINITION, GLOSSARY, QC_REPORT, DATAGRAM, etc.) but only one source schema file is under `schemas/`. The others are presumably at external paths like `/Users/johnny/.ai/spaces/bragi/schemas/`. This means schema source-of-truth is scattered across the filesystem.
-- Rule violated: Schema source files not co-located in the repository.
-
-### Summary: 7 findings
-
----
-
-## Audit Summary
-
-| Priority | Description | Findings |
-|----------|-------------|----------|
-| P1 | Pure Logic in Binary Crates | 6 |
-| P2 | Three-Tier Dependency Model | 3 |
-| P3 | process::exit and Panic Discipline | 6 |
-| P4 | Composition Over Reimplementation | 4 |
-| P5 | Naming Encodes Architecture | 4 |
-| P6 | Security Hook Coverage | 4 |
-| P7 | Schema-First Data Validation | 4 |
-| P8 | Stale Tests After Contract Changes | 4 |
-| P9 | Gleipnir Check Accuracy | 5 |
-| P10 | Orphaned Artifacts | 7 |
-| **Total** | | **47** |
-
-### High-Severity Findings (by impact)
-
-1. **P3-05**: `static mut` with unsafe blocks in `record_datagrams` — soundness issue. Signal handler can race with main thread access to `SHUTDOWN_FLAG` and `SHUTDOWN_SOCKET_PATH`.
-2. **P1-01/02/03**: syn_cli has ~200 lines of pure computation logic that should be in a library crate. This is the largest binary and the most architecturally significant P1 violation.
-3. **P6-01**: The core `decide()` function in `hook_pre_llm_tool` has no integration test. Only sub-components are tested. This is a security hook.
-4. **P9-05**: Rust checks lack FileKind-based dispatch. All Rust files get identical checks regardless of whether they are core libraries, capability crates, or binary entry points.
-5. **P10-01/07**: Hardcoded absolute paths in writer binaries and scattered schema source files make the repository non-portable.
-6. **P8-02/03/04**: 10 binary crates have zero tests.
+1. **gleipnir_core config.rs I/O in Tier 1** -- VERIFIED FIXED. Zero `std::fs`/`std::io`/`std::env` imports in gleipnir_core.
+2. **record_datagrams static mut unsoundness** -- VERIFIED FIXED. Uses `AtomicBool` + `OnceLock` instead of `static mut`.
+3. **syn_cli pure logic extraction** -- VERIFIED FIXED. Filter engine is in `syn_core`, rendering in `report_render_core`. syn_cli is orchestration.
+4. **JSONL-append duplication** -- VERIFIED FIXED. All JSONL appends use `write_engine::append_line_fsync` (with two minor exceptions documented in P4-01/P4-02).
+5. **hook_pre_llm_tool decide() untested** -- VERIFIED FIXED. 31 tests including decide function with dual-direction coverage.
+6. **no_println exempts entire main.rs** -- Not directly verifiable from source (gleipnir check config is external), but no println calls found in core/capability library code.
+7. **io_check zero tests** -- VERIFIED FIXED. io_check has tests (15+ test functions covering arg parsing and serialization).
+8. **Hook inputs / syn config without schema** -- PARTIALLY FIXED. syn config still lacks a schema (P7-01). Hook input schemas were not added but hook_io handles the contract.
+9. **datagram / path_verify naming** -- VERIFIED FIXED. Renamed to `datagram_io` and `path_verify_io`.
+10. **Hardcoded absolute paths in writers** -- VERIFIED FIXED. Writers use `write_engine::ai_home()` for path construction.

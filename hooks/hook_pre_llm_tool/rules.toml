@@ -9,10 +9,11 @@
 #
 # Layers (evaluated in order):
 #   1. floor    — always block, no CLI flag needed, no env override
-#   2. probing  — severity from --probing flag (warn|block)
-#   3. gaming   — severity from --gaming flag (warn|block)
+#   2. probing  — severity from --probing flag (warn|ask|block)
+#   3. gaming   — severity from --gaming flag (warn|ask|block)
 #   4. allow    — everything else passes
 #
+# Per-rule severity: add severity = "warn|ask|block" to override the category default.
 # HOOK_LLM_ALLOW_PATHS env var exempts paths from probing/gaming checks (not floor).
 
 # ─── Floor: always block, never overridable ─────────────────────────
@@ -42,6 +43,13 @@ pattern = "/.netrc"
 description = "Network authentication credentials"
 
 # ─── Probing: attempts to read security infrastructure ──────────────
+#
+# Default severity from --probing flag. Per-rule severity overrides where noted.
+
+[[probing]]
+pattern = "/.claude/settings"
+description = "Claude Code settings (permission model)"
+severity = "ask"
 
 [[probing]]
 pattern = "/.claude/hooks/"
@@ -52,18 +60,27 @@ pattern = "/.gleipnir/"
 description = "Gleipnir constraint configuration"
 
 [[probing]]
-pattern = "/gleipnir/src/"
-description = "Gleipnir source code internals"
+pattern = "/gleipnir_core/"
+description = "Gleipnir check source code"
 
 [[probing]]
-pattern = "/test_guardrails"
-description = "Guardrail test files"
+pattern = "/hook_io/"
+description = "Hook IO library source"
 
 [[probing]]
-pattern = "/.claude/settings"
-description = "Claude Code settings (permission model)"
+pattern = "/hook_pre_llm"
+description = "Pre-tool hook source code"
 
-# Removed: /hook_pre_ — fires during hook development, source != deployed binary
+[[probing]]
+pattern = "/hook_post_llm"
+description = "Post-tool hook source code"
+
+[[probing]]
+pattern = "/saga_core/"
+description = "Enforcement runner source code"
+
+# Removed: /gleipnir/src/ — stale, old location (now /gleipnir_core/)
+# Removed: /test_guardrails — stale, old Python guardrails
 # Removed: /rules.toml — too broad, needed during development
 # Removed: /.claude/plans/ — normal plan-mode workflow
 # Removed: /CLAUDE.md — already in system prompt, zero additional signal

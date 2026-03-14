@@ -56,6 +56,14 @@ pub enum HookDecision {
         user_reason: String,
         llm_context: String,
     },
+    /// Pause and ask the user — permissionDecision: "ask".
+    /// User sees the reason and decides allow/deny interactively.
+    Ask {
+        category: String,
+        event: String,
+        reason: String,
+        llm_context: String,
+    },
     /// Deny with reason shown to LLM.
     Deny {
         category: String,
@@ -74,7 +82,6 @@ where
 {
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
-        // Can't read stdin — allow (fail open for hooks, fail closed would block everything)
         print_allow();
         return ExitCode::SUCCESS;
     }
@@ -82,25 +89,21 @@ where
     let hook_input: HookInput = match serde_json::from_str(&input) {
         Ok(v) => v,
         Err(_) => {
-            // Malformed JSON — allow (don't block on parse errors)
             print_allow();
             return ExitCode::SUCCESS;
         }
     };
 
-    let tool = hook_input
-        .tool_name
-        .as_deref()
-        .unwrap_or("unknown");
+    let tool = hook_input.tool_name.as_deref().unwrap_or("unknown");
+    emit_decision(decide_fn(&hook_input), tool);
+    ExitCode::SUCCESS
+}
 
-    match decide_fn(&hook_input) {
+/// Dispatch a decision: output JSON, notify user, emit to watchtower.
+fn emit_decision(decision: HookDecision, tool: &str) {
+    match decision {
         HookDecision::Allow => print_allow(),
-        HookDecision::Warn {
-            category,
-            event,
-            user_reason,
-            llm_context,
-        } => {
+        HookDecision::Warn { category, event, user_reason, llm_context } => {
             print_banner_warn(&category, &event, &user_reason);
             print_warn(&user_reason, &llm_context);
             emit_to_watchtower(&WatchtowerEvent {
@@ -108,11 +111,15 @@ where
                 tool, detail: &user_reason, context: &llm_context,
             });
         }
-        HookDecision::Deny {
-            category,
-            event,
-            reason,
-        } => {
+        HookDecision::Ask { category, event, reason, llm_context } => {
+            print_banner_ask(&category, &event, &reason);
+            print_ask(&reason, &llm_context);
+            emit_to_watchtower(&WatchtowerEvent {
+                decision: "ask", category: &category, event: &event,
+                tool, detail: &reason, context: &llm_context,
+            });
+        }
+        HookDecision::Deny { category, event, reason } => {
             print_banner_deny(&category, &event, &reason);
             print_deny(&reason);
             emit_to_watchtower(&WatchtowerEvent {
@@ -121,8 +128,6 @@ where
             });
         }
     }
-
-    ExitCode::SUCCESS
 }
 
 // ── JSON output to stdout ──────────────────────────────────────────
@@ -140,6 +145,12 @@ fn print_warn(user_reason: &str, llm_context: &str) {
     print!("{}", resp.to_json());
 }
 
+fn print_ask(reason: &str, llm_context: &str) {
+    use response::{HookOutput, PreToolUseResponse};
+    let resp = PreToolUseResponse::ask(reason).with_context(llm_context);
+    print!("{}", resp.to_json());
+}
+
 fn print_deny(reason: &str) {
     use response::{HookOutput, PreToolUseResponse};
     print!("{}", PreToolUseResponse::deny(reason).to_json());
@@ -152,6 +163,10 @@ fn print_deny(reason: &str) {
 
 fn print_banner_warn(category: &str, event: &str, explanation: &str) {
     notify_and_log('\u{26A0}', category, event, explanation);
+}
+
+fn print_banner_ask(category: &str, event: &str, explanation: &str) {
+    notify_and_log('\u{2753}', category, event, explanation);
 }
 
 fn print_banner_deny(category: &str, event: &str, explanation: &str) {
@@ -211,6 +226,8 @@ fn category_phrase(category: &str) -> &'static str {
         "subversion" => "subvert the safety controls",
         "truncation" => "reading constraint files selectively",
         "evasion" => "evade the safety controls",
+        "destruction" => "destroy uncommitted work",
+        "revert" => "revert file changes",
         "chaining" => "chain shell commands to escape the sandbox",
         "path" => "access a restricted path",
         "bash" => "run a restricted command",
@@ -223,11 +240,12 @@ fn build_speech(decision: &str, category: &str) -> String {
     match decision {
         "deny" => {
             let prefix = match category {
-                "floor" | "subversion" | "chaining" => "DANGER",
+                "floor" | "subversion" | "chaining" | "destruction" => "DANGER",
                 _ => "WARNING",
             };
             format!("{}: Claude is trying to {} -- BLOCKED.", prefix, phrase)
         }
+        "ask" => format!("ATTENTION: Claude is trying to {} -- Awaiting your decision.", phrase),
         "warn" => format!("WARNING: Claude is {} -- Correction provided.", phrase),
         _ => String::new(),
     }

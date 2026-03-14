@@ -125,11 +125,11 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
     }
 
     // Layer 2: Probing
-    if let Some(severity) = config.probing {
+    if let Some(default_severity) = config.probing {
         for rule in &rules.probing {
             if target.contains(&rule.pattern) {
                 return make_decision(
-                    severity,
+                    rule.severity.unwrap_or(default_severity),
                     "probing",
                     &rule.description,
                     target,
@@ -139,11 +139,11 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
     }
 
     // Layer 3: Gaming
-    if let Some(severity) = config.gaming {
+    if let Some(default_severity) = config.gaming {
         for rule in &rules.gaming {
             if target.contains(&rule.pattern) {
                 return make_decision(
-                    severity,
+                    rule.severity.unwrap_or(default_severity),
                     "gaming",
                     &rule.description,
                     target,
@@ -166,18 +166,33 @@ fn make_decision(
     description: &str,
     target: &str,
 ) -> HookDecision {
+    let event = format!("{} \u{2014} {}", description.to_lowercase(), target);
     match severity {
         Severity::Block => HookDecision::Deny {
             category: category.into(),
-            event: format!("{} \u{2014} {}", description.to_lowercase(), target),
+            event,
             reason: format!(
                 "Access to '{}' blocked ({}: {}).",
                 target, category, description
             ),
         },
+        Severity::Ask => HookDecision::Ask {
+            category: category.into(),
+            event,
+            reason: format!(
+                "LLM wants to access '{}' ({}: {}). Allow or deny?",
+                target, category, description
+            ),
+            llm_context: format!(
+                "Your access to '{}' requires user approval ({}: {}). \
+                 The user is being asked whether to allow this. \
+                 Do NOT retry without permission.",
+                target, category, description
+            ),
+        },
         Severity::Warn => HookDecision::Warn {
             category: category.into(),
-            event: format!("{} \u{2014} {}", description.to_lowercase(), target),
+            event,
             user_reason: format!(
                 "LLM accessed '{}' ({}: {}). Behavior flagged.",
                 target, category, description
@@ -455,11 +470,12 @@ mod tests {
     }
 
     #[test]
-    fn decide_probing_settings_detected() {
+    fn decide_probing_settings_uses_per_rule_ask() {
+        // settings rule has severity = "ask", overriding the category default
         let d = decide_inner(&make_input("/home/user/.claude/settings.json"), &config_all_block(), &default_rules());
         match d {
-            HookDecision::Deny { category, .. } => assert_eq!(category, "probing"),
-            _ => panic!("Settings probing must be detected"),
+            HookDecision::Ask { category, .. } => assert_eq!(category, "probing"),
+            _ => panic!("Settings must use per-rule severity (ask), not category default"),
         }
     }
 

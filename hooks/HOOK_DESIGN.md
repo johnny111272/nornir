@@ -30,13 +30,13 @@ verb axis needed.
 
 ### Current hooks
 
-| Name | Event | Context | Scope | Tests |
-|---|---|---|---|---|
-| `hook_pre_llm_tool` | PreToolUse | LLM | Read/Write/Edit/Grep/Glob | 24 |
-| `hook_pre_llm_bash` | PreToolUse | LLM | Bash | 37 |
-| `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob | 14 |
-| `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash | 53 |
-| `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit | 10 |
+| Name | Event | Context | Scope |
+|---|---|---|---|
+| `hook_pre_llm_tool` | PreToolUse | LLM | Read/Write/Edit/Grep/Glob |
+| `hook_pre_llm_bash` | PreToolUse | LLM | Bash |
+| `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob |
+| `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash |
+| `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit |
 
 ### Planned hooks
 
@@ -103,7 +103,7 @@ Returns `Some(message)` to inject into LLM context, `None` for no-op.
 ### Side effects (all hooks)
 
 All hooks that produce Warn/Deny/Assessment results also:
-- Emit a datagram to Hlidskjalf via `datagram`
+- Emit a datagram to Hlidskjalf via `datagram_io`
 - Send macOS notification via `terminal-notifier`
 - Append to `~/.claude/intercept.log`
 
@@ -125,7 +125,7 @@ pub fn run_post_hook<F>(assess_fn: F) -> ExitCode
 where F: FnOnce(&PostHookInput) -> Option<String>;
 ```
 
-### hook_io::rules module (18 tests)
+### hook_io::rules module
 
 Shared rule parsing extracted from hook binaries:
 

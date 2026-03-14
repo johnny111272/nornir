@@ -26,13 +26,18 @@ struct FieldRef<'a> {
 struct PathContext<'a> {
     registry: &'a PathRegistry,
     config_dir: Option<&'a Path>,
+    resolve_env: &'a dyn Fn(&str) -> Option<String>,
 }
 
 /// Parse a .tomlx string and return the converted output.
+///
+/// `resolve_env` resolves environment variable names to values. Pass
+/// `|name| std::env::var(name).ok()` for live resolution.
 pub fn parse_tomlx(
     source: &str,
     file: Option<&str>,
     config_dir: Option<&Path>,
+    resolve_env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<TomlxOutput, FormatError> {
     // Step 1: Parse as TOML first (fast path)
     let toml_value: toml::Value = toml::from_str(source)
@@ -50,7 +55,7 @@ pub fn parse_tomlx(
     }
 
     // Step 3: Process sections
-    process_sections(json_value, validation, config_dir)
+    process_sections(json_value, validation, config_dir, resolve_env)
 }
 
 fn toml_to_json_value(toml: &toml::Value) -> Value {
@@ -77,6 +82,7 @@ fn process_sections(
     mut data: Value,
     validation: ValidationResult,
     config_dir: Option<&Path>,
+    resolve_env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<TomlxOutput, FormatError> {
     let mut section_units: HashMap<String, String> = HashMap::new();
     let mut section_paths: HashMap<String, SectionPathInfo> = HashMap::new();
@@ -85,12 +91,12 @@ fn process_sections(
     let mut issues = validation.issues;
     let mut path_registry = validation.path_registry;
 
-    expand_registry_bases(&mut path_registry, config_dir);
+    expand_registry_bases(&mut path_registry, config_dir, resolve_env);
 
     for (section_path, section) in &validation.sections {
         if section_path.is_empty() {
             if let Some(ann) = &section.annotation {
-                let paths = PathContext { registry: &path_registry, config_dir };
+                let paths = PathContext { registry: &path_registry, config_dir, resolve_env };
                 process_root_fields(&mut data, section, ann, &paths, &mut issues)?;
             }
             continue;
@@ -125,7 +131,7 @@ fn process_sections(
                         }
                     }
                     Some(TargetFamily::Path) => {
-                        let paths = PathContext { registry: &path_registry, config_dir };
+                        let paths = PathContext { registry: &path_registry, config_dir, resolve_env };
                         process_path_section(
                             section_data, section, ann, &paths, &mut issues,
                         )?;
@@ -396,7 +402,7 @@ fn convert_field_path(
         return Ok(());
     }
 
-    match expand_path(&path_str, reference, paths.registry, paths.config_dir) {
+    match expand_path(&path_str, reference, paths.registry, paths.config_dir, paths.resolve_env) {
         Ok(expanded) => { *value = Value::String(expanded); }
         Err(_) => {}
     }
@@ -407,12 +413,18 @@ fn convert_field_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+
+    fn test_env(name: &str) -> Option<String> {
+        match name {
+            "HOME" => Some("/Users/test".to_string()),
+            _ => None,
+        }
+    }
 
     #[test]
     fn test_parse_unit_conversion() {
         let source = "\n[ttl]  # target=seconds\nsession = 15  # unit=minutes\ncache = 4     # unit=hours\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         let ttl = result.data.get("ttl").unwrap();
         assert_eq!(ttl.get("session").unwrap(), 900);
@@ -422,9 +434,8 @@ mod tests {
 
     #[test]
     fn test_parse_path_expansion() {
-        env::set_var("HOME", "/Users/test");
         let source = "\n[paths]  # target=path, base=~/.ai/phoenix/, expand=user\ncli = \"cli/\"    # path=base\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         let paths = result.data.get("paths").unwrap();
         assert_eq!(paths.get("cli").unwrap().as_str().unwrap(), "/Users/test/.ai/phoenix/cli");
@@ -432,9 +443,8 @@ mod tests {
 
     #[test]
     fn test_parse_mixed() {
-        env::set_var("HOME", "/Users/test");
         let source = "\n[metadata]\nname = \"test\"\n\n[ttl]  # target=seconds\nsession = 15  # unit=minutes\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         assert_eq!(result.data.get("metadata").unwrap().get("name").unwrap(), "test");
         assert_eq!(result.data.get("ttl").unwrap().get("session").unwrap(), 900);
@@ -443,7 +453,7 @@ mod tests {
     #[test]
     fn test_orphan_error() {
         let source = "\n[settings]\ntimeout = 30  # unit=seconds\n";
-        let result = parse_tomlx(source, Some("config.tomlx"), None);
+        let result = parse_tomlx(source, Some("config.tomlx"), None, &test_env);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("timeout"));
@@ -452,7 +462,7 @@ mod tests {
     #[test]
     fn test_size_units() {
         let source = "\n[limits]  # target=bytes\nmax_size = 500  # unit=mb\nbuffer = 64     # unit=kib\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         let limits = result.data.get("limits").unwrap();
         assert_eq!(limits.get("max_size").unwrap(), 500_000_000i64);
@@ -462,7 +472,7 @@ mod tests {
     #[test]
     fn test_type_only_section() {
         let source = "\n[features]  # type=bool\ndark_mode = true\nnotifications = false\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         assert_eq!(result.data.get("features").unwrap().get("dark_mode").unwrap(), true);
         assert_eq!(result.section_types.get("features"), Some(&"bool".to_string()));
@@ -472,7 +482,7 @@ mod tests {
     #[test]
     fn test_type_with_target() {
         let source = "\n[ttl]  # type=int, target=seconds\nsession = 15  # unit=minutes\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         assert_eq!(result.data.get("ttl").unwrap().get("session").unwrap(), 900);
         assert_eq!(result.section_types.get("ttl"), Some(&"int".to_string()));
@@ -483,7 +493,7 @@ mod tests {
     #[test]
     fn test_list_type_schema() {
         let source = "\n[tags]  # type=list[str]\ncategories = [\"news\", \"tech\"]\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         assert_eq!(result.section_types.get("tags"), Some(&"list[str]".to_string()));
         let schema = result.schema.unwrap();
@@ -498,7 +508,7 @@ mod tests {
     #[test]
     fn test_output_to_json() {
         let source = "\n[ttl]  # target=seconds\nsession = 15  # unit=minutes\n";
-        let result = parse_tomlx(source, None, None).unwrap();
+        let result = parse_tomlx(source, None, None, &test_env).unwrap();
         let json = result.to_json();
         assert_eq!(json.get("section_units").unwrap().get("ttl").unwrap(), "seconds");
     }

@@ -24,7 +24,8 @@
 //! ```ignore
 //! use format_core::tomlx;
 //!
-//! let output = tomlx::parse_tomlx(content, None, None)?;
+//! let resolve_env = |name: &str| std::env::var(name).ok();
+//! let output = tomlx::parse_tomlx(content, None, None, &resolve_env)?;
 //! let json = output.to_json();
 //! ```
 
