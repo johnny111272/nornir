@@ -106,7 +106,7 @@ impl WriteError {
                  \x20 echo '<json>' | {name}\n\
                  \n\
                  For data with quotes or apostrophes, use heredoc:\n\
-                 \x20 cat <<'RECORD' | {name}\n\
+                 \x20 {name} <<'RECORD'\n\
                  \x20 {{\"field\":\"value with 'quotes'\"}}\n\
                  \x20 RECORD",
                 name = config.name
@@ -115,7 +115,7 @@ impl WriteError {
                 "FAIL:invalid JSON — {detail}\n\
                  \n\
                  If your data contains apostrophes or nested quotes, use heredoc:\n\
-                 \x20 cat <<'RECORD' | {name}\n\
+                 \x20 {name} <<'RECORD'\n\
                  \x20 {{\"field\":\"value with 'quotes'\"}}\n\
                  \x20 RECORD",
                 detail = detail,
@@ -262,7 +262,7 @@ fn format_help(config: &WriterConfig) -> String {
     lines.push(format!("  echo '<json>' | {}{}", config.name, arg_str));
     lines.push(String::new());
     lines.push("  For data with quotes or apostrophes, use heredoc:".into());
-    lines.push(format!("  cat <<'RECORD' | {}{}", config.name, arg_str));
+    lines.push(format!("  {}{} <<'RECORD'", config.name, arg_str));
     lines.push("  {\"uid\":\"...\",\"assessment\":\"...\"}".into());
     lines.push("  RECORD".into());
 

@@ -5,6 +5,7 @@
 
 pub mod checks_py;
 pub mod checks_rs;
+pub mod checks_svelte;
 pub mod checks_ts;
 pub mod classify;
 pub mod matrix;
@@ -137,29 +138,49 @@ pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
 
 /// Run all applicable gleipnir checks on a Svelte file.
 ///
-/// Extracts the `<script>` block, parses with tree-sitter-typescript,
-/// runs TypeScript checks. Line numbers are offset to match the .svelte file.
+/// Three phases:
+/// 1. Script — extract `<script>`, parse with tree-sitter-typescript, run TS checks
+/// 2. Style — extract `<style>`, parse with tree-sitter-css, run CSS architecture checks
+/// 3. Template — extract template (everything outside script/style), parse with tree-sitter-html
+/// 4. Raw source — checks that operate on raw text with path scoping
+///
+/// Line numbers are offset to match the .svelte file.
 pub fn run_checks_svelte(file_path: &str, source: &[u8]) -> Vec<Violation> {
     let source_str = std::str::from_utf8(source).unwrap_or("");
+    let mut violations = Vec::new();
+
+    // Phase 1: Script block (TypeScript checks)
+    run_svelte_script_checks(file_path, source_str, &mut violations);
+
+    // Phase 2: Style block (CSS architecture checks)
+    run_svelte_style_checks(file_path, source_str, &mut violations);
+
+    // Phase 3: Template (HTML architecture checks)
+    run_svelte_template_checks(file_path, source_str, &mut violations);
+
+    // Phase 4: Raw source checks (path-scoped, no parsing)
+    run_svelte_raw_checks(file_path, source_str, &mut violations);
+
+    violations
+}
+
+fn run_svelte_script_checks(file_path: &str, source_str: &str, violations: &mut Vec<Violation>) {
     let script = match parsing::extract_svelte_script(source_str) {
         Some(s) => s,
-        None => return Vec::new(),
+        None => return,
     };
 
     let script_bytes = script.content.as_bytes();
     let parsed = match parsing::build_parsed_source_typescript(file_path, script_bytes) {
         Ok(p) => p,
-        Err(_) => return Vec::new(),
+        Err(_) => return,
     };
     let config = CheckConfig::for_kind(structures::FileKind::Outside);
 
     type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
     let ts_checks: &[(&str, Severity, CheckFn)] = &[
-        // PROHIBITED
         ("no_console_log", Severity::Error, checks_ts::prohibited::check_no_console_log),
-        // SUPPRESSION
         ("no_ts_suppression", Severity::Error, checks_ts::suppression::check_no_ts_suppression),
-        // STYLE
         ("function_length_ts", Severity::Warning, checks_ts::style::check_function_length),
         ("param_count_ts", Severity::Warning, checks_ts::style::check_param_count),
         ("nesting_depth_ts", Severity::Warning, checks_ts::style::check_nesting_depth),
@@ -169,15 +190,77 @@ pub fn run_checks_svelte(file_path: &str, source: &[u8]) -> Vec<Violation> {
         ("short_param_names_ts", Severity::Warning, checks_ts::style::check_short_param_names),
     ];
 
-    let mut violations = Vec::new();
     for &(name, severity, check_fn) in ts_checks {
         let mut check_violations = check_fn(&parsed, &config);
         for viol in &mut check_violations {
             viol.line += script.line_offset;
         }
-        stamp_and_collect(name, severity, check_violations, &mut violations);
+        stamp_and_collect(name, severity, check_violations, violations);
     }
-    violations
+}
+
+fn run_svelte_style_checks(file_path: &str, source_str: &str, violations: &mut Vec<Violation>) {
+    let style = match parsing::extract_svelte_style(source_str) {
+        Some(s) => s,
+        None => return,
+    };
+
+    let style_bytes = style.content.as_bytes();
+    let parsed = match parsing::build_parsed_source_css(file_path, style_bytes) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let css_checks: &[(&str, Severity, fn(&str, &ParsedSource) -> Vec<Violation>)] = &[
+        ("no_100vh_in_components", Severity::Error, checks_svelte::architecture::check_no_100vh_in_components),
+        ("no_hardcoded_colors", Severity::Warning, checks_svelte::architecture::check_no_hardcoded_colors),
+        ("no_margin_in_shared", Severity::Error, checks_svelte::architecture::check_no_margin_in_shared),
+        ("no_fixed_in_shared", Severity::Error, checks_svelte::architecture::check_no_fixed_in_shared),
+    ];
+
+    for &(name, severity, check_fn) in css_checks {
+        let mut check_violations = check_fn(file_path, &parsed);
+        for viol in &mut check_violations {
+            viol.line += style.line_offset;
+        }
+        stamp_and_collect(name, severity, check_violations, violations);
+    }
+}
+
+fn run_svelte_template_checks(file_path: &str, source_str: &str, violations: &mut Vec<Violation>) {
+    let template = parsing::extract_svelte_template(source_str);
+    if template.content.trim().is_empty() {
+        return;
+    }
+
+    let template_bytes = template.content.as_bytes();
+    let parsed = match parsing::build_parsed_source_html(file_path, template_bytes) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let html_checks: &[(&str, Severity, fn(&str, &ParsedSource) -> Vec<Violation>)] = &[
+        ("no_raw_html_elements", Severity::Warning, checks_svelte::architecture::check_no_raw_html_elements),
+    ];
+
+    for &(name, severity, check_fn) in html_checks {
+        let mut check_violations = check_fn(file_path, &parsed);
+        for viol in &mut check_violations {
+            viol.line += template.line_offset;
+        }
+        stamp_and_collect(name, severity, check_violations, violations);
+    }
+}
+
+fn run_svelte_raw_checks(file_path: &str, source_str: &str, violations: &mut Vec<Violation>) {
+    let raw_checks: &[(&str, Severity, fn(&str, &str) -> Vec<Violation>)] = &[
+        ("no_missing_shared_imports", Severity::Error, checks_svelte::architecture::check_no_missing_shared_imports),
+    ];
+
+    for &(name, severity, check_fn) in raw_checks {
+        let check_violations = check_fn(file_path, source_str);
+        stamp_and_collect(name, severity, check_violations, violations);
+    }
 }
 
 #[cfg(test)]

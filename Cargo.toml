@@ -47,6 +47,7 @@ members = [
     "gates/gate_include_example_group_input",
     "gates/gate_include_guardrails_constraints_input",
     "gates/gate_include_guardrails_anti_patterns_input",
+    "gates/gate_galdr_style_input",
     "cli/check_raw_definition",
     "cli/check_paths_resolved",
     "cli/check_paths_verified",
@@ -104,6 +105,8 @@ regex = "1.11"
 jaq-interpret = { version = "1.5", features = ["serde_json"] }
 jaq-parse = "1.0"
 tree-sitter = "0.25"
+tree-sitter-css = "0.25"
+tree-sitter-html = "0.23"
 tree-sitter-python = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"

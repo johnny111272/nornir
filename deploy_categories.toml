@@ -143,5 +143,6 @@ gate_crates = [
     "gate_include_example_group_input",
     "gate_include_guardrails_constraints_input",
     "gate_include_guardrails_anti_patterns_input",
+    "gate_galdr_style_input",
 ]
 gate_verify = "python_import"

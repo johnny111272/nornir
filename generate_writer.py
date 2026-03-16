@@ -128,10 +128,19 @@ def build_main_rs(
     )
 
 
+def build_invocation(name: str, output_kind: str) -> str:
+    """Build the canonical invocation pattern from binary name and output kind."""
+    if output_kind == "fixed_file":
+        return f"{name} <<'EOF'\\n{{json_data}}\\nEOF"
+    return f"{name} {{name}} <<'EOF'\\n{{json_data}}\\nEOF"
+
+
 def build_registry_entry(config: argparse.Namespace) -> str:
+    invocation = build_invocation(config.name, config.output_kind)
     lines = [
         "[[tools]]",
         f'binary_name = "{config.name}"',
+        f'invocation = "{invocation}"',
         f'output_format = "{config.format}"',
         f'write_frequency = "{config.frequency}"',
         f'output_path_kind = "{config.output_kind}"',

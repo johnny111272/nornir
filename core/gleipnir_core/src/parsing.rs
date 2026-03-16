@@ -91,6 +91,72 @@ pub fn build_parsed_source_typescript<'a>(
     })
 }
 
+/// Parse CSS source bytes into a tree-sitter Tree.
+pub fn parse_css(source_bytes: &[u8]) -> Result<Tree, String> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_css::LANGUAGE;
+    parser
+        .set_language(&language.into())
+        .map_err(|e| format!("failed to set CSS language: {e}"))?;
+    parser
+        .parse(source_bytes, None)
+        .ok_or_else(|| "tree-sitter parse returned None".to_string())
+}
+
+/// Build a ParsedSource from file path and CSS source content.
+pub fn build_parsed_source_css<'a>(
+    file_path: &'a str,
+    source: &'a [u8],
+) -> Result<ParsedSource<'a>, String> {
+    let tree = parse_css(source)?;
+    let lines = std::str::from_utf8(source)
+        .unwrap_or("")
+        .lines()
+        .collect();
+    Ok(ParsedSource {
+        file_path,
+        source_bytes: source,
+        lines,
+        tree,
+    })
+}
+
+/// Parse HTML source bytes into a tree-sitter Tree.
+pub fn parse_html(source_bytes: &[u8]) -> Result<Tree, String> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_html::LANGUAGE;
+    parser
+        .set_language(&language.into())
+        .map_err(|e| format!("failed to set HTML language: {e}"))?;
+    parser
+        .parse(source_bytes, None)
+        .ok_or_else(|| "tree-sitter parse returned None".to_string())
+}
+
+/// Build a ParsedSource from file path and HTML source content.
+pub fn build_parsed_source_html<'a>(
+    file_path: &'a str,
+    source: &'a [u8],
+) -> Result<ParsedSource<'a>, String> {
+    let tree = parse_html(source)?;
+    let lines = std::str::from_utf8(source)
+        .unwrap_or("")
+        .lines()
+        .collect();
+    Ok(ParsedSource {
+        file_path,
+        source_bytes: source,
+        lines,
+        tree,
+    })
+}
+
+/// Extracted section from a Svelte file (script, style, or template).
+pub struct SvelteSection {
+    pub content: String,
+    pub line_offset: usize,
+}
+
 /// Extracted `<script>` block from a Svelte file.
 pub struct SvelteScript {
     /// The TypeScript content inside the script tags.
@@ -147,6 +213,83 @@ pub fn extract_svelte_script(source: &str) -> Option<SvelteScript> {
         }
     }
     None
+}
+
+/// Extract the `<style>` block content from a Svelte file.
+///
+/// Returns the CSS content and line offset, or None if no style block found.
+pub fn extract_svelte_style(source: &str) -> Option<SvelteSection> {
+    let mut style_start = None;
+
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+
+        if style_start.is_none() && trimmed.starts_with("<style") && trimmed.contains('>') {
+            style_start = Some(line_num + 1);
+        }
+
+        if style_start.is_some() && trimmed == "</style>" {
+            let start = style_start?;
+            let content: String = source
+                .lines()
+                .skip(start)
+                .take(line_num - start)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Some(SvelteSection {
+                content,
+                line_offset: start,
+            });
+        }
+    }
+    None
+}
+
+/// Extract the template (HTML) content from a Svelte file.
+///
+/// Returns everything outside `<script>` and `<style>` blocks.
+/// Line numbers are preserved (excluded lines become empty) so
+/// violation line numbers map back to the original .svelte file.
+pub fn extract_svelte_template(source: &str) -> SvelteSection {
+    let mut in_script = false;
+    let mut in_style = false;
+    let mut lines = Vec::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("<script") && trimmed.contains('>') {
+            in_script = true;
+            lines.push("");
+            continue;
+        }
+        if trimmed == "</script>" {
+            in_script = false;
+            lines.push("");
+            continue;
+        }
+        if trimmed.starts_with("<style") && trimmed.contains('>') {
+            in_style = true;
+            lines.push("");
+            continue;
+        }
+        if trimmed == "</style>" {
+            in_style = false;
+            lines.push("");
+            continue;
+        }
+
+        if in_script || in_style {
+            lines.push("");
+        } else {
+            lines.push(line);
+        }
+    }
+
+    SvelteSection {
+        content: lines.join("\n"),
+        line_offset: 0,
+    }
 }
 
 /// Depth-first walk of all nodes in a subtree (including the root).

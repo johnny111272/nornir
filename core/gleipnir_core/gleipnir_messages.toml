@@ -420,3 +420,43 @@ detail = "Parameter name too short to be meaningful."
 signal = "Abbreviated parameter names force callers to look up what each argument means."
 direction = "Use full descriptive names for parameters."
 canary = "LLM abbreviates parameter names for brevity rather than clarity."
+
+# =========================================================================
+# SVELTE: COMPONENT ARCHITECTURE
+# =========================================================================
+
+[no_missing_shared_imports]
+detail = "View component does not import from @yggdrasil/ui. View components must use the shared component library."
+signal = "A View component without shared UI imports is building its own HTML/CSS instead of using the design system."
+direction = "Import shared components from @yggdrasil/ui: Panel, Badge, Button, Input, etc."
+canary = "LLM builds custom HTML/CSS in View components instead of using the shared component library."
+
+[no_raw_html_elements]
+detail = "Raw HTML element has a shared component equivalent. Use the shared version."
+signal = "Raw <input>, <select>, <button>, <details> bypass the shared component system, creating inconsistent UI and duplicated styling."
+direction = "Import and use the shared component from @yggdrasil/ui instead of the raw HTML element."
+canary = "LLM writes raw HTML elements from training data instead of using project-specific shared components."
+
+[no_100vh_in_components]
+detail = "100vh in a component causes clipping bugs. Only page wrappers may set viewport height."
+signal = "Components with 100vh break when nested inside other layouts — the viewport height fills the entire screen, clipping siblings."
+direction = "Remove 100vh from this component. Only +page.svelte and +layout.svelte should set viewport height."
+canary = "LLM uses 100vh for full-height layouts in components without understanding the nesting context."
+
+[no_hardcoded_colors]
+detail = "Hardcoded hex color — use a CSS custom property (design token) instead."
+signal = "Hardcoded colors bypass the design token system, making theme changes impossible and creating visual inconsistency."
+direction = "Replace the hex color with var(--token-name). Define new tokens in the design system if needed."
+canary = "LLM writes hardcoded color values from training data instead of using the project's CSS custom properties."
+
+[no_margin_in_shared]
+detail = "Shared component uses margin-top or margin-bottom, leaking spacing into parent layouts."
+signal = "External margin on shared components couples them to specific layouts. The parent should control spacing between children."
+direction = "Remove margin-top/margin-bottom from the shared component. Use padding internally or let the parent apply spacing via gap or margin."
+canary = "LLM adds margin to components for visual spacing without understanding that shared components must not impose external layout."
+
+[no_fixed_in_shared]
+detail = "Shared component uses position: fixed, escaping container layout."
+signal = "position: fixed in a shared component breaks layout encapsulation — the component escapes its container and overlays the viewport."
+direction = "Remove position: fixed from the shared component. If overlay behavior is needed, it belongs in the consuming page, not the shared component."
+canary = "LLM uses position: fixed for overlay patterns in shared components without understanding layout encapsulation."

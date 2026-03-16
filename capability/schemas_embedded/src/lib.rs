@@ -151,6 +151,11 @@ static RAW_JSONL_JSON: &str =
 pub static RAW_JSONL_RECORD: EmbeddedValidator =
     EmbeddedValidator::new(RAW_JSONL_JSON, "raw-jsonl");
 
+static GALDR_STYLE_JSON: &str =
+    include_str!("../../../schemas/tools/galdr-style.schema.json");
+pub static GALDR_STYLE: EmbeddedValidator =
+    EmbeddedValidator::new(GALDR_STYLE_JSON, "galdr-style");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +313,11 @@ mod tests {
     fn test_raw_jsonl_record_compiles() {
         assert_eq!(RAW_JSONL_RECORD.schema_name(), "raw-jsonl");
         assert!(!RAW_JSONL_RECORD.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_galdr_style_compiles() {
+        assert_eq!(GALDR_STYLE.schema_name(), "galdr-style");
+        assert!(!GALDR_STYLE.schema_json().is_empty());
     }
 }
