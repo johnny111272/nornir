@@ -9,7 +9,11 @@
 //!   1. Unix stream socket → record_datagrams daemon (persistent archive)
 //!   2. UDP multicast 239.0.0.1:9899 → live consumers (Hlidskjalf, etc.)
 //!
-//! Both channels fire-and-forget. Either can fail silently.
+//! Transport failures are self-alerting: if all channels fail, or if a datagram
+//! exceeds the UDP safe limit, a small alert datagram is emitted describing the
+//! failure. Callers can also inspect the returned `EmitReport` for programmatic
+//! handling (e.g. reporting to stderr in CLI tools).
+//!
 //! Protocol: compact JSON + newline (one datagram per line).
 
 use std::io::Write;
@@ -26,6 +30,25 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 0, 0, 1);
 const MULTICAST_PORT: u16 = 9899;
 
+/// UDP payload safe limit. Loopback MTU is 65535, but IP+UDP headers
+/// consume 28 bytes. Leave margin for framing.
+const UDP_SAFE_LIMIT: usize = 65000;
+
+/// What happened when we tried to send a datagram.
+#[derive(Debug, Clone)]
+pub struct EmitReport {
+    pub unix_ok: bool,
+    pub udp_ok: bool,
+    pub udp_skipped_size: bool,
+    pub size_bytes: usize,
+}
+
+impl EmitReport {
+    pub fn all_failed(&self) -> bool {
+        !self.unix_ok && !self.udp_ok
+    }
+}
+
 /// Send a datagram. Fire-and-forget — never panics, never blocks.
 /// No schema validation. Use for hardcoded senders with known-good shapes.
 pub fn emit(datagram: &Datagram) {
@@ -33,9 +56,9 @@ pub fn emit(datagram: &Datagram) {
 }
 
 /// Send a datagram after validating against the compiled schema.
-/// Returns Err with validation message if the datagram is malformed.
+/// Returns the `EmitReport` on success or an Err with validation message.
 /// Use for dynamic payloads (Traffic, Quality) constructed at runtime.
-pub fn emit_validated(datagram: &Datagram) -> Result<(), String> {
+pub fn emit_validated(datagram: &Datagram) -> Result<EmitReport, String> {
     let json_str = serde_json::to_string(datagram)
         .map_err(|e| format!("serialization error: {e}"))?;
 
@@ -47,8 +70,7 @@ pub fn emit_validated(datagram: &Datagram) -> Result<(), String> {
         return Err(result.message);
     }
 
-    emit(datagram);
-    Ok(())
+    try_emit(datagram).map_err(|e| format!("transport error: {e}"))
 }
 
 /// Validate and emit, alerting on failure. For autonomous callers (watchers, syn)
@@ -60,7 +82,7 @@ pub fn emit_validated(datagram: &Datagram) -> Result<(), String> {
 ///   3. Returns false so callers can track accurate counts
 pub fn emit_validated_or_alert(datagram: &Datagram, caller: &str) -> bool {
     match emit_validated(datagram) {
-        Ok(()) => true,
+        Ok(_report) => true,
         Err(e) => {
             let alert = Datagram {
                 timestamp: now(),
@@ -82,17 +104,70 @@ pub fn emit_validated_or_alert(datagram: &Datagram, caller: &str) -> bool {
     }
 }
 
-fn try_emit(datagram: &Datagram) -> Result<(), Box<dyn std::error::Error>> {
-    let mut json = serde_json::to_vec(datagram)?;
+/// Serialize and send a datagram through available transport channels.
+/// Self-alerts on total failure or when UDP is skipped due to size.
+pub fn try_emit(datagram: &Datagram) -> Result<EmitReport, String> {
+    let mut json = serde_json::to_vec(datagram)
+        .map_err(|e| format!("serialization error: {e}"))?;
     json.push(b'\n');
 
+    let size_bytes = json.len();
+
     // Channel 1: Unix stream to logging daemon (permanent archive)
-    let _ = try_unix_stream(&json);
+    let unix_ok = try_unix_stream(&json).is_ok();
 
     // Channel 2: UDP multicast on loopback (live consumers)
-    let _ = try_udp_multicast(&json);
+    let udp_skipped_size = size_bytes > UDP_SAFE_LIMIT;
+    let udp_ok = if udp_skipped_size {
+        false
+    } else {
+        try_udp_multicast(&json).is_ok()
+    };
 
-    Ok(())
+    let report = EmitReport { unix_ok, udp_ok, udp_skipped_size, size_bytes };
+
+    // Self-alert: if ALL channels failed, emit a small alert
+    if report.all_failed() {
+        emit_transport_alert(
+            &format!(
+                "All transport channels failed ({size_bytes} bytes). Unix: failed. UDP: {}.",
+                if udp_skipped_size { "skipped (oversized)" } else { "failed" }
+            ),
+            datagram,
+        );
+    } else if udp_skipped_size {
+        // UDP skipped but Unix succeeded — alert that live consumers missed it
+        emit_transport_alert(
+            &format!(
+                "Datagram too large for UDP ({size_bytes} bytes, limit {UDP_SAFE_LIMIT}). Sent via Unix socket only — live consumers (Hlidskjalf) did not receive it.",
+            ),
+            datagram,
+        );
+    }
+
+    Ok(report)
+}
+
+/// Emit a small alert describing a transport failure.
+/// Non-recursive: bypasses try_emit, sends directly through both channels.
+fn emit_transport_alert(detail: &str, original: &Datagram) {
+    let alert = Datagram {
+        timestamp: now(),
+        source: original.source.clone(),
+        kind: DatagramKind::Alert,
+        classifier: None,
+        priority: Priority::High,
+        workspace: original.workspace.clone(),
+        detail: Some(format!("Transport: {detail}")),
+        speech: Some("WARNING: datagram transport failure. Check Hlidskjalf.".into()),
+        payload: None,
+    };
+    // Direct channel sends — no recursion through try_emit
+    if let Ok(mut json) = serde_json::to_vec(&alert) {
+        json.push(b'\n');
+        let _ = try_unix_stream(&json);
+        let _ = try_udp_multicast(&json);
+    }
 }
 
 fn try_unix_stream(json: &[u8]) -> Result<(), Box<dyn std::error::Error>> {

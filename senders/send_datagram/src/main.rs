@@ -123,7 +123,8 @@ fn run(args: Args) -> Result<(), String> {
         payload,
     };
 
-    emit_validated(&datagram)
+    emit_validated(&datagram)?;
+    Ok(())
 }
 
 // =============================================================================
