@@ -275,15 +275,6 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let transcript_path = transcript_path_for(path);
     let mut transcript = open_transcript(&transcript_path)?;
 
-    let mut state = WatchState {
-        filename: datagram_io::compact_path(&path.to_string_lossy()),
-        previous: None,
-        datagrams_emitted: 0,
-        exchanges_processed: 0,
-        line_number: 0,
-        partial_line: String::new(),
-    };
-
     while !path.exists() {
         eprintln!("Waiting for {} ...", path.display());
         std::thread::sleep(Duration::from_secs(2));
@@ -292,21 +283,44 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
 
+    // Read existing lines, keeping the last valid exchange as `previous`
+    // so resumed sessions produce a normal diff instead of dumping
+    // the entire conversation history as a "startup" datagram.
+    let mut line_number = 0u64;
+    let mut last_exchange: Option<Exchange> = None;
     {
         let reader = BufReader::new(&mut file);
-        for _ in reader.lines() {
-            state.line_number += 1;
+        for line in reader.lines() {
+            line_number += 1;
+            if let Ok(ref text) = line {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        last_exchange = Some(split_exchange(&value));
+                    }
+                }
+            }
         }
     }
 
     file.seek(SeekFrom::End(0))
         .map_err(|e| format!("Failed to seek {}: {e}", path.display()))?;
 
+    let mut state = WatchState {
+        filename: datagram_io::compact_path(&path.to_string_lossy()),
+        previous: last_exchange,
+        datagrams_emitted: 0,
+        exchanges_processed: 0,
+        line_number,
+        partial_line: String::new(),
+    };
+
     let mut reader = BufReader::new(file);
 
     eprintln!(
-        "Watching {} (workspace: {workspace}, starting at line {})",
-        path.display(), state.line_number
+        "Watching {} (workspace: {workspace}, starting at line {}, previous: {})",
+        path.display(), state.line_number,
+        if state.previous.is_some() { "loaded" } else { "none" }
     );
 
     loop {

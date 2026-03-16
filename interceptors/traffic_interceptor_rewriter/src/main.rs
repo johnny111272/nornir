@@ -21,12 +21,6 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 // =============================================================================
-// Constants
-// =============================================================================
-
-const MAIN_AGENT_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-
-// =============================================================================
 // Types
 // =============================================================================
 
@@ -34,6 +28,7 @@ const MAIN_AGENT_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI
 enum ExchangeKind {
     Main,
     Compaction,
+    Subagent,
 }
 
 /// Classify, capture, and optionally rewrite Claude API traffic.
@@ -57,15 +52,15 @@ struct Args {
 // Classification — pure
 // =============================================================================
 
-/// Check if system[1].text contains the main agent identity string.
-fn is_main_agent(value: &serde_json::Value) -> bool {
+/// Check if the tools array contains a tool with the given name.
+fn has_tool(value: &serde_json::Value, name: &str) -> bool {
     value
-        .get("system")
-        .and_then(|s| s.as_array())
-        .and_then(|arr| arr.get(1))
-        .and_then(|block| block.get("text"))
-        .and_then(|t| t.as_str())
-        .map(|text| text.contains(MAIN_AGENT_IDENTITY))
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|tool| tool.get("name").and_then(|n| n.as_str()) == Some(name))
+        })
         .unwrap_or(false)
 }
 
@@ -78,41 +73,24 @@ fn tool_count(value: &serde_json::Value) -> usize {
         .unwrap_or(0)
 }
 
-/// Check if the request has exactly one tool named "web_search".
-fn is_web_search_only(value: &serde_json::Value) -> bool {
-    let tools = match value.get("tools").and_then(|t| t.as_array()) {
-        Some(arr) if arr.len() == 1 => arr,
-        _ => return false,
-    };
-    tools[0]
-        .get("name")
-        .and_then(|n| n.as_str())
-        .map(|name| name == "web_search")
-        .unwrap_or(false)
-}
-
-/// Classify an exchange into Main, Compaction, or None (ignored).
+/// Classify an exchange by tool composition.
 ///
-/// Four checks in order:
-/// 1. Not main agent → None (subagents, unknown identity)
-/// 2. No tools → None (haiku internal utility calls)
-/// 3. Only web_search → None (opus web_search-only calls)
-/// 4. Exactly one tool → Compaction, otherwise → Main
+/// 1. No tools → None (skip)
+/// 2. Exactly one tool = Read → Compaction (verified at rewrite step)
+/// 3. Multiple tools including Task → Main (architectural: only main agent has Task)
+/// 4. Everything else → Subagent (captured for analysis)
 fn classify_exchange(value: &serde_json::Value) -> Option<ExchangeKind> {
-    if !is_main_agent(value) {
-        return None;
-    }
     let tools = tool_count(value);
     if tools == 0 {
         return None;
     }
-    if tools == 1 && is_web_search_only(value) {
-        return None;
-    }
-    if tools == 1 {
+    if tools == 1 && has_tool(value, "Read") {
         return Some(ExchangeKind::Compaction);
     }
-    Some(ExchangeKind::Main)
+    if tools > 1 && has_tool(value, "Task") {
+        return Some(ExchangeKind::Main);
+    }
+    Some(ExchangeKind::Subagent)
 }
 
 // =============================================================================
@@ -150,6 +128,21 @@ fn append_exchange(
     let path = dir.join(format!("mainexch_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize exchange: {e}"))?;
+    write_engine::append_line_fsync(&path, &compact)
+}
+
+/// Append compact JSON + newline to {workspace}/subagent_{session_id}.jsonl with fsync.
+fn append_subagent(
+    traffic_dir: &Path,
+    workspace: &str,
+    session_id: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let dir = traffic_dir.join(workspace);
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let path = dir.join(format!("subagent_{session_id}.jsonl"));
+    let compact =
+        serde_json::to_string(value).map_err(|e| format!("serialize subagent: {e}"))?;
     write_engine::append_line_fsync(&path, &compact)
 }
 
@@ -245,6 +238,9 @@ fn run(config: &Args) -> Result<(), String> {
         ExchangeKind::Compaction => {
             handle_compaction(config, &mut value)?;
         }
+        ExchangeKind::Subagent => {
+            append_subagent(&config.traffic_dir, &config.workspace, &config.session_id, &value)?;
+        }
     }
 
     Ok(())
@@ -276,57 +272,36 @@ mod tests {
     use serde_json::json;
 
     // =========================================================================
-    // Classification — is_main_agent
+    // Classification — has_tool
     // =========================================================================
 
     #[test]
-    fn main_agent_detected_at_system_index_1() {
-        let value = json!({
-            "system": [
-                {"type": "text", "text": "cache control block"},
-                {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.\nMore instructions here."}
-            ],
-            "tools": [{"name": "Bash"}, {"name": "Read"}]
-        });
-        assert!(is_main_agent(&value));
+    fn has_tool_found() {
+        let value = json!({"tools": [{"name": "Bash"}, {"name": "Read"}, {"name": "Task"}]});
+        assert!(has_tool(&value, "Task"));
+        assert!(has_tool(&value, "Read"));
     }
 
     #[test]
-    fn subagent_not_detected_as_main() {
-        let value = json!({
-            "system": [
-                {"type": "text", "text": "cache control block"},
-                {"type": "text", "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK."}
-            ],
-            "tools": [{"name": "Bash"}, {"name": "Read"}]
-        });
-        assert!(!is_main_agent(&value));
+    fn has_tool_not_found() {
+        let value = json!({"tools": [{"name": "Bash"}, {"name": "Read"}]});
+        assert!(!has_tool(&value, "Task"));
     }
 
     #[test]
-    fn missing_system_not_main() {
-        let value = json!({"tools": [{"name": "Bash"}]});
-        assert!(!is_main_agent(&value));
+    fn has_tool_no_tools_key() {
+        let value = json!({"system": []});
+        assert!(!has_tool(&value, "Read"));
     }
 
     #[test]
-    fn empty_system_array_not_main() {
-        let value = json!({"system": [], "tools": []});
-        assert!(!is_main_agent(&value));
-    }
-
-    #[test]
-    fn single_system_block_not_main() {
-        // Only system[0], no system[1]
-        let value = json!({
-            "system": [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
-            "tools": [{"name": "Bash"}]
-        });
-        assert!(!is_main_agent(&value));
+    fn has_tool_empty_array() {
+        let value = json!({"tools": []});
+        assert!(!has_tool(&value, "Read"));
     }
 
     // =========================================================================
-    // Classification — tool helpers
+    // Classification — tool_count
     // =========================================================================
 
     #[test]
@@ -347,106 +322,69 @@ mod tests {
         assert_eq!(tool_count(&value), 0);
     }
 
-    #[test]
-    fn web_search_only_true() {
-        let value = json!({"tools": [{"name": "web_search"}]});
-        assert!(is_web_search_only(&value));
-    }
-
-    #[test]
-    fn web_search_only_false_with_other_tool() {
-        let value = json!({"tools": [{"name": "Read"}]});
-        assert!(!is_web_search_only(&value));
-    }
-
-    #[test]
-    fn web_search_only_false_with_multiple_tools() {
-        let value = json!({"tools": [{"name": "web_search"}, {"name": "Read"}]});
-        assert!(!is_web_search_only(&value));
-    }
-
     // =========================================================================
     // Classification — classify_exchange
     // =========================================================================
 
-    fn main_agent_system() -> serde_json::Value {
-        json!([
-            {"type": "text", "text": "cache block"},
-            {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.\nFull system prompt here."}
-        ])
-    }
-
-    fn subagent_system() -> serde_json::Value {
-        json!([
-            {"type": "text", "text": "cache block"},
-            {"type": "text", "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK."}
-        ])
-    }
-
     #[test]
-    fn classify_main_conversation() {
+    fn classify_main_has_task_and_multiple_tools() {
         let value = json!({
-            "system": main_agent_system(),
-            "tools": [{"name": "Bash"}, {"name": "Read"}, {"name": "Write"}, {"name": "Edit"}]
+            "tools": [{"name": "Bash"}, {"name": "Read"}, {"name": "Write"}, {"name": "Task"}]
         });
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Main));
     }
 
     #[test]
-    fn classify_compaction() {
+    fn classify_compaction_single_read() {
         let value = json!({
-            "system": main_agent_system(),
             "tools": [{"name": "Read"}]
         });
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Compaction));
     }
 
     #[test]
-    fn classify_subagent_ignored() {
-        let value = json!({
-            "system": subagent_system(),
-            "tools": [{"name": "Bash"}, {"name": "Read"}]
-        });
+    fn classify_no_tools_skipped() {
+        let value = json!({"tools": []});
         assert_eq!(classify_exchange(&value), None);
     }
 
     #[test]
-    fn classify_no_tools_ignored() {
+    fn classify_subagent_many_tools_no_task() {
         let value = json!({
-            "system": main_agent_system(),
-            "tools": []
+            "tools": [{"name": "Bash"}, {"name": "Read"}, {"name": "Write"}, {"name": "Grep"}]
         });
-        assert_eq!(classify_exchange(&value), None);
+        assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
     #[test]
-    fn classify_web_search_only_ignored() {
+    fn classify_web_search_only_becomes_subagent() {
         let value = json!({
-            "system": main_agent_system(),
             "tools": [{"name": "web_search"}]
         });
-        assert_eq!(classify_exchange(&value), None);
+        assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
     #[test]
-    fn classify_missing_system_ignored() {
+    fn classify_single_non_read_tool_subagent() {
         let value = json!({
-            "tools": [{"name": "Bash"}, {"name": "Read"}]
+            "tools": [{"name": "Bash"}]
         });
-        assert_eq!(classify_exchange(&value), None);
+        assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
     #[test]
-    fn classify_identity_string_exact() {
-        // Verify we use the exact identity string, not a substring
-        let wrong_identity = json!({
-            "system": [
-                {"type": "text", "text": "cache"},
-                {"type": "text", "text": "You are Claude Code."}
-            ],
-            "tools": [{"name": "Bash"}, {"name": "Read"}]
+    fn classify_task_only_becomes_subagent() {
+        // Single Task tool: tools > 1 check fails, so not Main
+        let value = json!({
+            "tools": [{"name": "Task"}]
         });
-        assert_eq!(classify_exchange(&wrong_identity), None);
+        assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
+    }
+
+    #[test]
+    fn classify_no_tools_key_skipped() {
+        let value = json!({"system": []});
+        assert_eq!(classify_exchange(&value), None);
     }
 
     // =========================================================================
@@ -543,6 +481,25 @@ mod tests {
 
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content.lines().count(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_subagent_creates_file() {
+        let dir = std::env::temp_dir().join("tir_test_subagent");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let value = json!({"model": "claude-haiku-4-5-20251001", "tools": [{"name": "Read"}], "messages": []});
+        append_subagent(&dir, "bragi", "sess1", &value).unwrap();
+        append_subagent(&dir, "bragi", "sess1", &value).unwrap();
+
+        let path = dir.join("bragi/subagent_sess1.jsonl");
+        assert!(path.exists());
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content.lines().count(), 2);
 
         let _ = fs::remove_dir_all(&dir);
     }
