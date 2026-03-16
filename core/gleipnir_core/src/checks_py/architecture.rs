@@ -147,29 +147,35 @@ fn extract_decorator_name_arch(decorator: tree_sitter::Node, source: &[u8]) -> S
     }
 }
 
+fn unwrap_decorated<'a>(
+    node: tree_sitter::Node<'a>,
+) -> Option<(tree_sitter::Node<'a>, Vec<tree_sitter::Node<'a>>)> {
+    match node.kind() {
+        "function_definition" => Some((node, vec![])),
+        "decorated_definition" => {
+            let mut cursor = node.walk();
+            let mut func = None;
+            let mut decorators = Vec::new();
+            for child in node.named_children(&mut cursor) {
+                match child.kind() {
+                    "function_definition" => func = Some(child),
+                    "decorator" => decorators.push(child),
+                    _ => {}
+                }
+            }
+            func.map(|f| (f, decorators))
+        }
+        _ => None,
+    }
+}
+
 fn classify_class_methods(body: tree_sitter::Node, source: &[u8]) -> Vec<String> {
     let mut behavior = Vec::new();
     let mut cursor = body.walk();
 
     for child in body.named_children(&mut cursor) {
-        let mut func_node = None;
-        let mut decorators: Vec<tree_sitter::Node> = Vec::new();
-
-        if child.kind() == "function_definition" {
-            func_node = Some(child);
-        } else if child.kind() == "decorated_definition" {
-            let mut inner_cursor = child.walk();
-            for inner in child.named_children(&mut inner_cursor) {
-                if inner.kind() == "function_definition" {
-                    func_node = Some(inner);
-                } else if inner.kind() == "decorator" {
-                    decorators.push(inner);
-                }
-            }
-        }
-
-        let func_node = match func_node {
-            Some(f) => f,
+        let (func_node, decorators) = match unwrap_decorated(child) {
+            Some(pair) => pair,
             None => continue,
         };
 
@@ -313,6 +319,19 @@ const CONSTANT_NODE_TYPES: &[&str] = &[
     "string", "integer", "float", "true", "false", "none", "concatenated_string",
 ];
 
+/// Collection constructor names that are equivalent to literal syntax.
+/// `frozenset([...])` is the same intent as `{...}` — hardcoded config.
+const COLLECTION_CONSTRUCTORS: &[&str] = &["frozenset", "set", "dict", "list", "tuple"];
+
+/// Check if a `call` node is a collection constructor (frozenset, set, dict, list, tuple).
+fn is_collection_constructor(call_node: tree_sitter::Node, source: &[u8]) -> bool {
+    let func = match node_field(call_node, "function") {
+        Some(n) if n.kind() == "identifier" => n,
+        _ => return false,
+    };
+    COLLECTION_CONSTRUCTORS.contains(&node_text(func, source))
+}
+
 pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     let mut violations = Vec::new();
     let root = source.tree.root_node();
@@ -357,6 +376,11 @@ pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> V
                 node_line(assign),
                 format!("hard-coded config {name} found (dict/list at module level)"),
             ));
+        } else if right.kind() == "call" && is_collection_constructor(right, source.source_bytes) {
+            violations.push(violation(
+                node_line(assign),
+                format!("hard-coded config {name} found (collection constructor at module level)"),
+            ));
         } else if name.len() > 1
             && name.chars().all(|c| c.is_ascii_uppercase() || c == '_')
             && CONSTANT_NODE_TYPES.contains(&right.kind())
@@ -368,6 +392,71 @@ pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> V
         }
     }
     violations
+}
+
+// -------------------------------------------------------------------------
+// import_count
+// -------------------------------------------------------------------------
+
+/// Detect excessive import fan-in by category.
+///
+/// Counts import statements separately for functions/, structures/, and other.
+/// High function-import count is the strongest signal of fragmented OOP —
+/// a coordinator importing single-function siblings.
+pub fn check_import_count(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let root = source.tree.root_node();
+    let mut cursor = root.walk();
+    let mut fn_imports = 0;
+    let mut other_imports = 0;
+
+    for stmt in root.named_children(&mut cursor) {
+        let module_path = match import_module_path(stmt, source.source_bytes) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if module_path.contains("functions.") || module_path.contains("functions/") {
+            fn_imports += 1;
+        } else if module_path.contains("structures.") || module_path.contains("structures/") {
+            // No limit on structure imports — functions need their data types
+        } else {
+            other_imports += 1;
+        }
+    }
+
+    let mut violations = Vec::new();
+
+    if fn_imports > MAX_FUNCTION_IMPORTS {
+        violations.push(violation(
+            1,
+            format!("{fn_imports} imports from functions/ — this module is coordinating, not computing"),
+        ));
+    }
+    if other_imports > MAX_OTHER_IMPORTS {
+        violations.push(violation(
+            1,
+            format!("{other_imports} external/stdlib imports — module has too many external dependencies"),
+        ));
+    }
+
+    violations
+}
+
+const MAX_FUNCTION_IMPORTS: usize = 3;
+const MAX_OTHER_IMPORTS: usize = 3;
+
+/// Extract the module path from an import statement.
+fn import_module_path<'a>(node: tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() == "import_from_statement" {
+        return node_field(node, "module_name").map(|n| node_text(n, source));
+    }
+    if node.kind() == "import_statement" {
+        let mut cursor = node.walk();
+        return node.named_children(&mut cursor)
+            .find(|c| c.kind() == "dotted_name")
+            .map(|n| node_text(n, source));
+    }
+    None
 }
 
 // -------------------------------------------------------------------------
@@ -681,6 +770,22 @@ mod tests {
     }
 
     #[test]
+    fn frozenset_constructor_caught() {
+        let parsed = parse("KNOWN_SECTIONS = frozenset(['a', 'b', 'c'])\n");
+        let violations = check_hardcoded_config(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("KNOWN_SECTIONS"));
+    }
+
+    #[test]
+    fn set_constructor_caught() {
+        let parsed = parse("VALID_TYPES = set(['input', 'output'])\n");
+        let violations = check_hardcoded_config(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("VALID_TYPES"));
+    }
+
+    #[test]
     fn all_caps_constant_caught() {
         let parsed = parse("MAX_RETRIES = 3\n");
         let violations = check_hardcoded_config(&parsed, &default_config());
@@ -700,6 +805,63 @@ mod tests {
         let parsed = parse("result = compute()\n");
         let violations = check_hardcoded_config(&parsed, &default_config());
         assert!(violations.is_empty());
+    }
+
+    // -- import_count --
+
+    #[test]
+    fn few_function_imports_ok() {
+        let parsed = parse(
+            "from pkg.functions.pure.utils import helper\nfrom pkg.structures.types import MyType\ndef work(): pass\n",
+        );
+        let violations = check_import_count(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn many_function_imports_caught() {
+        let code = (0..5)
+            .map(|i| format!("from pkg.functions.pure.reshape_{i} import reshape_{i}\n"))
+            .collect::<String>()
+            + "def coordinate(): pass\n";
+        let parsed = parse(&code);
+        let violations = check_import_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("functions/"));
+    }
+
+    #[test]
+    fn function_imports_at_threshold_ok() {
+        let code = (0..3)
+            .map(|i| format!("from pkg.functions.pure.mod_{i} import fn_{i}\n"))
+            .collect::<String>()
+            + "def work(): pass\n";
+        let parsed = parse(&code);
+        let violations = check_import_count(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn structure_imports_no_limit() {
+        let code = (0..10)
+            .map(|i| format!("from pkg.structures.types_{i} import Model_{i}\n"))
+            .collect::<String>()
+            + "def work(): pass\n";
+        let parsed = parse(&code);
+        let violations = check_import_count(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn many_stdlib_imports_caught() {
+        let code = (0..5)
+            .map(|i| format!("from stdlib_{i} import thing_{i}\n"))
+            .collect::<String>()
+            + "def work(): pass\n";
+        let parsed = parse(&code);
+        let violations = check_import_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("external/stdlib"));
     }
 
     // -- structures_no_functions --

@@ -223,6 +223,26 @@ fn name_used_in_subtree(root: tree_sitter::Node, name: &str, source: &[u8]) -> b
     false
 }
 
+fn find_underscore_params<'a>(
+    func_node: tree_sitter::Node<'a>,
+    body: Option<tree_sitter::Node<'a>>,
+    func_name: &str,
+    source: &[u8],
+) -> Vec<Violation> {
+    let body_node = match body {
+        Some(b) => b,
+        None => return vec![],
+    };
+    rust_param_names(func_node, source)
+        .into_iter()
+        .filter(|(_, pname)| has_underscore_prefix(pname))
+        .filter(|(_, pname)| name_used_in_subtree(body_node, pname, source))
+        .map(|(line, pname)| {
+            violation(line, format!("parameter '{pname}' uses underscore prefix in {func_name}()"))
+        })
+        .collect()
+}
+
 pub fn check_no_underscore_prefix(
     source: &ParsedSource,
     _config: &CheckConfig,
@@ -244,21 +264,8 @@ pub fn check_no_underscore_prefix(
             ));
         }
 
-        // Parameters: only flag if the name is actually used in the body
-        // (underscore is a lie — silencing the compiler instead of removing the param)
         let body = func_node.child_by_field_name("body");
-        for (line, pname) in rust_param_names(func_node, source.source_bytes) {
-            if has_underscore_prefix(pname) {
-                if let Some(body_node) = body {
-                    if name_used_in_subtree(body_node, pname, source.source_bytes) {
-                        violations.push(violation(
-                            line,
-                            format!("parameter '{pname}' uses underscore prefix in {name}()"),
-                        ));
-                    }
-                }
-            }
-        }
+        violations.extend(find_underscore_params(func_node, body, name, source.source_bytes));
     }
 
     // Let bindings: only flag if used after the binding (count > 1 in enclosing block)

@@ -221,6 +221,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
+    warning("import_count", architecture::check_import_count),
     // STYLE
     warning("function_length", style::check_function_length),
     warning("param_count", style::check_param_count),
@@ -264,6 +265,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
+    warning("import_count", architecture::check_import_count),
     // STYLE
     warning("function_length", style::check_function_length),
     warning("param_count", style::check_param_count),

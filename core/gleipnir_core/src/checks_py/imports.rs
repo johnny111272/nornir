@@ -155,96 +155,87 @@ const IMPURE_MODULES: &[&str] = &[
 const PATHLIB_PURE: &[&str] = &["PurePath", "PurePosixPath", "PureWindowsPath"];
 const PATHLIB_IMPURE: &[&str] = &["Path", "PosixPath", "WindowsPath"];
 
+fn check_pathlib_names(node: tree_sitter::Node, source: &[u8]) -> Vec<Violation> {
+    let names = extract_imported_names(node, source);
+    let line = node_line(node);
+    names
+        .iter()
+        .filter_map(|name| {
+            if PATHLIB_IMPURE.contains(&name.as_str()) {
+                Some(violation(line, "impure name from mixed module in pure zone".to_string()))
+            } else if !PATHLIB_PURE.contains(&name.as_str()) {
+                Some(violation(line, "unknown name from mixed module in pure zone".to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn classify_bare_import(node: tree_sitter::Node, source: &[u8]) -> Vec<Violation> {
+    let mut cursor = node.walk();
+    let line = node_line(node);
+    node.named_children(&mut cursor)
+        .filter(|child| child.kind() == "dotted_name")
+        .filter_map(|child| {
+            let module = node_text(child, source);
+            let parts: Vec<&str> = module.split('.').collect();
+            let top = parts.first().copied().unwrap_or("");
+            if parts.contains(&"impure") {
+                Some(violation(line, "cross-zone import in pure module".to_string()))
+            } else if IMPURE_MODULES.contains(&top) {
+                Some(violation(line, "impure stdlib module in pure zone".to_string()))
+            } else if top == "pathlib" {
+                Some(violation(line, "whole mixed module imported in pure zone".to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn classify_from_import(node: tree_sitter::Node, source: &[u8]) -> Option<Violation> {
+    let (module, level) = extract_module_info(node, source);
+    let parts: Vec<&str> = if module.is_empty() {
+        vec![]
+    } else {
+        module.split('.').collect()
+    };
+    let top = parts.first().copied().unwrap_or("");
+    let line = node_line(node);
+
+    if level == 0 && parts.contains(&"impure") {
+        return Some(violation(line, "cross-zone import in pure module".to_string()));
+    }
+    if level > 0 && !parts.is_empty() && parts[0] == "impure" {
+        return Some(violation(line, "relative cross-zone import in pure module".to_string()));
+    }
+    if IMPURE_MODULES.contains(&top) {
+        return Some(violation(line, "impure stdlib module in pure zone".to_string()));
+    }
+    None
+}
+
 pub fn check_impure_module_quarantine(
     source: &ParsedSource,
     _config: &CheckConfig,
 ) -> Vec<Violation> {
-    // Matrix handles dispatch — only called for pure zone files
     let mut violations = Vec::new();
 
     for node in find_nodes_by_type(source.tree.root_node(), "import_from_statement") {
-        let (module, level) = extract_module_info(node, source.source_bytes);
-        let parts: Vec<&str> = if module.is_empty() {
-            vec![]
-        } else {
-            module.split('.').collect()
-        };
-        let top = parts.first().copied().unwrap_or("");
-
-        // Cross-zone: absolute import with "impure" in path
-        if level == 0 && parts.contains(&"impure") {
-            violations.push(violation(
-                node_line(node),
-                "cross-zone import in pure module".to_string(),
-            ));
+        if let Some(v) = classify_from_import(node, source.source_bytes) {
+            violations.push(v);
             continue;
         }
-
-        // Cross-zone: relative import starting with "impure"
-        if level > 0 && !parts.is_empty() && parts[0] == "impure" {
-            violations.push(violation(
-                node_line(node),
-                "relative cross-zone import in pure module".to_string(),
-            ));
-            continue;
-        }
-
-        // Impure stdlib module
-        if IMPURE_MODULES.contains(&top) {
-            violations.push(violation(
-                node_line(node),
-                "impure stdlib module in pure zone".to_string(),
-            ));
-            continue;
-        }
-
-        // Mixed module: pathlib
+        let (module, _) = extract_module_info(node, source.source_bytes);
+        let top = module.split('.').next().unwrap_or("");
         if top == "pathlib" {
-            let names = extract_imported_names(node, source.source_bytes);
-            for name in &names {
-                if PATHLIB_IMPURE.contains(&name.as_str()) {
-                    violations.push(violation(
-                        node_line(node),
-                        "impure name from mixed module in pure zone".to_string(),
-                    ));
-                } else if !PATHLIB_PURE.contains(&name.as_str()) {
-                    violations.push(violation(
-                        node_line(node),
-                        "unknown name from mixed module in pure zone".to_string(),
-                    ));
-                }
-            }
+            violations.extend(check_pathlib_names(node, source.source_bytes));
         }
     }
 
-    // Bare imports
     for node in find_nodes_by_type(source.tree.root_node(), "import_statement") {
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            if child.kind() != "dotted_name" {
-                continue;
-            }
-            let module = node_text(child, source.source_bytes);
-            let parts: Vec<&str> = module.split('.').collect();
-            let top = parts.first().copied().unwrap_or("");
-
-            if parts.contains(&"impure") {
-                violations.push(violation(
-                    node_line(node),
-                    "cross-zone import in pure module".to_string(),
-                ));
-            } else if IMPURE_MODULES.contains(&top) {
-                violations.push(violation(
-                    node_line(node),
-                    "impure stdlib module in pure zone".to_string(),
-                ));
-            } else if top == "pathlib" {
-                violations.push(violation(
-                    node_line(node),
-                    "whole mixed module imported in pure zone".to_string(),
-                ));
-            }
-        }
+        violations.extend(classify_bare_import(node, source.source_bytes));
     }
 
     violations

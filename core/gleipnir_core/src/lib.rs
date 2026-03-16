@@ -26,12 +26,36 @@ static MESSAGES: LazyLock<HashMap<String, CheckMessages>> = LazyLock::new(|| {
     toml::from_str(MESSAGES_TOML).expect("gleipnir_messages.toml parse error")
 });
 
+static DEFAULT_MESSAGES: CheckMessages = CheckMessages {
+    detail: String::new(),
+    signal: String::new(),
+    direction: String::new(),
+    canary: String::new(),
+};
+
 /// Get the static message fields for a check by name.
-pub fn messages(check_name: &str) -> CheckMessages {
-    MESSAGES
-        .get(check_name)
-        .cloned()
-        .unwrap_or_default()
+fn messages(check_name: &str) -> &'static CheckMessages {
+    MESSAGES.get(check_name).unwrap_or(&DEFAULT_MESSAGES)
+}
+
+/// Stamp a single violation with check metadata.
+fn stamp(viol: &mut Violation, name: &str, severity: Severity, msgs: &CheckMessages) {
+    if viol.check_name.is_empty() {
+        viol.check_name = name.to_string();
+    }
+    viol.severity = severity;
+    if viol.detail.is_empty() {
+        viol.detail.clone_from(&msgs.detail);
+    }
+    if viol.signal.is_empty() {
+        viol.signal.clone_from(&msgs.signal);
+    }
+    if viol.direction.is_empty() {
+        viol.direction.clone_from(&msgs.direction);
+    }
+    if viol.canary.is_empty() {
+        viol.canary.clone_from(&msgs.canary);
+    }
 }
 
 /// Stamp violations with check metadata and collect into output vec.
@@ -46,22 +70,7 @@ fn stamp_and_collect(
 ) {
     let msgs = messages(name);
     for viol in &mut check_violations {
-        if viol.check_name.is_empty() {
-            viol.check_name = name.to_string();
-        }
-        viol.severity = severity;
-        if viol.detail.is_empty() {
-            viol.detail = msgs.detail.clone();
-        }
-        if viol.signal.is_empty() {
-            viol.signal = msgs.signal.clone();
-        }
-        if viol.direction.is_empty() {
-            viol.direction = msgs.direction.clone();
-        }
-        if viol.canary.is_empty() {
-            viol.canary = msgs.canary.clone();
-        }
+        stamp(viol, name, severity, msgs);
     }
     output.extend(check_violations);
 }
