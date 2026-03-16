@@ -359,6 +359,25 @@ pub fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
     })
 }
 
+/// Truncate a file and write new content, preserving the original inode.
+///
+/// Unlike `write_file_atomic` (which renames a temp file and changes the inode),
+/// this opens the existing file with truncation. Consumers holding open file
+/// descriptors (e.g., watchers using BufReader) retain a valid fd and can detect
+/// the size change to re-seek.
+pub fn write_truncate_fsync(path: &Path, content: &str) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    file.sync_all()
+        .map_err(|e| format!("fsync {}: {e}", path.display()))?;
+    Ok(())
+}
+
 /// Append one line to a file with fsync. Creates the file if it doesn't exist.
 ///
 /// A trailing newline is added automatically.
@@ -739,6 +758,52 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], r#"{"a":1}"#);
         assert_eq!(lines[1], r#"{"b":2}"#);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // write_truncate_fsync
+    // =========================================================================
+
+    #[test]
+    fn write_truncate_fsync_replaces_content() {
+        let dir = std::env::temp_dir().join(format!("we_test_trunc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.jsonl");
+
+        // Write initial content
+        append_line_fsync(&path, "line1").unwrap();
+        append_line_fsync(&path, "line2").unwrap();
+        append_line_fsync(&path, "line3").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+
+        // Truncate to single line
+        write_truncate_fsync(&path, "only_this\n").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "only_this\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_truncate_fsync_preserves_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = std::env::temp_dir().join(format!("we_test_inode_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.jsonl");
+
+        append_line_fsync(&path, "original").unwrap();
+        let ino_before = std::fs::metadata(&path).unwrap().ino();
+
+        write_truncate_fsync(&path, "replaced\n").unwrap();
+        let ino_after = std::fs::metadata(&path).unwrap().ino();
+
+        assert_eq!(ino_before, ino_after);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

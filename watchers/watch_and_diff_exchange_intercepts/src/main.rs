@@ -269,6 +269,26 @@ fn process_exchange(
     }
 }
 
+/// Detect if the watched file was truncated (e.g., by compaction).
+/// If the file size is smaller than the reader's stream position, seek to 0 and reset state.
+fn detect_truncation(path: &Path, reader: &mut BufReader<File>, state: &mut WatchState) {
+    let current_pos = match reader.seek(SeekFrom::Current(0)) {
+        Ok(pos) => pos,
+        Err(_) => return,
+    };
+    let file_len = match path.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => return,
+    };
+    if file_len < current_pos {
+        eprintln!("Detected truncation ({file_len} < {current_pos}), resetting");
+        let _ = reader.seek(SeekFrom::Start(0));
+        state.line_number = 0;
+        state.previous = None;
+        state.partial_line.clear();
+    }
+}
+
 /// Tail a JSONL file, diffing new exchanges as they appear.
 /// Seeks to end of file (or start if file doesn't exist yet), polls for new lines.
 fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
@@ -326,7 +346,10 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
     loop {
         let mut line = String::new();
         match reader.read_line(&mut line) {
-            Ok(0) => std::thread::sleep(WATCH_POLL_INTERVAL),
+            Ok(0) => {
+                detect_truncation(path, &mut reader, &mut state);
+                std::thread::sleep(WATCH_POLL_INTERVAL);
+            }
             Ok(_) => {
                 if let Some(value) = accumulate_line(&mut state.partial_line, &line) {
                     process_exchange(&mut state, &value, workspace, &mut transcript);

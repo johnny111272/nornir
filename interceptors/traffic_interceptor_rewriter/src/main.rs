@@ -1,12 +1,16 @@
 //! Unified traffic interceptor for the bifrost pipeline.
 //!
 //! Receives a Claude API request on stdin, classifies it, captures raw bytes,
-//! routes to the appropriate JSONL file, and — for compactions — injects
-//! summary instructions and writes the rewritten request to stdout.
+//! routes to the appropriate JSONL file, and — for compactions — captures the
+//! pre-compaction snapshot, injects summary instructions, and writes the
+//! rewritten request to stdout.
+//!
+//! All output goes to `{intercept_dir}/sessions/`. The interceptor never
+//! touches `{intercept_dir}/traffic/` (workspace symlinks are bifrost's job).
 //!
 //! Usage:
 //!     echo $JSON | traffic_interceptor_rewriter \
-//!         --session-id <id> --workspace <name> --traffic-dir <path>
+//!         --session-id <id> --workspace <name> --intercept-dir <path>
 //!
 //! Exit codes: 0=success, 1=runtime error, 2=arg parse error
 //!
@@ -39,13 +43,19 @@ struct Args {
     #[arg(long)]
     session_id: String,
 
-    /// Workspace name for directory routing
+    /// Workspace name (used for datagram metadata, not file paths)
     #[arg(long)]
     workspace: String,
 
-    /// Root directory for traffic JSONL files
+    /// Root intercept directory (~/.ai/intercept). Files go to {intercept_dir}/sessions/.
     #[arg(long)]
-    traffic_dir: PathBuf,
+    intercept_dir: PathBuf,
+}
+
+impl Args {
+    fn sessions_dir(&self) -> PathBuf {
+        self.intercept_dir.join("sessions")
+    }
 }
 
 // =============================================================================
@@ -97,11 +107,11 @@ fn classify_exchange(value: &serde_json::Value) -> Option<ExchangeKind> {
 // File I/O — impure
 // =============================================================================
 
-/// Append raw bytes + newline to rawdata_{session_id}.jsonl. Unconditional.
-fn append_raw(traffic_dir: &Path, session_id: &str, bytes: &[u8]) -> Result<(), String> {
-    fs::create_dir_all(traffic_dir)
-        .map_err(|e| format!("mkdir {}: {e}", traffic_dir.display()))?;
-    let path = traffic_dir.join(format!("rawdata_{session_id}.jsonl"));
+/// Append raw bytes + newline to sessions/rawdata_{session_id}.jsonl. Unconditional.
+fn append_raw(sessions_dir: &Path, session_id: &str, bytes: &[u8]) -> Result<(), String> {
+    fs::create_dir_all(sessions_dir)
+        .map_err(|e| format!("mkdir {}: {e}", sessions_dir.display()))?;
+    let path = sessions_dir.join(format!("rawdata_{session_id}.jsonl"));
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -116,58 +126,83 @@ fn append_raw(traffic_dir: &Path, session_id: &str, bytes: &[u8]) -> Result<(), 
     Ok(())
 }
 
-/// Append compact JSON + newline to {workspace}/mainexch_{session_id}.jsonl with fsync.
+/// Append compact JSON + newline to sessions/mainexch_{session_id}.jsonl with fsync.
 fn append_exchange(
-    traffic_dir: &Path,
-    workspace: &str,
+    sessions_dir: &Path,
     session_id: &str,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    let dir = traffic_dir.join(workspace);
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-    let path = dir.join(format!("mainexch_{session_id}.jsonl"));
+    fs::create_dir_all(sessions_dir)
+        .map_err(|e| format!("mkdir {}: {e}", sessions_dir.display()))?;
+    let path = sessions_dir.join(format!("mainexch_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize exchange: {e}"))?;
     write_engine::append_line_fsync(&path, &compact)
 }
 
-/// Append compact JSON + newline to {workspace}/subagent_{session_id}.jsonl with fsync.
+/// Append compact JSON + newline to sessions/subagent_{session_id}.jsonl with fsync.
 fn append_subagent(
-    traffic_dir: &Path,
-    workspace: &str,
+    sessions_dir: &Path,
     session_id: &str,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    let dir = traffic_dir.join(workspace);
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-    let path = dir.join(format!("subagent_{session_id}.jsonl"));
+    fs::create_dir_all(sessions_dir)
+        .map_err(|e| format!("mkdir {}: {e}", sessions_dir.display()))?;
+    let path = sessions_dir.join(format!("subagent_{session_id}.jsonl"));
     let compact =
         serde_json::to_string(value).map_err(|e| format!("serialize subagent: {e}"))?;
     write_engine::append_line_fsync(&path, &compact)
 }
 
-/// Append compact JSON + newline to {workspace}/precomp_{session_id}.jsonl with fsync.
-/// Returns the line number of the appended entry (1-based).
-fn append_precompact(
-    traffic_dir: &Path,
-    workspace: &str,
+/// Append compact JSON + newline to sessions/compaction_{session_id}.jsonl with fsync.
+fn append_compaction(
+    sessions_dir: &Path,
     session_id: &str,
     value: &serde_json::Value,
-) -> Result<u64, String> {
-    let dir = traffic_dir.join(workspace);
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-    let path = dir.join(format!("precomp_{session_id}.jsonl"));
+) -> Result<(), String> {
+    fs::create_dir_all(sessions_dir)
+        .map_err(|e| format!("mkdir {}: {e}", sessions_dir.display()))?;
+    let path = sessions_dir.join(format!("compaction_{session_id}.jsonl"));
     let compact =
-        serde_json::to_string(value).map_err(|e| format!("serialize precompact: {e}"))?;
-    write_engine::append_line_fsync(&path, &compact)?;
-    count_lines(&path)
+        serde_json::to_string(value).map_err(|e| format!("serialize compaction: {e}"))?;
+    write_engine::append_line_fsync(&path, &compact)
 }
 
-/// Count lines in a file.
-fn count_lines(path: &Path) -> Result<u64, String> {
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    Ok(content.lines().count() as u64)
+/// Read the last non-empty line from a file. Returns None if file is empty or missing.
+fn read_last_line(path: &Path) -> Result<Option<String>, String> {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    Ok(content.lines().rev().find(|l| !l.trim().is_empty()).map(String::from))
+}
+
+/// Capture pre-compaction snapshot: read last mainexch line, append to precomp.
+/// Returns the precomp line number (1-based) or None if mainexch was empty.
+fn capture_precompaction(sessions_dir: &Path, session_id: &str) -> Result<Option<u64>, String> {
+    let mainexch_path = sessions_dir.join(format!("mainexch_{session_id}.jsonl"));
+    let last_line = match read_last_line(&mainexch_path)? {
+        Some(line) => line,
+        None => return Ok(None),
+    };
+
+    let precomp_path = sessions_dir.join(format!("precomp_{session_id}.jsonl"));
+    write_engine::append_line_fsync(&precomp_path, &last_line)?;
+
+    let content = fs::read_to_string(&precomp_path)
+        .map_err(|e| format!("read {}: {e}", precomp_path.display()))?;
+    Ok(Some(content.lines().count() as u64))
+}
+
+/// Truncate mainexch to just its last line (the pre-compaction exchange).
+fn truncate_mainexch(sessions_dir: &Path, session_id: &str) -> Result<(), String> {
+    let path = sessions_dir.join(format!("mainexch_{session_id}.jsonl"));
+    let last_line = match read_last_line(&path)? {
+        Some(line) => line,
+        None => return Ok(()),
+    };
+    write_engine::write_truncate_fsync(&path, &format!("{last_line}\n"))
 }
 
 // =============================================================================
@@ -175,17 +210,27 @@ fn count_lines(path: &Path) -> Result<u64, String> {
 // =============================================================================
 
 fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(), String> {
-    let line = append_precompact(
-        &config.traffic_dir,
-        &config.workspace,
-        &config.session_id,
-        value,
-    )?;
+    let sessions_dir = config.sessions_dir();
 
-    let precompact_path = config.traffic_dir
-        .join(&config.workspace)
-        .join(format!("precomp_{}.jsonl", config.session_id));
-    let precompact_ref = format!("{}:{}", datagram_io::compact_path(&precompact_path.to_string_lossy()), line);
+    // 1. Capture pre-compaction snapshot (last mainexch line → precomp)
+    let precomp_line = capture_precompaction(&sessions_dir, &config.session_id)?;
+
+    // 2. Write compaction instruction to compaction_ file
+    append_compaction(&sessions_dir, &config.session_id, value)?;
+
+    // 3. Truncate mainexch to just the pre-compaction exchange
+    if precomp_line.is_some() {
+        truncate_mainexch(&sessions_dir, &config.session_id)?;
+    }
+
+    // 4. Emit datagram
+    let precomp_path = sessions_dir.join(format!("precomp_{}.jsonl", config.session_id));
+    let line = precomp_line.unwrap_or(0);
+    let precompact_ref = format!(
+        "{}:{}",
+        datagram_io::compact_path(&precomp_path.to_string_lossy()),
+        line
+    );
     let dg = Datagram {
         timestamp: datagram_io::now(),
         source: "bifrost".into(),
@@ -202,8 +247,8 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
     };
     datagram_io::emit(&dg);
 
+    // 5. Inject compaction system block + write rewritten JSON to stdout
     inject_compaction_system_block(value)?;
-
     let output = serde_json::to_vec(&value)
         .map_err(|e| format!("serialize rewritten JSON: {e}"))?;
     io::stdout()
@@ -213,6 +258,8 @@ fn handle_compaction(config: &Args, value: &mut serde_json::Value) -> Result<(),
 }
 
 fn run(config: &Args) -> Result<(), String> {
+    let sessions_dir = config.sessions_dir();
+
     let mut input_bytes = Vec::new();
     io::stdin()
         .read_to_end(&mut input_bytes)
@@ -221,7 +268,7 @@ fn run(config: &Args) -> Result<(), String> {
         return Err("stdin is empty".to_string());
     }
 
-    append_raw(&config.traffic_dir, &config.session_id, &input_bytes)?;
+    append_raw(&sessions_dir, &config.session_id, &input_bytes)?;
 
     let mut value: serde_json::Value = serde_json::from_slice(&input_bytes)
         .map_err(|e| format!("invalid JSON: {e}"))?;
@@ -233,13 +280,13 @@ fn run(config: &Args) -> Result<(), String> {
 
     match kind {
         ExchangeKind::Main => {
-            append_exchange(&config.traffic_dir, &config.workspace, &config.session_id, &value)?;
+            append_exchange(&sessions_dir, &config.session_id, &value)?;
         }
         ExchangeKind::Compaction => {
             handle_compaction(config, &mut value)?;
         }
         ExchangeKind::Subagent => {
-            append_subagent(&config.traffic_dir, &config.workspace, &config.session_id, &value)?;
+            append_subagent(&sessions_dir, &config.session_id, &value)?;
         }
     }
 
@@ -336,9 +383,7 @@ mod tests {
 
     #[test]
     fn classify_compaction_single_read() {
-        let value = json!({
-            "tools": [{"name": "Read"}]
-        });
+        let value = json!({"tools": [{"name": "Read"}]});
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Compaction));
     }
 
@@ -358,26 +403,19 @@ mod tests {
 
     #[test]
     fn classify_web_search_only_becomes_subagent() {
-        let value = json!({
-            "tools": [{"name": "web_search"}]
-        });
+        let value = json!({"tools": [{"name": "web_search"}]});
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
     #[test]
     fn classify_single_non_read_tool_subagent() {
-        let value = json!({
-            "tools": [{"name": "Bash"}]
-        });
+        let value = json!({"tools": [{"name": "Bash"}]});
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
     #[test]
     fn classify_task_only_becomes_subagent() {
-        // Single Task tool: tools > 1 check fails, so not Main
-        let value = json!({
-            "tools": [{"name": "Task"}]
-        });
+        let value = json!({"tools": [{"name": "Task"}]});
         assert_eq!(classify_exchange(&value), Some(ExchangeKind::Subagent));
     }
 
@@ -397,32 +435,39 @@ mod tests {
             "traffic_interceptor_rewriter",
             "--session-id", "abc123",
             "--workspace", "odinn",
-            "--traffic-dir", "/tmp/traffic",
+            "--intercept-dir", "/tmp/intercept",
         ]).unwrap();
         assert_eq!(args.session_id, "abc123");
         assert_eq!(args.workspace, "odinn");
-        assert_eq!(args.traffic_dir, PathBuf::from("/tmp/traffic"));
+        assert_eq!(args.intercept_dir, PathBuf::from("/tmp/intercept"));
+        assert_eq!(args.sessions_dir(), PathBuf::from("/tmp/intercept/sessions"));
     }
 
     #[test]
     fn parse_args_missing_session_id() {
-        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--workspace", "odinn", "--traffic-dir", "/tmp"]);
+        let result = Args::try_parse_from([
+            "traffic_interceptor_rewriter", "--workspace", "odinn", "--intercept-dir", "/tmp",
+        ]);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--session-id"), "should mention --session-id: {err}");
     }
 
     #[test]
     fn parse_args_missing_workspace() {
-        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id", "abc", "--traffic-dir", "/tmp"]);
+        let result = Args::try_parse_from([
+            "traffic_interceptor_rewriter", "--session-id", "abc", "--intercept-dir", "/tmp",
+        ]);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--workspace"), "should mention --workspace: {err}");
     }
 
     #[test]
-    fn parse_args_missing_traffic_dir() {
-        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id", "abc", "--workspace", "odinn"]);
+    fn parse_args_missing_intercept_dir() {
+        let result = Args::try_parse_from([
+            "traffic_interceptor_rewriter", "--session-id", "abc", "--workspace", "odinn",
+        ]);
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("--traffic-dir"), "should mention --traffic-dir: {err}");
+        assert!(err.contains("--intercept-dir"), "should mention --intercept-dir: {err}");
     }
 
     #[test]
@@ -431,34 +476,34 @@ mod tests {
             "traffic_interceptor_rewriter",
             "--session-id", "abc",
             "--workspace", "odinn",
-            "--traffic-dir", "/tmp",
+            "--intercept-dir", "/tmp",
             "--banana",
         ]);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--banana"), "should mention unknown flag: {err}");
     }
 
-    #[test]
-    fn parse_args_session_id_missing_value() {
-        let result = Args::try_parse_from(["traffic_interceptor_rewriter", "--session-id"]);
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("session-id"), "should mention --session-id: {err}");
-    }
-
     // =========================================================================
     // File I/O — integration tests with temp dirs
     // =========================================================================
 
+    fn make_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tir_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let sessions = dir.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        dir
+    }
+
     #[test]
     fn append_raw_creates_file_and_appends() {
-        let dir = std::env::temp_dir().join("tir_test_raw");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = make_test_dir("raw");
+        let sessions = dir.join("sessions");
 
-        append_raw(&dir, "sess1", b"{\"test\": 1}").unwrap();
-        append_raw(&dir, "sess1", b"{\"test\": 2}").unwrap();
+        append_raw(&sessions, "sess1", b"{\"test\": 1}").unwrap();
+        append_raw(&sessions, "sess1", b"{\"test\": 2}").unwrap();
 
-        let content = fs::read_to_string(dir.join("rawdata_sess1.jsonl")).unwrap();
+        let content = fs::read_to_string(sessions.join("rawdata_sess1.jsonl")).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], "{\"test\": 1}");
@@ -468,84 +513,220 @@ mod tests {
     }
 
     #[test]
-    fn append_exchange_creates_workspace_dir() {
-        let dir = std::env::temp_dir().join("tir_test_exchange");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+    fn append_exchange_writes_to_sessions() {
+        let dir = make_test_dir("exchange");
+        let sessions = dir.join("sessions");
 
         let value = json!({"model": "test", "messages": []});
-        append_exchange(&dir, "myworkspace", "sess1", &value).unwrap();
+        append_exchange(&sessions, "sess1", &value).unwrap();
 
-        let path = dir.join("myworkspace/mainexch_sess1.jsonl");
+        let path = sessions.join("mainexch_sess1.jsonl");
         assert!(path.exists());
-
-        let content = fs::read_to_string(&path).unwrap();
-        assert_eq!(content.lines().count(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 1);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn append_subagent_creates_file() {
-        let dir = std::env::temp_dir().join("tir_test_subagent");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+    fn append_subagent_writes_to_sessions() {
+        let dir = make_test_dir("subagent");
+        let sessions = dir.join("sessions");
 
-        let value = json!({"model": "claude-haiku-4-5-20251001", "tools": [{"name": "Read"}], "messages": []});
-        append_subagent(&dir, "bragi", "sess1", &value).unwrap();
-        append_subagent(&dir, "bragi", "sess1", &value).unwrap();
+        let value = json!({"model": "haiku", "tools": [{"name": "Read"}], "messages": []});
+        append_subagent(&sessions, "sess1", &value).unwrap();
+        append_subagent(&sessions, "sess1", &value).unwrap();
 
-        let path = dir.join("bragi/subagent_sess1.jsonl");
+        let path = sessions.join("subagent_sess1.jsonl");
         assert!(path.exists());
-
-        let content = fs::read_to_string(&path).unwrap();
-        assert_eq!(content.lines().count(), 2);
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn append_precompact_returns_line_count() {
-        let dir = std::env::temp_dir().join("tir_test_precompact");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+    fn append_compaction_writes_to_sessions() {
+        let dir = make_test_dir("compaction");
+        let sessions = dir.join("sessions");
 
-        let value = json!({"system": [], "messages": []});
-        let line1 = append_precompact(&dir, "ws", "sess1", &value).unwrap();
-        let line2 = append_precompact(&dir, "ws", "sess1", &value).unwrap();
-        let line3 = append_precompact(&dir, "ws", "sess1", &value).unwrap();
+        let value = json!({"system": [], "messages": [], "tools": [{"name": "Read"}]});
+        append_compaction(&sessions, "sess1", &value).unwrap();
 
-        assert_eq!(line1, 1);
-        assert_eq!(line2, 2);
-        assert_eq!(line3, 3);
+        let path = sessions.join("compaction_sess1.jsonl");
+        assert!(path.exists());
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 1);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn count_lines_empty_file() {
-        let dir = std::env::temp_dir().join("tir_test_count");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let path = dir.join("empty.jsonl");
-        fs::write(&path, "").unwrap();
-
-        assert_eq!(count_lines(&path).unwrap(), 0);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
+    // =========================================================================
+    // read_last_line
+    // =========================================================================
 
     #[test]
-    fn count_lines_three_lines() {
-        let dir = std::env::temp_dir().join("tir_test_count3");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let path = dir.join("three.jsonl");
+    fn read_last_line_returns_last() {
+        let dir = make_test_dir("lastline");
+        let path = dir.join("sessions/test.jsonl");
         fs::write(&path, "line1\nline2\nline3\n").unwrap();
 
-        assert_eq!(count_lines(&path).unwrap(), 3);
+        assert_eq!(read_last_line(&path).unwrap(), Some("line3".into()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_last_line_skips_empty_trailing() {
+        let dir = make_test_dir("lastline_trailing");
+        let path = dir.join("sessions/test.jsonl");
+        fs::write(&path, "line1\nline2\n\n\n").unwrap();
+
+        assert_eq!(read_last_line(&path).unwrap(), Some("line2".into()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_last_line_empty_file() {
+        let dir = make_test_dir("lastline_empty");
+        let path = dir.join("sessions/test.jsonl");
+        fs::write(&path, "").unwrap();
+
+        assert_eq!(read_last_line(&path).unwrap(), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_last_line_missing_file() {
+        let dir = make_test_dir("lastline_missing");
+        let path = dir.join("sessions/nonexistent.jsonl");
+
+        assert_eq!(read_last_line(&path).unwrap(), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_last_line_single_line() {
+        let dir = make_test_dir("lastline_single");
+        let path = dir.join("sessions/test.jsonl");
+        fs::write(&path, "only_line\n").unwrap();
+
+        assert_eq!(read_last_line(&path).unwrap(), Some("only_line".into()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // capture_precompaction + truncate_mainexch
+    // =========================================================================
+
+    #[test]
+    fn capture_precompaction_copies_last_mainexch_line() {
+        let dir = make_test_dir("precomp");
+        let sessions = dir.join("sessions");
+
+        // Write 3 main exchanges
+        let mainexch = sessions.join("mainexch_sess1.jsonl");
+        fs::write(&mainexch, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
+
+        let line = capture_precompaction(&sessions, "sess1").unwrap();
+        assert_eq!(line, Some(1));
+
+        let precomp = fs::read_to_string(sessions.join("precomp_sess1.jsonl")).unwrap();
+        assert_eq!(precomp.trim(), "{\"n\":3}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_precompaction_appends_on_multiple_compactions() {
+        let dir = make_test_dir("precomp_multi");
+        let sessions = dir.join("sessions");
+
+        let mainexch = sessions.join("mainexch_sess1.jsonl");
+        fs::write(&mainexch, "{\"n\":1}\n").unwrap();
+        capture_precompaction(&sessions, "sess1").unwrap();
+
+        fs::write(&mainexch, "{\"n\":2}\n").unwrap();
+        let line = capture_precompaction(&sessions, "sess1").unwrap();
+        assert_eq!(line, Some(2));
+
+        let precomp = fs::read_to_string(sessions.join("precomp_sess1.jsonl")).unwrap();
+        assert_eq!(precomp.lines().count(), 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_precompaction_empty_mainexch() {
+        let dir = make_test_dir("precomp_empty");
+        let sessions = dir.join("sessions");
+
+        // No mainexch file exists
+        let result = capture_precompaction(&sessions, "sess1").unwrap();
+        assert_eq!(result, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn truncate_mainexch_keeps_last_line() {
+        let dir = make_test_dir("truncate");
+        let sessions = dir.join("sessions");
+
+        let mainexch = sessions.join("mainexch_sess1.jsonl");
+        fs::write(&mainexch, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
+
+        truncate_mainexch(&sessions, "sess1").unwrap();
+
+        let content = fs::read_to_string(&mainexch).unwrap();
+        assert_eq!(content, "{\"n\":3}\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn truncate_mainexch_noop_on_empty() {
+        let dir = make_test_dir("truncate_empty");
+        let sessions = dir.join("sessions");
+
+        let mainexch = sessions.join("mainexch_sess1.jsonl");
+        fs::write(&mainexch, "").unwrap();
+
+        truncate_mainexch(&sessions, "sess1").unwrap();
+
+        let content = fs::read_to_string(&mainexch).unwrap();
+        assert_eq!(content, "");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn full_compaction_flow() {
+        let dir = make_test_dir("full_compaction");
+        let sessions = dir.join("sessions");
+
+        // Simulate 3 main exchanges
+        let mainexch = sessions.join("mainexch_sess1.jsonl");
+        fs::write(&mainexch, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
+
+        // Capture precompaction
+        let line = capture_precompaction(&sessions, "sess1").unwrap();
+        assert_eq!(line, Some(1));
+
+        // Write compaction instruction
+        let compaction_value = json!({"tools": [{"name": "Read"}], "messages": [{"role": "user", "content": "compact"}]});
+        append_compaction(&sessions, "sess1", &compaction_value).unwrap();
+
+        // Truncate mainexch
+        truncate_mainexch(&sessions, "sess1").unwrap();
+
+        // Verify: precomp has the last exchange
+        let precomp = fs::read_to_string(sessions.join("precomp_sess1.jsonl")).unwrap();
+        assert_eq!(precomp.trim(), "{\"n\":3}");
+
+        // Verify: compaction has the instruction
+        let compaction = fs::read_to_string(sessions.join("compaction_sess1.jsonl")).unwrap();
+        assert_eq!(compaction.lines().count(), 1);
+
+        // Verify: mainexch truncated to last line
+        let mainexch_content = fs::read_to_string(&mainexch).unwrap();
+        assert_eq!(mainexch_content, "{\"n\":3}\n");
 
         let _ = fs::remove_dir_all(&dir);
     }
