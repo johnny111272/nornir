@@ -81,7 +81,8 @@ fn jitter_sleep(min_ms: u64, max_ms: u64, seed: &mut u64) {
 }
 
 /// Derive workspace name from JSONL path's parent directory.
-/// Path convention: .../traffic/{workspace}/{session_id}.jsonl
+/// Fallback only — bifrost always passes --workspace explicitly.
+/// With per-session dirs, parent is session_id, not workspace.
 fn workspace_from_parent_dir(path: &str) -> String {
     let parsed = Path::new(path);
     parsed.parent()
@@ -367,17 +368,12 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
 // Transcript — per-session structured log
 // =============================================================================
 
-/// Derive transcript path from mainexch path.
-/// mainexch_abc123.jsonl → transcript_abc123.jsonl (same directory).
+/// Derive transcript path: sibling running_transcript.jsonl in the same session directory.
 fn transcript_path_for(mainexch_path: &Path) -> PathBuf {
-    let filename = mainexch_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let transcript_name = filename.replace("mainexch_", "transcript_");
-    let parent = mainexch_path.parent().unwrap_or(Path::new("."));
-    parent.join(transcript_name)
+    mainexch_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("running_transcript.jsonl")
 }
 
 /// Open (or create) a transcript file for appending.
