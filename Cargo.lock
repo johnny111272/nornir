@@ -1686,6 +1686,7 @@ dependencies = [
 name = "hook_stop_llm_tts"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "regex",
  "serde",
  "serde_json",

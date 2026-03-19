@@ -5,17 +5,30 @@
 //! then calls `announce` in the background.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_stop_llm_tts
+//!     hook_stop_llm_tts --project-dir $CLAUDE_PROJECT_DIR
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+use clap::Parser;
 use regex::Regex;
 use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
-// Stop event input
+// CLI
+// ---------------------------------------------------------------------------
+
+#[derive(Parser)]
+#[command(name = "hook_stop_llm_tts", about = "Stop hook: TTS playback")]
+struct Cli {
+    /// Session project directory (from $CLAUDE_PROJECT_DIR)
+    #[arg(long)]
+    project_dir: Option<PathBuf>,
+}
+
+// ---------------------------------------------------------------------------
+// Stop event input (stdin JSON from Claude Code)
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -31,6 +44,8 @@ struct StopEvent {
 // ---------------------------------------------------------------------------
 
 fn main() -> ExitCode {
+    let args = Cli::parse();
+
     let mut input = String::new();
     if io::stdin().read_to_string(&mut input).is_err() {
         return ExitCode::SUCCESS;
@@ -46,6 +61,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Resolve project dir: CLI --project-dir > stdin cwd > None
+    let project_dir = args.project_dir
+        .map(|p| p.display().to_string())
+        .or_else(|| if event.cwd.is_empty() { None } else { Some(event.cwd.clone()) });
+
     // QUIET.lock: silence all CC sessions
     let voice_dir = voice_dir();
     if Path::new(&voice_dir).join("QUIET.lock").exists() {
@@ -53,8 +73,10 @@ fn main() -> ExitCode {
     }
 
     // Per-workspace QUIET.lock
-    if !event.cwd.is_empty() && Path::new(&event.cwd).join("QUIET.lock").exists() {
-        return ExitCode::SUCCESS;
+    if let Some(ref dir) = project_dir {
+        if Path::new(dir).join("QUIET.lock").exists() {
+            return ExitCode::SUCCESS;
+        }
     }
 
     // Filter markdown noise
@@ -66,8 +88,8 @@ fn main() -> ExitCode {
     // Spawn announce in background — do not wait
     let mut cmd = Command::new(announce_bin());
     cmd.args(["--profile", "cc"]);
-    if !event.cwd.is_empty() {
-        cmd.args(["--project-dir", &event.cwd]);
+    if let Some(ref dir) = project_dir {
+        cmd.args(["--source", dir]);
     }
     cmd.arg("--stdin");
     cmd.stdin(Stdio::piped())

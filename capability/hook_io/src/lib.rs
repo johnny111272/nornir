@@ -190,7 +190,7 @@ fn notify_and_log(icon: char, category: &str, event: &str, explanation: &str) {
         .stderr(std::process::Stdio::null())
         .spawn();
 
-    // Voice alerts handled by Hlidskjalf (receives events via datagram)
+    // Voice alerts spoken locally via announce (fire-and-forget)
 
     // Append to log file
     if let Ok(mut log) = std::fs::OpenOptions::new()
@@ -295,7 +295,7 @@ fn emit_to_watchtower(alert: &WatchtowerEvent) {
         },
         workspace: datagram_io::workspace_name(),
         detail: Some(alert.detail.to_string()),
-        speech: if speech.is_empty() { None } else { Some(speech) },
+        speech: None, // Standard alerts speak locally via announce
         payload: Some(serde_json::json!({
             "category": alert.category,
             "decision": alert.decision,
@@ -305,6 +305,42 @@ fn emit_to_watchtower(alert: &WatchtowerEvent) {
         })),
     };
     datagram_io::emit(&datagram);
+    speak_alert(&speech, alert.decision, alert.category);
+}
+
+fn speak_alert(speech: &str, decision: &str, category: &str) {
+    if speech.is_empty() { return; }
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() { return; }
+
+    // SILENT.lock: skip announce entirely
+    let voice_dir = format!("{home}/.ai/voice");
+    if std::path::Path::new(&voice_dir).join("SILENT.lock").exists() { return; }
+
+    let profile = match decision {
+        "deny" => match category {
+            "floor" | "subversion" | "destruction" | "chaining" => "critical",
+            _ => "alert",
+        },
+        "ask" => "alert",
+        "warn" => "warn",
+        _ => return,
+    };
+
+    let announce = std::path::PathBuf::from(&home).join(".ai/tools/bin/announce");
+    let source = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
+
+    let mut cmd = std::process::Command::new(&announce);
+    cmd.args(["--profile", profile]);
+    if !source.is_empty() {
+        cmd.args(["--source", &source]);
+    }
+    cmd.arg(speech);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _ = cmd.spawn();
 }
 
 // ── Tests ────────────────────────────────────────────────────────

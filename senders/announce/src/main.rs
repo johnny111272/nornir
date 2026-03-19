@@ -53,9 +53,9 @@ struct Cli {
     #[arg(long)]
     stdin: bool,
 
-    /// Workspace path (for VOICE.lock resolution)
+    /// Source scope (for VOICE.lock resolution and process identification)
     #[arg(long)]
-    project_dir: Option<PathBuf>,
+    source: Option<PathBuf>,
 
     /// Skip cache lookup and storage
     #[arg(long)]
@@ -185,7 +185,7 @@ fn main() {
     let hash_short = &cache_hash[..HASH_SUFFIX_LEN];
     let cache_path = build_cache_path(&audio_dir, &resolved.voice_id, &final_lang, &final_text, hash_short);
 
-    let proj_dir = args.project_dir.as_deref();
+    let proj_dir = args.source.as_deref();
 
     if !args.no_cache && cache_path.exists() {
         play_file_forked(&cache_path, proj_dir);
@@ -299,7 +299,7 @@ fn resolve_settings(arguments: &Cli, config: &Config, voice_dir: &str, text: Str
     let profile = arguments.profile.as_ref().and_then(|name| config.profile.get(name));
 
     // Layer 2: VOICE.lock
-    let voice_lock = arguments.project_dir.as_ref().and_then(|dir| {
+    let voice_lock = arguments.source.as_ref().and_then(|dir| {
         let path = dir.join("VOICE.lock");
         fs::read_to_string(&path).ok().and_then(|s| toml::from_str::<ProfileSettings>(&s).ok())
     });
@@ -541,7 +541,7 @@ fn play_pcm_forked(pcm_data: &[u8], project_dir: Option<&Path>) {
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--play-pcm").arg(&temp_path);
     if let Some(dir) = project_dir {
-        cmd.arg("--project-dir").arg(dir);
+        cmd.arg("--source").arg(dir);
     }
     let _ = cmd
         .stdin(std::process::Stdio::null())
@@ -563,7 +563,7 @@ fn play_file_forked(path: &Path, project_dir: Option<&Path>) {
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--play-file").arg(path);
     if let Some(dir) = project_dir {
-        cmd.arg("--project-dir").arg(dir);
+        cmd.arg("--source").arg(dir);
     }
     let _ = cmd
         .stdin(std::process::Stdio::null())
