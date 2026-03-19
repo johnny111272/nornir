@@ -86,15 +86,19 @@ members = [
     "core/datagram_types",
     "core/diff_core",
     "core/compaction_inject_core",
+    "core/intercept_core",
+    "capability/session_io",
     "interceptors/traffic_interceptor_rewriter",
+    "interceptors/intercept_replay",
     "daemons/record_datagrams",
     "capability/saga_runner",
+    "senders/announce",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = "0.9"
 toml = "0.8"
 toon-format = "0.4"
@@ -113,3 +117,6 @@ tree-sitter-typescript = "0.23"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+reqwest = { version = "0.12", features = ["blocking"] }
+dotenvy = "0.15"
+rodio = "0.19"

@@ -38,6 +38,7 @@ crates = [
     "send_warning",
     "send_alert",
     "send_datagram",
+    "announce",
 ]
 verify = "exit_codes"
 valid_exit_codes = [0, 1, 2]
@@ -89,10 +90,14 @@ verify = "help"
 
 [interceptors]
 crates = [
+    "intercept_replay",
+]
+verify = "help"
+pyo3_crates = [
     "traffic_interceptor_rewriter",
 ]
-verify = "exit_codes"
-valid_exit_codes = [0, 1, 2]
+python_version = "python3.13"
+pyo3_verify = "python_import"
 
 [gates]
 build = "maturin"

@@ -3,13 +3,14 @@ name = "traffic_interceptor_rewriter"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
+[lib]
 name = "traffic_interceptor_rewriter"
-path = "src/main.rs"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde_json = { workspace = true }
-clap = { workspace = true }
-datagram_io = { path = "../../capability/datagram_io" }
+pyo3 = { workspace = true }
 compaction_inject_core = { path = "../../core/compaction_inject_core" }
-write_engine = { path = "../../capability/write_engine" }
+schema_core = { path = "../../core/schema_core" }
+intercept_core = { path = "../../core/intercept_core" }
+session_io = { path = "../../capability/session_io" }

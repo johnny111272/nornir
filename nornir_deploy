@@ -10,9 +10,15 @@
 Builds, symlinks, and verifies nornir binaries by category.
 Reads crate-to-category mapping from deploy_categories.toml.
 
+Any category can declare:
+  crates       — cargo binaries (build + symlink + verify)
+  cli_crates   — cargo binaries with separate cli_verify (e.g. gates check tools)
+  pyo3_crates  — maturin PyO3 modules (build + python_import verify)
+  gate_crates  — same as pyo3_crates, used by the gates category
+
 Usage:
     nornir_deploy --all                  # deploy everything
-    nornir_deploy --non-pyo3             # all cargo crates, skip maturin gates
+    nornir_deploy --non-pyo3             # all cargo crates, skip maturin PyO3 modules
     nornir_deploy --build gates          # single category
     nornir_deploy --build hooks,writers  # multiple categories
     nornir_deploy --list                 # show categories and crate counts
@@ -43,6 +49,33 @@ def load_categories() -> dict:
         return tomllib.load(fh)
 
 
+def find_crate_dirs() -> dict[str, Path]:
+    """Map crate name -> crate directory from workspace Cargo.toml members.
+
+    Relies on the workspace convention: every member path ends with the crate
+    name as the final directory segment (e.g. interceptors/traffic_interceptor_rewriter).
+    """
+    import tomllib
+    with open(NORNIR_DIR / "Cargo.toml", "rb") as fh:
+        workspace = tomllib.load(fh)
+    result = {}
+    for member in workspace.get("workspace", {}).get("members", []):
+        crate_name = Path(member).name
+        result[crate_name] = NORNIR_DIR / member
+    return result
+
+
+# --- Category config helpers ---
+
+def _pyo3_crates(config: dict) -> list[str]:
+    """Return maturin-built crates: pyo3_crates (generic) or gate_crates (gates)."""
+    return config.get("pyo3_crates", config.get("gate_crates", []))
+
+
+def _pyo3_verify(config: dict) -> str:
+    return config.get("pyo3_verify", config.get("gate_verify", "python_import"))
+
+
 # --- Build functions ---
 
 def build_cargo(crates: list[str]) -> None:
@@ -62,15 +95,18 @@ def build_cargo(crates: list[str]) -> None:
         sys.exit(1)
 
 
-def build_maturin(crates: list[str], python_version: str) -> None:
-    """Build PyO3 gate crates with maturin. Extract .so to TOOLS_LIB."""
+def build_maturin(crates: list[str], python_version: str, crate_dirs: dict[str, Path]) -> None:
+    """Build PyO3 crates with maturin. Extract .so to TOOLS_LIB."""
     if not crates:
         return
     TOOLS_LIB.mkdir(parents=True, exist_ok=True)
     wheels_dir = NORNIR_DIR / "target" / "wheels"
 
     for crate in crates:
-        crate_dir = NORNIR_DIR / "gates" / crate
+        crate_dir = crate_dirs.get(crate)
+        if crate_dir is None:
+            logger.error("crate directory not found for: {}", crate)
+            sys.exit(1)
         logger.info("  maturin: {}...", crate)
         result = subprocess.run(
             ["uvx", "maturin", "build", "--release", "-i", python_version],
@@ -100,8 +136,9 @@ def build_maturin(crates: list[str], python_version: str) -> None:
                 with zf.open(so_file) as src, open(dest, "wb") as dst:
                     dst.write(src.read())
                 dest.chmod(0o755)
+                subprocess.run(["codesign", "-f", "-s", "-", str(dest)], capture_output=True)
 
-    logger.info("PyO3 gates deployed to {}", TOOLS_LIB)
+    logger.info("PyO3 modules deployed to {}", TOOLS_LIB)
 
 
 # --- Symlink ---
@@ -153,12 +190,11 @@ def verify_exit_codes(binary: Path, valid_codes: list[int]) -> bool:
 
 
 def verify_python_import(crate: str, python_version: str) -> bool:
-    """Verify PyO3 gate module can be imported and returns a schema name."""
+    """Verify PyO3 module can be imported."""
     result = subprocess.run(
         [
             python_version, "-c",
-            f"import sys; sys.path.insert(0, '{TOOLS_LIB}'); "
-            f"import {crate}; sys.stdout.write({crate}.schema_name() + '\\n')",
+            f"import sys; sys.path.insert(0, '{TOOLS_LIB}'); import {crate}",
         ],
         capture_output=True,
         text=True,
@@ -184,63 +220,47 @@ def verify_crate(crate: str, binary: Path, method: str, category_config: dict) -
 
 # --- Category deployment ---
 
-def deploy_category(name: str, config: dict, skip_maturin: bool = False) -> None:
-    """Deploy a single category: build -> symlink -> verify."""
+def deploy_category(name: str, config: dict, crate_dirs: dict[str, Path], skip_maturin: bool = False) -> None:
+    """Deploy a single category: build -> symlink -> verify.
+
+    Handles three crate types in any combination:
+      crates      — cargo binaries
+      cli_crates  — cargo binaries with cli_verify
+      pyo3_crates / gate_crates — maturin PyO3 modules
+    """
     logger.info("--- deploying: {} ---", name)
     binary_names = config.get("binary_names", {})
 
-    if name == "gates":
-        deploy_gates(config, skip_maturin)
-        return
-
+    # Cargo binaries
     crates = config.get("crates", [])
-    if not crates:
-        logger.warning("no crates in category {}", name)
-        return
+    if crates:
+        build_cargo(crates)
+        linked = symlink_binaries(crates, binary_names)
+        logger.info("{} symlinks updated in {}", linked, TOOLS_BIN)
+        method = config.get("verify", "help")
+        release_dir = NORNIR_DIR / "target" / "release"
+        failures = []
+        for crate in crates:
+            bin_name = binary_names.get(crate, crate)
+            if verify_crate(crate, release_dir / bin_name, method, config):
+                logger.info("  {}: {}", name, bin_name)
+            else:
+                failures.append(bin_name)
+        if failures:
+            logger.error("{} {} broken: {}", len(failures), name, ", ".join(failures))
+            sys.exit(1)
 
-    build_cargo(crates)
-    linked = symlink_binaries(crates, binary_names)
-    logger.info("{} symlinks updated in {}", linked, TOOLS_BIN)
-
-    method = config.get("verify", "help")
-    release_dir = NORNIR_DIR / "target" / "release"
-    verified = []
-    failures = []
-
-    for crate in crates:
-        bin_name = binary_names.get(crate, crate)
-        binary = release_dir / bin_name
-        if verify_crate(crate, binary, method, config):
-            logger.info("  {}: {}", name, bin_name)
-            verified.append(bin_name)
-        else:
-            failures.append(bin_name)
-
-    if failures:
-        logger.error("{} {} broken: {}", len(failures), name, ", ".join(failures))
-        sys.exit(1)
-
-    logger.info("{}: {} built, {} symlinked", name, len(verified), linked)
-
-
-def deploy_gates(config: dict, skip_maturin: bool = False) -> None:
-    """Deploy gates category (dual build: cargo CLI + maturin PyO3)."""
-    python_version = config.get("python_version", "python3.13")
+    # Cargo CLI tools (separate verify method)
     cli_crates = config.get("cli_crates", [])
-    gate_crates = config.get("gate_crates", [])
-
-    # Build and deploy CLI check tools (cargo)
     if cli_crates:
         build_cargo(cli_crates)
         linked = symlink_binaries(cli_crates, {})
         logger.info("{} CLI symlinks updated in {}", linked, TOOLS_BIN)
-
-        release_dir = NORNIR_DIR / "target" / "release"
         cli_method = config.get("cli_verify", "help")
+        release_dir = NORNIR_DIR / "target" / "release"
         failures = []
         for crate in cli_crates:
-            binary = release_dir / crate
-            if verify_crate(crate, binary, cli_method, config):
+            if verify_crate(crate, release_dir / crate, cli_method, config):
                 logger.info("  CLI: {}", crate)
             else:
                 failures.append(crate)
@@ -248,21 +268,28 @@ def deploy_gates(config: dict, skip_maturin: bool = False) -> None:
             logger.error("{} CLI tools broken: {}", len(failures), ", ".join(failures))
             sys.exit(1)
 
-    # Build and deploy PyO3 gate modules (maturin)
-    if gate_crates and not skip_maturin:
-        build_maturin(gate_crates, python_version)
+    # PyO3 modules (maturin)
+    pyo3 = _pyo3_crates(config)
+    if pyo3 and not skip_maturin:
+        python_version = config.get("python_version", "python3.13")
+        build_maturin(pyo3, python_version, crate_dirs)
         failures = []
-        for crate in gate_crates:
+        for crate in pyo3:
             if verify_python_import(crate, python_version):
-                logger.info("  gate: {}", crate)
+                logger.info("  pyo3: {}", crate)
             else:
                 failures.append(crate)
         if failures:
-            logger.error("{} gates broken: {}", len(failures), ", ".join(failures))
+            logger.error("{} PyO3 modules broken: {}", len(failures), ", ".join(failures))
             sys.exit(1)
-        logger.info("gates: {} CLI, {} PyO3 deployed", len(cli_crates), len(gate_crates))
-    elif skip_maturin:
-        logger.info("gates: {} CLI deployed (maturin skipped)", len(cli_crates))
+    elif pyo3 and skip_maturin:
+        logger.info("{}: {} PyO3 modules skipped (--non-pyo3)", name, len(pyo3))
+
+    total = len(crates) + len(cli_crates) + len(pyo3)
+    if total == 0:
+        logger.warning("no crates in category {}", name)
+    else:
+        logger.info("{}: done ({} cargo, {} CLI, {} PyO3)", name, len(crates), len(cli_crates), len(pyo3))
 
 
 # --- Bootstrap ---
@@ -296,13 +323,18 @@ def ensure_bootstrap() -> None:
 def list_categories(categories: dict) -> None:
     """Print categories and their crate counts."""
     for name, config in sorted(categories.items()):
-        if name == "gates":
-            cli_count = len(config.get("cli_crates", []))
-            gate_count = len(config.get("gate_crates", []))
-            print(f"  {name}: {cli_count} CLI + {gate_count} PyO3 = {cli_count + gate_count}")
-        else:
-            count = len(config.get("crates", []))
-            print(f"  {name}: {count}")
+        cargo = len(config.get("crates", []))
+        cli = len(config.get("cli_crates", []))
+        pyo3 = len(_pyo3_crates(config))
+        parts = []
+        if cargo:
+            parts.append(f"{cargo} cargo")
+        if cli:
+            parts.append(f"{cli} CLI")
+        if pyo3:
+            parts.append(f"{pyo3} PyO3")
+        summary = " + ".join(parts) if parts else "0"
+        print(f"  {name}: {summary}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -313,7 +345,7 @@ def parse_args() -> argparse.Namespace:
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true", help="deploy all categories")
-    group.add_argument("--non-pyo3", action="store_true", help="deploy all cargo crates, skip maturin gates")
+    group.add_argument("--non-pyo3", action="store_true", help="deploy all cargo crates, skip maturin PyO3 modules")
     group.add_argument("--build", type=str, help="deploy specific categories (comma-separated)")
     group.add_argument("--list", action="store_true", help="list categories and crate counts")
     group.add_argument("--bootstrap", action="store_true", help="create symlink in ~/.ai/tools/scripts/")
@@ -333,20 +365,21 @@ def run(args: argparse.Namespace) -> None:
         return
 
     ensure_bootstrap()
+    crate_dirs = find_crate_dirs()
 
     if args.all:
         for name, config in categories.items():
-            deploy_category(name, config, skip_maturin=False)
+            deploy_category(name, config, crate_dirs, skip_maturin=False)
     elif args.non_pyo3:
         for name, config in categories.items():
-            deploy_category(name, config, skip_maturin=True)
+            deploy_category(name, config, crate_dirs, skip_maturin=True)
     elif args.build:
         requested = [c.strip() for c in args.build.split(",")]
         for name in requested:
             if name not in categories:
                 logger.error("unknown category: {} (available: {})", name, ", ".join(categories))
                 sys.exit(1)
-            deploy_category(name, categories[name], skip_maturin=False)
+            deploy_category(name, categories[name], crate_dirs, skip_maturin=False)
 
     logger.info("DEPLOY COMPLETE")
 

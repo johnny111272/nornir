@@ -1,0 +1,15 @@
+[package]
+name = "intercept_replay"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "intercept_replay"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde_json = { workspace = true }
+intercept_core = { path = "../../core/intercept_core" }
+session_io = { path = "../../capability/session_io" }
+schema_core = { path = "../../core/schema_core" }
