@@ -1,0 +1,13 @@
+[package]
+name = "hush"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hush"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "announce"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "announce"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+sha2 = { workspace = true }
+reqwest = { workspace = true }
+dotenvy = { workspace = true }
+rodio = { workspace = true }

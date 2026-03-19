@@ -37,6 +37,8 @@ verb axis needed.
 | `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob |
 | `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash |
 | `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit |
+| `hook_stop_llm_tts` | Stop | LLM | TTS playback |
+| `hush` | UserPromptSubmit | Session | Kill workspace announce playback |
 
 ### Planned hooks
 

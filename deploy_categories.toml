@@ -17,6 +17,7 @@ crates = [
     "hook_pre_llm_tool",
     "hook_pre_llm_bash",
     "hook_post_llm_tool",
+    "hook_stop_llm_tts",
 ]
 verify = "stdin"
 verify_input = '{"tool_name":"Test","tool_input":{}}'
@@ -47,6 +48,7 @@ valid_exit_codes = [0, 1, 2]
 crates = [
     "saga_cli",
     "syn_cli",
+    "hush",
 ]
 verify = "exit_codes"
 valid_exit_codes = [0, 2]

@@ -1,0 +1,13 @@
+[package]
+name = "hook_stop_llm_tts"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hook_stop_llm_tts"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
