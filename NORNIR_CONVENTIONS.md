@@ -125,7 +125,7 @@ fn main() {
 }
 ```
 
-To add a new writer: create schema in `schemas/tools/`, add to `schemas_embedded/src/lib.rs`, create writer crate, add to workspace `Cargo.toml` and `deploy_writers.py`.
+To add a new writer: create schema in `schemas/tools/`, add to `schemas_embedded/src/lib.rs`, create writer crate, add to workspace `Cargo.toml` and `deploy_categories.toml` under `[writers]`.
 
 ### Hooks (pure decision functions on hook_io)
 
@@ -213,8 +213,8 @@ After schema changes (draupnir regeneration): `nornir_deploy --build gates`
 ## Testing
 
 - All tests must pass before committing. Run `cargo test -p {crate}` per crate.
-- Gate crates (PyO3) fail to link without Python headers — use `deploy_gates.py` for those.
-- Full workspace (excluding gates): `cargo test --workspace $(for d in gates/*/; do echo "--exclude $(basename $d)"; done) --exclude intercept_io`
+- PyO3 crates (`cdylib+rlib`) fail to link without Python headers — use `nornir_deploy --build <category>` for those.
+- Full workspace (excluding PyO3 crates): `cargo test --workspace $(for d in gates/*/; do echo "--exclude $(basename $d)"; done) --exclude intercept_io --exclude traffic_interceptor_rewriter`
 - Security hooks require dual-direction tests: malicious input IS detected, benign input is NOT flagged.
 - Tests verify specification, not implementation. "Does `severity_rank("error")` return 2?" not "Does the internal BTreeMap have 4 entries?"
 - Pure logic must be testable: takes parameters, returns `Result`, no side effects.
@@ -236,4 +236,4 @@ To add a new data shape:
 
 All external crates declared in root `Cargo.toml` `[workspace.dependencies]`. Reference as `{ workspace = true }` in crate Cargo.toml. Never pin a version in a crate's own Cargo.toml.
 
-Current: serde 1.0, serde_json 1.0, serde_yaml 0.9, toml 0.8, toon-format 0.4, jsonschema 0.29, thiserror 2.0, pyo3 0.22, regex 1.11, jaq-interpret 1.5, jaq-parse 1.0, tree-sitter 0.25, tree-sitter-python 0.25, tree-sitter-rust 0.24, tree-sitter-typescript 0.23, sha2 0.10, clap 4 (derive), libc 0.2.
+Current: serde 1.0, serde_json 1.0, serde_yaml 0.9, toml 0.8, toon-format 0.4, jsonschema 0.29, thiserror 2.0, pyo3 0.22, regex 1.11, jaq-interpret 1.5, jaq-parse 1.0, tree-sitter 0.25, tree-sitter-css 0.25, tree-sitter-html 0.23, tree-sitter-python 0.25, tree-sitter-rust 0.24, tree-sitter-typescript 0.23, sha2 0.10, clap 4 (derive), libc 0.2, reqwest 0.12 (blocking), dotenvy 0.15, rodio 0.19.

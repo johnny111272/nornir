@@ -34,7 +34,7 @@ Prints (does NOT auto-modify):
     - schemas_embedded lines to add
     - workspace Cargo.toml member to add
     - tool_registry.toml entry to add
-    - deploy script WRITER_CRATES entry to add
+    - deploy_categories.toml [writers].crates entry to add
 """
 
 import argparse
@@ -186,7 +186,7 @@ def generate(config: argparse.Namespace) -> bool:
     sys.stdout.write("\n=== Manual steps required ===\n\n")
     sys.stdout.write(f'Add to workspace Cargo.toml members:\n')
     sys.stdout.write(f'    "writers/{config.name}",\n\n')
-    sys.stdout.write(f'Add to deploy_writers.py WRITER_CRATES:\n')
+    sys.stdout.write(f'Add to deploy_categories.toml [writers].crates:\n')
     sys.stdout.write(f'    "{config.name}",\n\n')
 
     if config.schema_path:

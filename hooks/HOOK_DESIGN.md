@@ -11,7 +11,7 @@ patterns for all nornir hook binaries.
 
 | Axis | Values | What it encodes |
 |---|---|---|
-| **event** | `pre`, `post`, `start`, `end`, `compact` | WHEN — maps to Claude Code hook event |
+| **event** | `pre`, `post`, `stop`, `start`, `end`, `compact` | WHEN — maps to Claude Code hook event |
 | **context** | `llm`, `subagent`, `session` | WHO — what triggered the event |
 | **scope** | `tool`, `bash`, `orient`, `preserve` | WHAT — tool type or action category |
 
@@ -22,8 +22,10 @@ verb axis needed.
 
 | Claude Code event | Our prefix | Action | Output contract |
 |---|---|---|---|
-| PreToolUse | `pre_` | Gate before execution | `permissionDecision` + `additionalContext` |
-| PostToolUse | `post_` | Assess after execution | `systemMessage` |
+| PreToolUse | `pre_` | Gate before execution | `hookSpecificOutput.permissionDecision` + `additionalContext` |
+| PostToolUse | `post_` | Assess after execution | `hookSpecificOutput.additionalContext` |
+| Stop | `stop_` | React to LLM stop | exit code + optional side effects |
+| UserPromptSubmit | (special) | React to user input | exit code + optional side effects |
 | SessionStart | `start_` | Orient at session begin | `systemMessage` |
 | SessionEnd | `end_` | Finalize at session close | exit code only |
 | PreCompact | `compact_` | Preserve before compaction | `systemMessage` |
@@ -86,13 +88,18 @@ Handled by `hook_io::run_pre_hook(decide_fn)`.
 
 Decision function signature: `fn(&HookInput) -> HookDecision`
 
-Where `HookDecision` is `Allow | Warn { ... } | Deny { ... }`.
+Where `HookDecision` is `Allow | Warn { ... } | Ask { ... } | Deny { ... }`.
+
+`Ask` pauses execution and prompts the user for a decision. Used by workflow rules (e.g. `cargo build --release` interception).
 
 ### PostToolUse output (assess)
 
 ```json
 {
-    "systemMessage": "..."
+    "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": "..."
+    }
 }
 ```
 
@@ -118,8 +125,8 @@ These are fire-and-forget — never block the hook.
 Single crate, two entry points plus shared rule types:
 
 ```rust
-// PreToolUse
-pub fn run_hook<F>(decide_fn: F) -> ExitCode
+// PreToolUse (canonical entry point; run_hook is a deprecated alias)
+pub fn run_pre_hook<F>(decide_fn: F) -> ExitCode
 where F: FnOnce(&HookInput) -> HookDecision;
 
 // PostToolUse
@@ -132,10 +139,10 @@ where F: FnOnce(&PostHookInput) -> Option<String>;
 Shared rule parsing extracted from hook binaries:
 
 ```rust
-pub enum Severity { Warn, Block }
+pub enum Severity { Warn, Ask, Block }
 pub fn parse_severity(s: &str) -> Option<Severity>;
 
-pub struct RawRule { pub pattern: String, pub description: String }
+pub struct RawRule { pub pattern: String, pub description: String, pub severity: Option<Severity> }
 pub fn parse_rule_array(table: &toml::Table, key: &str) -> Vec<RawRule>;
 pub fn parse_toml_table(toml_str: &str) -> Result<toml::Table, String>;
 ```
@@ -179,12 +186,13 @@ hook_post_llm_tool
     |
     +-- dispatch on tool_name + file extension:
     |
-    +-- .py  --> assess_python(file_path)
-    |             saga <file> --sidecar | syn --stdin
-    |             captures syn stdout as systemMessage
-    |             syn broadcasts datagram as side effect
+    +-- .py     --> assess_source(file_path)
+    +-- .rs     --> assess_source(file_path)
+    +-- .svelte --> assess_source(file_path)
+    |               saga <file> --sidecar | syn --stdin
+    |               captures syn stdout as additionalContext
+    |               syn broadcasts datagram as side effect
     |
-    +-- .rs  --> None (future: cargo check)
     +-- .toml -> None (future: schema validation)
     +-- _    --> None (no-op)
 ```
@@ -199,7 +207,7 @@ intermediate-file architecture:
 - syn reads JSON from stdin AND broadcasts datagram
 - The hook only knows how to pipe them together
 
-Hook dependencies: `hook_io` + `serde_json`. Nothing else.
+Hook dependencies: `hook_io` + `serde_json`. Post hooks additionally depend on `std::process::Command` for subprocess orchestration.
 
 ---
 
@@ -215,12 +223,14 @@ All hooks are workspace members in `nornir/Cargo.toml`:
 "hooks/hook_pre_subagent_tool",
 "hooks/hook_pre_subagent_bash",
 "hooks/hook_post_llm_tool",
+"hooks/hook_stop_llm_tts",
 ```
 
 ### Deploy
 
-`deploy_hooks.py` builds release binaries and symlinks into `~/.ai/tools/bin/`.
+`nornir_deploy --build hooks` builds release binaries and symlinks into `~/.ai/tools/bin/`.
 Binary names match crate bin names exactly — no renaming at deploy.
+Categories and crate lists are defined in `deploy_categories.toml`.
 
 ### Settings.json wiring
 
@@ -251,7 +261,7 @@ Binary names match crate bin names exactly — no renaming at deploy.
 
 The four `hook_intercept_*` hooks were renamed to `hook_pre_*`.
 
-Completed: directories, Cargo.toml names, workspace members, deploy_hooks.py,
+Completed: directories, Cargo.toml names, workspace members, deploy_categories.toml,
 settings.json, old symlinks removed. All verified.
 
 ---
@@ -261,26 +271,26 @@ settings.json, old symlinks removed. All verified.
 The first PostToolUse hook. End-to-end flow:
 
 ```
-Claude writes .py file
+Claude writes .py/.rs/.svelte file
     |
     v
 PostToolUse fires
-    stdin = { tool_name: "Write", tool_input: { file_path: "/path/to/file.py" }, ... }
+    stdin = { tool_name: "Write", tool_input: { file_path: "/path/to/file" }, ... }
     |
     v
 hook_post_llm_tool
     |
     +-- extract file_path from stdin JSON
-    +-- filter: .py only, file must exist
+    +-- filter: .py/.rs/.svelte only, file must exist
     +-- spawn: saga <file_path> --sidecar
     |     saga writes .qa sidecar to disk (Svalinn reads later)
     |     saga emits .qa JSON to stdout
     +-- pipe saga stdout to: syn --stdin
-    |     syn filters, groups, formats TOON
+    |     syn report mode: filters, groups, formats TOON
     |     syn broadcasts datagram to Hlidskjalf (side effect)
     |     syn emits TOON to stdout
     +-- capture syn stdout
-    +-- return: { "systemMessage": "<TOON assessment>" }
+    +-- return as hookSpecificOutput.additionalContext
     |
     v
 Claude receives quality assessment in context window

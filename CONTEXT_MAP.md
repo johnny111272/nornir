@@ -1,6 +1,6 @@
 # Nornir Context Map
 
-**Generated:** 2026-03-13
+**Generated:** 2026-03-19
 **Purpose:** Validation-as-code Rust monorepo. Produces compiled binaries, PyO3 gate modules, and libraries for the `.ai` ecosystem. Schemas embedded at compile time. Three-tier architecture: core (pure) -> capability (I/O) -> binaries.
 
 ---
@@ -9,81 +9,82 @@
 
 | Document | When to read | Freshness |
 |----------|-------------|-----------|
-| `NORNIR_CONVENTIONS.md` | Before writing ANY code | CURRENT — consolidated 2026-03-13 from naming/org/building docs |
+| `NORNIR_CONVENTIONS.md` | Before writing ANY code | CURRENT — updated 2026-03-19 |
 | `CLAUDE.md` | Auto-loaded every session | CURRENT — restructured 2026-03-13 as Layer 2 |
-| `MUST_READ_BEFORE_BUILDING.md` | Before ANY build/deploy operation | CURRENT — nornir_deploy CLI reference |
-| `audit/AUDIT_GUIDE.md` | When auditing or reviewing code | CURRENT — priorities P1-P10 match codebase |
-| `hooks/HOOK_DESIGN.md` | When working on hooks | CURRENT — wire format, dispatch architecture, runner separation |
-| `cli/syn_cli/SYN_DESIGN.md` | When working on syn/saga quality pipeline | MOSTLY CURRENT — Phase 1 done, ratchet comparison not yet built |
+| `MUST_READ_BEFORE_BUILDING.md` | Before ANY build/deploy operation | CURRENT — nornir_deploy CLI + verify methods reference |
+| `audit/STRUCTURAL_AUDIT_GUIDE.md` | When auditing or reviewing code | CURRENT — priorities P1-P10 match codebase |
+| `hooks/HOOK_DESIGN.md` | When working on hooks | CURRENT — updated 2026-03-19 |
+| `cli/syn_cli/SYN_DESIGN.md` | When working on syn/saga quality pipeline | CURRENT — updated 2026-03-19 |
+| `interceptors/INTERCEPT_DESIGN.md` | When working on intercept pipeline | CURRENT — created 2026-03-19 |
 
 ## Documentation References (All)
 
 | Document | Status | Notes |
 |----------|--------|-------|
-| `NORNIR_CONVENTIONS.md` | CURRENT | Single source of truth for conventions |
+| `NORNIR_CONVENTIONS.md` | CURRENT | Updated 2026-03-19: deploy refs, test command, workspace deps |
 | `CLAUDE.md` | CURRENT | Session entry point, Layer 2 context protocol |
 | `CONTEXT_MAP.md` | CURRENT | This file — regenerate after significant changes |
-| `MUST_READ_BEFORE_BUILDING.md` | CURRENT | nornir_deploy usage, build process guidance |
-| `audit/AUDIT_GUIDE.md` | CURRENT | Architectural invariants P1-P10 |
-| `hooks/HOOK_DESIGN.md` | CURRENT | Hook subsystem design |
-| `cli/syn_cli/SYN_DESIGN.md` | MOSTLY CURRENT | syn_core extraction done, line counts updated |
-| `plans/IMPROVEMENT_PLAN.md` | COMPLETE | All 10 items done. Historical reference only. |
-| `NORNIR_NAMING.md` | SUPERSEDED | Replaced by NORNIR_CONVENTIONS.md |
-| `NORNIR_ORGANIZATION.md` | SUPERSEDED | Replaced by NORNIR_CONVENTIONS.md |
-| `NORNIR_BUILDING_AND_COMPOSITION.md` | SUPERSEDED | Replaced by NORNIR_CONVENTIONS.md |
-| `MANDATORY_READ_BEFORE_CODING.md` | SUPERSEDED | Absorbed into CLAUDE.md |
-| `QUICKSTART.md` | SUPERSEDED | Content covered by CONVENTIONS + CONTEXT_MAP |
+| `MUST_READ_BEFORE_BUILDING.md` | CURRENT | nornir_deploy usage, verify methods, build process guidance |
+| `audit/STRUCTURAL_AUDIT_GUIDE.md` | CURRENT | Architectural invariants P1-P10 |
+| `hooks/HOOK_DESIGN.md` | CURRENT | Updated 2026-03-19: Severity, HookDecision, dispatch, wire format |
+| `cli/syn_cli/SYN_DESIGN.md` | CURRENT | Updated 2026-03-19: PostToolUse uses report mode |
+| `interceptors/INTERCEPT_DESIGN.md` | CURRENT | Created 2026-03-19: intercept pipeline architecture |
+| `plans/IMPROVEMENT_PLAN.md` | ACTIVE | 10 prioritized items from dual audit |
 
 ---
 
 ## Crate Inventory
 
-**85 workspace members:** 11 core + 10 capability + 33 gates + 8 checks + 2 tools + 5 writers + 5 hooks + 5 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 1 interceptor + 1 daemon.
+**95 workspace members:** 13 core + 12 capability + 35 gates + 8 checks + 3 tools + 5 writers + 6 hooks + 6 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 2 interceptors + 1 daemon.
 
-### Tier 1: Core (11 crates, pure, no I/O)
+### Tier 1: Core (13 crates, pure, no I/O)
 
-| Crate | Purpose | Tests |
-|-------|---------|-------|
-| `error_core` | ValidationIssue types, educational error formatting | 10 |
-| `format_core` | JSON/YAML/TOML/TOON/TOMLX conversion | 78 |
-| `schema_core` | EmbeddedValidator with lazy-static schema loading | 3 |
-| `path_core` | Path field extraction, validate_path_segment | 14 |
-| `saga_core` | SanityReport + Issue types, pure path functions | 6 |
-| `syn_core` | Jq filter compilation, three-tier filtering, SynConfig | 39 |
-| `gleipnir_core` | Tree-sitter AST guardrail engine | 267 |
-| `diff_core` | Line-level diff and TOML block extraction | 26 |
-| `datagram_types` | Datagram, DatagramKind, Priority type definitions | 17 |
-| `report_render_core` | QA report grouping, formatting, serialization | 38 |
-| `compaction_inject_core` | Compaction summary instructions injection | 7 |
+| Crate | Purpose |
+|-------|---------|
+| `error_core` | ValidationIssue types, educational error formatting |
+| `format_core` | JSON/YAML/TOML/TOON/TOMLX conversion |
+| `schema_core` | EmbeddedValidator with lazy-static schema loading |
+| `path_core` | Path field extraction, validate_path_segment |
+| `saga_core` | SanityReport + Issue types, pure path functions |
+| `syn_core` | Jq filter compilation, three-tier filtering, SynConfig |
+| `gleipnir_core` | Tree-sitter AST guardrail engine |
+| `diff_core` | Line-level diff and TOML block extraction |
+| `datagram_types` | Datagram, DatagramKind, Priority type definitions |
+| `report_render_core` | QA report grouping, formatting, serialization |
+| `compaction_inject_core` | Compaction summary instructions injection |
+| `default_apply_core` | Default value application logic |
+| `intercept_core` | Exchange classification: ExchangeKind, classify_exchange, has_tool |
 
-### Tier 2: Capability (10 crates)
+### Tier 2: Capability (12 crates)
 
-| Crate | Purpose | Tests |
-|-------|---------|-------|
-| `schemas_embedded` | All schemas via include_str!() | 9 |
-| `path_verify_io` | Filesystem path existence checks | 8 |
-| `io_filter` | stdin-validate-stdout filter contract | 0 |
-| `io_check` | File-arg diagnostic output contract | 13 |
-| `gate_io` | Gate I/O orchestration (read/validate/write) | 0 |
-| `hook_io` | Hook input parsing, response formatting, rules | 40 |
-| `datagram_io` | Dual-transport datagram emission | 0 |
-| `intercept_io` | PyO3: json_to_toml + append_jsonl_line for bifrost | (PyO3) |
-| `write_engine` | Config-driven atomic writes, fsync, ai_home() | 12 |
-| `saga_runner` | QA report generation, directory walker, sidecar I/O | 29 |
+| Crate | Purpose |
+|-------|---------|
+| `schemas_embedded` | All schemas via include_str!() |
+| `path_verify_io` | Filesystem path existence checks |
+| `io_filter` | stdin-validate-stdout filter contract |
+| `io_check` | File-arg diagnostic output contract |
+| `gate_io` | Gate I/O orchestration (read/validate/write) |
+| `hook_io` | Hook input parsing, response formatting, rules |
+| `datagram_io` | Dual-transport datagram emission |
+| `intercept_io` | PyO3: json_to_toml + append_jsonl_line for bifrost |
+| `write_engine` | Config-driven atomic writes, fsync, ai_home() |
+| `saga_runner` | QA report generation, directory walker, sidecar I/O |
+| `default_apply_io` | Default value application with file I/O |
+| `session_io` | Shared session file I/O: append_exchange/subagent/compaction, record_compaction |
 
-### Tier 3: Binaries (64 executables + 33 gate modules)
+### Tier 3: Binaries (35 cargo executables + 35 gate modules + 2 PyO3 modules)
 
-- **33 gate modules** in `gates/` — PyO3 pipeline stage validators
+- **35 gate modules** in `gates/` — PyO3 pipeline stage validators
 - **8 check CLIs** in `cli/` — `check_raw_definition` through `check_anthropic_render`
-- **2 specialist tools** in `cli/` — `saga_cli` (binary: saga), `syn_cli` (binary: syn)
+- **3 specialist tools** in `cli/` — `saga_cli` (binary: saga), `syn_cli` (binary: syn), `hush`
 - **5 writers** in `writers/` — `append_truth_qc_report_record`, `append_interview_summaries_record`, `append_embedding_normalize_batch_20`, `append_raw_jsonl`, `write_truth_glossary_record`
-- **5 hooks** in `hooks/` — `hook_pre_llm_tool`, `hook_pre_llm_bash`, `hook_pre_subagent_tool`, `hook_pre_subagent_bash`, `hook_post_llm_tool`
-- **5 senders** in `senders/` — `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`
+- **6 hooks** in `hooks/` — `hook_pre_llm_tool`, `hook_pre_llm_bash`, `hook_pre_subagent_tool`, `hook_pre_subagent_bash`, `hook_post_llm_tool`, `hook_stop_llm_tts`
+- **6 senders** in `senders/` — `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`, `announce`
 - **1 rewriter** — `rewrite_compaction_summary`
 - **1 converter** — `convert_json_to_toml`
 - **1 dispatcher** — `split_jsonl_batches`
 - **1 watcher** — `watch_and_diff_exchange_intercepts`
-- **1 interceptor** — `traffic_interceptor_rewriter`
+- **2 interceptors** — `traffic_interceptor_rewriter` (PyO3 module), `intercept_replay` (binary)
 - **1 daemon** — `record_datagrams`
 
 ---
@@ -101,25 +102,22 @@ If you need to understand... read...
 | How to deploy | `MUST_READ_BEFORE_BUILDING.md` + `NORNIR_CONVENTIONS.md` > Deploying section |
 | How hooks work (wire format, dispatch) | `hooks/HOOK_DESIGN.md` |
 | How syn/saga quality pipeline works | `cli/syn_cli/SYN_DESIGN.md` |
-| What architectural violations look like | `audit/AUDIT_GUIDE.md` |
+| What architectural violations look like | `audit/STRUCTURAL_AUDIT_GUIDE.md` |
 | What a writer binary looks like | `NORNIR_CONVENTIONS.md` > Composition Patterns > Writers |
 | How to add a new crate | `NORNIR_CONVENTIONS.md` > Adding a New Crate |
+| How the intercept pipeline works | `interceptors/INTERCEPT_DESIGN.md` |
 | format_core TOMLX path expansion | `core/format_core/src/tomlx/mod.rs` — pass `resolve_env` closure |
 
 ---
 
 ## Known Issues / Active Work
 
-- `io_filter` crate is orphaned — imported by nothing, zero tests. Candidate for removal or integration.
+- `io_filter` crate is orphaned — imported by nothing, zero tests. Candidate for removal.
 - `traffic_interceptor_rewriter` naming exception — should be `intercept_traffic_rewrite` per conventions. Rename deferred.
 - `datagram_types` naming exception — should be `datagram_core` per core crate suffix convention. Rename deferred.
 - `schemas_embedded` lives in capability/ but has no I/O — could be core/. Move deferred.
+- `announce` naming exception — no `send_` prefix, architecturally misplaced in senders/ (650-line TTS app). Decomposition planned (IMPROVEMENT_PLAN.md item 1).
+- `hush` naming exception — no verb prefix, lives in cli/ but is a UserPromptSubmit hook.
 - Hook input wire format has no JSON Schema — typed accessors exist but no `.schema.json` file.
 - Syn config (`.syn/warn.toml`, `.syn/deny.toml`) parsed with typed structs but no schema file.
 - Ratchet comparison engine for syn gate mode not yet built (SYN_DESIGN.md Phase 2).
-
----
-
-## Test Summary
-
-877 tests across workspace, 0 failures (2026-03-13). Gate crates excluded from workspace test runs (PyO3 linker requirements — use `nornir_deploy --build gates`).

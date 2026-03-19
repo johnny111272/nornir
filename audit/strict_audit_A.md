@@ -1,142 +1,225 @@
-# Strict Audit Report A — Nornir Workspace
+# Strict Architectural Audit A
 
-**Auditor:** A (independent)
-**Date:** 2026-03-13
-**Scope:** Full workspace audit against AUDIT_GUIDE.md priorities P1-P10
-**Method:** Source code reading of every core, capability, and binary crate
+**Date:** 2026-03-19
+**Auditor:** A
+**Scope:** Full workspace — all 97 workspace members audited against AUDIT_GUIDE.md P1–P10
 
 ---
 
 ## Summary
 
-| Priority | Finding Count | Severity Breakdown |
-|----------|--------------|-------------------|
-| P1 — Pure Logic in Binaries | 0 | — |
-| P2 — I/O in Core Crates | 0 | — |
-| P3 — Exit Discipline | 0 | — |
-| P4 — Composition Over Reimplementation | 1 | 1 Medium |
-| P5 — Test Coverage of Decision Logic | 1 | 1 Low |
-| P6 — Security Hook Coverage | 0 | — |
-| P7 — Schema Enforcement | 0 | — |
-| P8 — Naming and Organization | 2 | 1 Medium, 1 Low |
-| P9 — Gleipnir Check Accuracy | 2 | 1 Medium, 1 Low |
-| P10 — Hardcoded Absolute Paths | 1 | 1 Medium |
+The workspace is structurally sound. The three-tier architecture is intact, security hooks have excellent dual-direction test coverage, and the recently extracted `intercept_core` + `session_io` crates demonstrate correct refactoring discipline. The most significant finding is the `announce` binary — a 650-line monolith with no tests, extensive `process::exit()` violations, and substantial pure logic trapped in a binary crate. Several smaller issues exist in other binaries.
 
-**Total findings: 7**
-**Critical: 0 | High: 0 | Medium: 4 | Low: 3**
-
-### Overall Assessment
-
-The workspace is in strong architectural health. The most recent improvement plan (items 1-10) addressed the most critical findings from previous audits. The three-tier architecture is strictly maintained: no core crate performs I/O, no capability crate violates its tier boundary, and process::exit is confined to main() functions. All five hook binaries have thorough dual-direction test coverage. Schema validation is consistently enforced through the gate/check architecture. The remaining findings are minor — mostly edge cases in gleipnir check precision and a composition opportunity.
+**Critical findings:** 1
+**Moderate findings:** 6
+**Minor findings:** 5
 
 ---
 
-## Findings
+## P1: Pure Logic Must Not Live in Binary Crates
 
-### P4-01
+### CRITICAL — `senders/announce/src/main.rs` (650 lines, 0 tests)
 
-**Priority:** P4 — Composition Over Reimplementation
-**Severity:** Medium
-**File(s):** `capability/io_check/src/lib.rs` lines 103-116, 121-133 (println! for structured output)
-**What:** The `io_check` crate uses `println!()` extensively in `emit_result` (line 103, 115) and `emit_error` (line 123) to write structured JSON to stdout. These functions handle both JSON and plain-text output modes, including constructing JSON via `serde_json::json!()` and printing it directly. The `io_filter` crate does the same thing at `capability/io_filter/src/lib.rs:28` with `print!("{}", output)`. Both crates are capability crates whose purpose is to write structured output to stdout, so `println!` is correct — but the JSON envelope construction (`{"ok": true, "data": {...}}` and `{"ok": false, "error": {...}}`) is duplicated with what every gate crate does via PyO3. There is no shared Rust function that produces the `{ok, data, error}` envelope.
-**Why it matters:** The gate API contract (`{"ok": bool, "data": ..., "error": ...}`) is defined in MANDATORY_READ_BEFORE_CODING.md. The io_check crate reimplements this contract shape as ad-hoc `serde_json::json!()` calls rather than using a shared type. If the contract shape changes, io_check must be updated separately. The PyO3 gates construct the same shape via PyDict, so the duplication crosses the Rust/Python boundary — a shared Rust struct serializable to this shape would reduce drift risk.
-**Fix:** Create a `GateResponse` struct in a core crate (perhaps `error_core` since it already defines `ValidationIssue`) with `ok: bool, data: Option<Value>, error: Option<GateError>`. Have `io_check::emit_result` and `io_check::emit_error` use it. Gate crates can also serialize through it if desired.
+The `announce` binary is the single worst P1 violation in the workspace. It contains substantial pure logic that should be in core crates:
 
-### P5-01
+1. **`compute_hash()`** (lines 402–410) — Pure SHA-256 hash computation over text, voice, speed, model, and language. Deterministic, no I/O.
+2. **`sanitize_filename()`** (lines 412–425) — Pure string transformation: lowercase, filter non-alphanumeric, truncate. Deterministic, no I/O.
+3. **`build_cache_path()`** (lines 427–432) — Pure path construction (except the `create_dir_all` side effect that should be separated).
+4. **`build_tts_body()`** (lines 438–449) — Pure JSON construction for the ElevenLabs API.
+5. **`pcm_s16le_to_f32()`** (lines 643–650) — Pure audio format conversion.
+6. **Config resolution logic** (`resolve_settings`, lines 293–351) — Four-layer config merge (CLI > VOICE.lock > profile > default). This is a pure priority-merge algorithm mixed with a single I/O call (`load_api_key`).
+7. **`apply_lookup()`** (lines 359–372) — Lookup table matching logic mixed with file reads.
 
-**Priority:** P5 — Test Coverage of Decision Logic
-**Severity:** Low
-**File(s):** `capability/io_check/src/lib.rs` lines 155-270
-**What:** The `io_check` crate has tests for `parse_check_args` and `emit_result` exit codes, but no integration test that exercises the full `run_check` path with a real validation function. The test coverage is adequate for the argument parsing and exit code logic, but the wiring between `read_input` -> `validate_fn` -> `emit_result` is untested as an integrated flow. This matters because `run_check` is the entry point for 8 check binaries.
-**Why it matters:** If the wiring between parse/read/validate/emit is incorrect, it would silently break all check binaries. The individual pieces are tested, but the composition is not. Risk is low because the function is simple and each piece works, but it represents an untested integration path.
-**Fix:** Add one test that calls `run_check` with a known validation function and verifies the exit code. This requires either injecting stdin (difficult in unit tests) or extracting the validate-and-emit portion into a testable function that takes input as a parameter rather than reading stdin.
+This binary has **zero tests**. None of the pure functions listed above are tested. The `sanitize_filename` function, `compute_hash`, and config resolution logic are the type of code that silently breaks when requirements change — and without tests, there is no detection mechanism.
 
-### P8-01
+### MODERATE — `daemons/record_datagrams/src/main.rs` `today()` (lines 58–95)
 
-**Priority:** P8 — Naming and Organization
-**Severity:** Medium
-**File(s):** `capability/io_check/src/lib.rs` line 137, `capability/io_filter/src/lib.rs` line 1
-**What:** The crate names `io_check` and `io_filter` do not follow the naming convention for capability crates. NORNIR_NAMING.md specifies that capability crates use the `_io` suffix (e.g., `datagram_io`, `hook_io`, `path_verify_io`) or descriptive names like `write_engine`, `gate_io`, `saga_runner`. The names `io_check` and `io_filter` use an `io_` prefix instead of a `_io` suffix or a descriptive name. This breaks the pattern: the convention is `{domain}_io` not `io_{domain}`.
-**Why it matters:** Naming inconsistency makes it harder to predict crate names. When someone looks for "the capability crate that does check I/O," they might search for `check_io` following the `{domain}_io` pattern and not find `io_check`. The prefix-vs-suffix inconsistency violates the stated convention and creates cognitive load.
-**Fix:** Rename `io_check` to `check_io` and `io_filter` to `filter_io`, or adopt descriptive names like `check_engine` and `filter_engine` to match the `write_engine` pattern. The `_engine` suffix communicates "capability crate that orchestrates I/O for this category."
+The `today()` function is a 37-line pure date computation (epoch seconds to YYYY-MM-DD civil date). It is deterministic, takes no parameters (uses system time, but the core algorithm is pure given seconds input), and is exactly the kind of utility that another binary will eventually need. Currently untestable because it's entangled with `SystemTime::now()`.
 
-### P8-02
+**Recommendation:** Extract to a function `fn civil_date(epoch_secs: u64) -> String` in a core crate, inject the timestamp.
 
-**Priority:** P8 — Naming and Organization
-**Severity:** Low
-**File(s):** `capability/schemas_embedded/src/lib.rs`
-**What:** The crate `schemas_embedded` lives in `capability/` but it contains no I/O. It is a pure collection of `include_str!()` constants and `EmbeddedValidator` statics. It depends on `schema_core` (a core crate) and nothing else with I/O. By the tier definitions in NORNIR_ORGANIZATION.md, it should be in `core/` since it is pure data (embedded strings) plus pure computation (validator compilation via `OnceLock`).
-**Why it matters:** Placing a pure crate in the capability tier weakens the tier boundary's signal. Someone reading the directory structure would assume `capability/schemas_embedded` does I/O, but it does not. This is a classification error, not a functional one.
-**Fix:** Move `schemas_embedded` from `capability/` to `core/`. It depends only on `schema_core` (core) and `include_str!()` (compile-time, no runtime I/O).
+### MODERATE — `dispatchers/split_jsonl_batches/src/main.rs` `compute_batches()` (lines 70–98)
 
-### P9-01
+Pure batch-sizing algorithm — takes `(total, min, max)` and returns a `Vec<usize>`. Well-tested within the binary (8 tests), but trapped here. If any future tool needs batch computation, this function is invisible.
 
-**Priority:** P9 — Gleipnir Check Accuracy
-**Severity:** Medium
-**File(s):** `core/gleipnir_core/src/checks_rs/prohibited.rs` lines 196-209, 211-229, 239-270
-**What:** The `no_println` check exempts `println!` inside `fn main()` (line 259) and inside functions named `print_*`, `emit_*`, `display_*` (lines 220-224). The `in_main_function` check walks up ancestors and returns true if ANY enclosing `function_item` is named `main`. This means that `println!` inside a helper function called FROM main would still be flagged (correct), but `println!` inside a closure INSIDE main would be exempted (potentially incorrect for non-output closures). The `in_output_function` exemption is permissive: ANY function starting with `emit_` gets a blanket exemption, but `emit_validated` (in datagram_io) and `emit_validated_or_alert` are not output functions — they are validation functions that happen to start with `emit_`. If gleipnir ever checks capability crates (it currently only runs on binary main.rs files via saga), these would be false negatives.
-**Why it matters:** The `emit_*` exemption is a prefix match that will grant false exemptions to functions that start with `emit_` but do not produce stdout output. Currently this is not a live problem because gleipnir Rust checks run on individual files and these exemption functions are only relevant when scanning the specific file. But the exemption is semantically incorrect — `emit_validated` does not use println!, so it would never trigger, but if someone wrote `emit_datagram_debug()` with a `println!` inside it, the check would silently exempt it.
-**Fix:** Narrow the `in_output_function` exemption to exact names (`print_help`, `print_usage`, `display_report`, etc.) rather than prefix matching, or require that the exempted function contains `println!` as its primary purpose (a heuristic: the function body is mostly print statements).
+### MINOR — `hooks/hook_stop_llm_tts/src/main.rs` `filter_text()` (lines 109–142)
 
-### P9-02
+Pure markdown stripping function. Takes text, returns filtered text. Well-tested (8 tests), but if any other binary needs markdown-to-plain-text conversion, this function is invisible. Lower urgency because the use case is narrow.
 
-**Priority:** P9 — Gleipnir Check Accuracy
-**Severity:** Low
-**File(s):** `core/gleipnir_core/src/checks_rs/prohibited.rs` lines 88-129
-**What:** The `no_unwrap` check has a sophisticated `in_initialization_context` function that exempts `.unwrap()` and `.expect()` inside `static_item`, `const_item`, and closures passed to `get_or_init`/`get_or_try_init`. This is correct and well-calibrated. However, the check does not exempt `.expect()` inside `include_str!()` compile-time contexts or inside `LazyLock::new(|| ...)` closures directly — it only exempts when the closure is passed to `get_or_init`. Looking at `core/gleipnir_core/src/lib.rs:25`, the pattern `LazyLock::new(|| toml::from_str(MESSAGES_TOML).expect(...))` is used. The `is_init_closure` function checks for `get_or_init` and `get_or_try_init` but NOT for `LazyLock::new`. However, the `in_initialization_context` function also checks for `static_item` ancestor (line 121), and since `LazyLock` is always declared as a `static`, the closure is inside a `static_item` and IS correctly exempted via that path. So this is actually correctly handled, but the code path is non-obvious — the exemption works via `static_item` ancestor detection, not via the `is_init_closure` path.
-**Why it matters:** The check is correct but fragile. If someone declared a `LazyLock` as a `let` binding inside a function (unusual but possible), the exemption would not apply. The `is_init_closure` function was clearly added to handle `OnceLock::get_or_init` which appears inside function bodies, but `LazyLock::new` gets exempted by a different path. This dual-path exemption should be documented.
-**Fix:** Add `new` to the method list in `is_init_closure` so that `LazyLock::new(|| ..)` is explicitly recognized, or add a comment explaining that `LazyLock::new` closures are exempted via the `static_item` ancestor path.
+### MINOR — `hooks/hook_pre_llm_bash/src/main.rs` `make_decision()` (lines 240–292)
 
-### P10-01
-
-**Priority:** P10 — Hardcoded Absolute Paths
-**Severity:** Medium
-**File(s):** `writers/write_truth_glossary_record/src/main.rs` lines 9-14, `writers/append_embedding_normalize_batch_20/src/main.rs` lines 9-14, `writers/append_truth_qc_report_record/src/main.rs` lines 9-13, `writers/append_interview_summaries_record/src/main.rs` lines 9-14, `writers/append_raw_jsonl/src/main.rs`
-**What:** All four writer binaries (glossary, embedding, qc_report, summaries) construct output paths using `write_engine::ai_home()` which resolves to `$HOME/.ai/`. The paths themselves are relative to that base (e.g., `spaces/bragi/truth/quarantine`), which is correct. However, the `schema_source_path` field in the WriterConfig is constructed as an absolute path like `base.join("spaces/bragi/schemas/glossary.schema.json")`. This path is used only for `--help` display, but it hardcodes the assumption that schemas live at `~/.ai/spaces/bragi/schemas/`. If the bragi workspace moves or the schema directory structure changes, these display paths become stale. The output paths (`spaces/bragi/truth/quarantine`, etc.) are similarly hardcoded but these are the actual target locations and cannot be easily abstracted.
-**Why it matters:** The hardcoded paths couple four binary crates to a specific directory layout. If the bragi workspace moves, all four writers need source changes and redeployment. The `ai_home()` function provides the base, but everything after it is a string literal. This was identified in the previous improvement plan (item 10) and the `ai_home()` function was the fix — but the relative paths after it are still hardcoded strings.
-**Fix:** This is partially by design (writer binaries ARE specific to a workspace layout), but the `schema_source_path` field is purely informational. Consider either dropping it from `--help` output or deriving it from the schema's embedded name rather than a hardcoded filesystem path.
+Pure function that maps `(Severity, category, description, command) -> HookDecision`. Already well-tested. Shared with `hook_pre_llm_tool/src/main.rs` (which has its own `make_decision` with identical logic). This is a live reimplementation — two binaries contain the same pure function with the same signature and same behavior. One should be in `hook_io`.
 
 ---
 
-## Verified Clean Areas
+## P2: The Three-Tier Dependency Model
 
-The following areas were explicitly checked and found to be correct:
+### No tier violations found.
 
-### P1 — Pure Logic in Binaries (CLEAN)
-All binary crates delegate to core/capability crates. No binary reimplements validation, format conversion, or decision logic. The check binaries (`check_raw_definition`, `check_universal_format`, etc.) are exemplary: each is under 30 lines, delegating to `io_check::run_check` with a validation closure that calls core functions.
+- No binary crate depends on another binary crate.
+- All core crates depend only on other core crates and workspace external deps.
+- All capability crates depend on core and other capability crates.
+- `schemas_embedded` remains in `capability/` despite having no I/O — known deferred issue, documented in CONTEXT_MAP.md.
 
-### P2 — I/O in Core Crates (CLEAN)
-Every core crate was checked:
-- `gleipnir_core`: no std::fs, no std::env, no std::io (only tree-sitter parsing of byte slices)
-- `format_core`: no std::fs, no std::env (the `resolve_env` parameter is a closure injected by the caller, not direct env access; verified in `tomlx/processor.rs:29` and `tomlx/paths.rs`)
-- `schema_core`: no I/O (uses OnceLock for lazy compilation, operates on strings)
-- `error_core`: no I/O (pure error types and formatting)
-- `path_core`: no I/O (pure path string validation)
-- `syn_core`: no I/O (jaq filter compilation and evaluation on in-memory data)
-- `saga_core`: no I/O (pure types: `SanityReport`, `Issue`, path functions)
-- `report_render_core`: no I/O (pure formatting and grouping)
-- `datagram_types`: no I/O (pure Datagram struct and serialization)
-- `diff_core`: no I/O (pure diff computation)
+### Naming anomalies (known, deferred):
 
-All core Cargo.toml files were checked — none depend on capability crates. The previous audit finding about `gleipnir_core/config.rs` doing I/O has been resolved (the module no longer exists).
+- `core/datagram_types` — should be `datagram_core` per the `_core` suffix convention.
+- `interceptors/traffic_interceptor_rewriter` — should be `intercept_traffic_rewrite` per verb-prefix convention.
 
-### P3 — Exit Discipline (CLEAN)
-All `process::exit()` calls are inside `fn main()`. Verified by cross-referencing the grep results for `process::exit` against `fn main()` locations. Every match is in a main.rs file inside `fn main()`. Helper functions throughout the codebase return `Result`.
+---
 
-### P6 — Security Hook Coverage (CLEAN)
-All five hook binaries have comprehensive test suites:
-- `hook_pre_llm_tool`: 35 tests covering floor/probing/gaming layers, allow_path exemptions, disabled categories, per-rule severity overrides, and path field extraction (both `file_path` and `path` fields). Tests both directions: malicious inputs detected, benign inputs allowed.
-- `hook_pre_llm_bash`: 60+ tests covering subversion, truncation, evasion, destruction, and revert categories. Each category has both positive (must detect) and negative (must not detect) tests. Includes benign command tests (`ls`, `cargo build`, `cat`, `git status`, `git diff`).
-- `hook_pre_subagent_tool`: 22 tests covering tool-based path restrictions with multiple prefixes, path traversal detection, field preference order (`file_path` over `path`), unknown tool denial, and empty map behavior.
-- `hook_pre_subagent_bash`: shares the bash rule engine with `hook_pre_llm_bash` (same `parse_rules`/`check_category` functions).
-- `hook_post_llm_tool`: tests present (verified at line 105).
+## P3: process::exit and Panic Discipline
 
-### P7 — Schema Enforcement (CLEAN)
-All writer binaries use `write_engine::run()` which validates stdin against the embedded schema before writing. All check binaries use `schema.validate()`. All gate crates use `gate_io::read_and_validate()` or `gate_io::validate_and_write()`. The `schemas_embedded` crate has tests that verify all 26 schemas compile successfully. No binary bypasses schema validation.
+### CRITICAL — `senders/announce/src/main.rs`
 
-### Previous Audit Findings — Verified Fixed
-- **gleipnir_core config.rs I/O in Tier 1**: Fixed. The config module no longer exists. `format_core/tomlx` now takes a `resolve_env` closure parameter.
-- **record_datagrams static mut unsoundness**: Fixed. The code now uses `AtomicBool` (line 118) and `OnceLock` (line 119) instead of `static mut`. The only `unsafe` is the `libc::signal` call (line 128-131) which is inherently unsafe and properly contained.
-- **syn_cli pure logic extraction**: Fixed. `syn_core` contains all filter/policy logic. `syn_cli/src/main.rs` is I/O orchestration only.
-- **datagram / path_verify naming**: Fixed. Renamed to `datagram_io` and `path_verify_io`.
-- **format_core tomlx env access**: Fixed. `resolve_env` is now a closure parameter, not direct `std::env` access.
+`process::exit()` appears in **21 locations** across the file, in at least 10 different helper functions:
+
+- `get_input_text()` — 3 exit calls (lines 225, 231, 236)
+- `load_api_key()` — 1 exit call (line 272)
+- `stream_and_play()` — 2 exit calls (lines 474, 478)
+- `download_cache_and_play()` — 2 exit calls (lines 509, 513)
+- `play_pcm_from_file()` — 3 exit calls (lines 575, 586, 594)
+- `play_audio_file()` — 4 exit calls (lines 611, 619, 627, 635)
+- `main()` — 4 exit calls (lines 141, 145, 173, 190) — these are acceptable since they're in main, though 2 are for internal subcommand dispatch which is borderline
+
+Every helper function with `process::exit()` is untestable — calling it from a test kills the test harness. This is the textbook violation described in AUDIT_GUIDE.md P3.
+
+**Recommendation:** Convert all helper functions to return `Result<T, String>`. Keep `process::exit()` only in `main()`.
+
+### All other binaries: Compliant.
+
+Every other binary in the workspace follows the `main()` → `run()` → Result pattern correctly. The hooks use `ExitCode` returns. Writers are 16–24 line declarative shells. Check CLIs are 20–27 line shells.
+
+---
+
+## P4: Composition Over Reimplementation
+
+### MODERATE — `make_decision()` duplicated across hook binaries
+
+`hook_pre_llm_bash` (lines 240–292) and `hook_pre_llm_tool` (lines 163–208) each contain their own `make_decision()` function that maps `Severity` + metadata to `HookDecision`. The implementations are structurally identical — same match arms, same string formatting patterns. This should live in `hook_io` as a shared function.
+
+### MODERATE — `announce` does its own file I/O instead of using `write_engine`
+
+The `announce` binary does raw `fs::write()` for cache files (line 504) and `fs::write()` for hits table (line 285). It should use `write_engine::append_line_fsync` or at minimum pattern-match the atomic write discipline used elsewhere.
+
+### MODERATE — `announce` resolves `$HOME` directly instead of using `write_engine::ai_home()`
+
+`resolve_voice_dir()` (line 244) and `resolve_audio_dir()` (line 249) both read `std::env::var("HOME")` directly. The convention says to use `write_engine::ai_home()` for runtime `$HOME/.ai` resolution.
+
+### MODERATE — `hook_stop_llm_tts` and `hook_post_llm_tool` both resolve `$HOME` directly
+
+`voice_dir()` (line 95–98 in hook_stop_llm_tts) and `tools_bin()` (line 92–95 in hook_post_llm_tool) both read `std::env::var("HOME")` directly instead of using `write_engine::ai_home()`.
+
+---
+
+## P5: Naming Encodes Architecture
+
+### MODERATE — `senders/announce` violates verb prefix convention
+
+Convention: senders use `send_` prefix. The binary is named `announce`, not `send_announce` or `send_tts`. An LLM encountering this crate would not infer it belongs in `senders/` or that it follows the sender pattern. It also does not follow the sender pattern — senders are ~25-line thin wrappers on `datagram_io::emit()`. This binary is a 650-line full application with HTTP client, audio playback, caching, config management, and subprocess spawning.
+
+**Assessment:** `announce` is architecturally misplaced. It is not a sender — it is a standalone tool. It should either be in `cli/` as a specialist tool (like `saga_cli`/`syn_cli`) or decomposed into a core crate (pure logic), a capability crate (API client, audio playback), and a thin binary.
+
+### MINOR — `gate_paths_verified` lacks `_input`/`_output` suffix
+
+Convention: `gate_{stage}_{direction}` where direction is `input` or `output`. `gate_paths_verified` has no direction suffix. It's a passthrough gate (reads, validates, writes) which doesn't fit neatly into the input/output model, but the naming inconsistency means an LLM may not correctly classify it.
+
+### MINOR — `hook_stop_llm_tts` uses non-standard verb
+
+Convention: hooks use `hook_` prefix. This crate uses `hook_stop_` which doesn't map to a standard hook event type. The actual CC hook type is `Stop` (not `PreToolUse` or `PostToolUse`). The name is descriptive but doesn't follow the `hook_pre_`/`hook_post_` pattern used by all other hooks. This is a minor concern since the `Stop` event type is genuinely different from pre/post tool hooks.
+
+---
+
+## P6: Security Hook Coverage
+
+### Strong. Both `hook_pre_llm_bash` and `hook_pre_subagent_bash` have extensive dual-direction test coverage.
+
+**hook_pre_llm_bash:** 70+ tests covering:
+- Subversion: 6 positive detections (rm lock, chflags, env override, chmod, flock)
+- Truncation: 6 positive detections (head/tail/grep/sed/awk on constraint files)
+- Evasion: 5 positive detections (git checkout/restore, mv/cp constraint files, git config hooks)
+- Destruction: 7 positive + 3 negative (git reset --hard, checkout ., clean -f vs. soft reset, checkout -b, clean -n)
+- Revert: 5 positive + 4 negative (checkout --, restore, stash vs. restore --staged, stash list/pop/show)
+- Workflow: 5 positive + 3 negative (cargo build, maturin vs. cargo test/check/clippy)
+- Benign commands: 5 explicit non-match tests (ls, cargo build, cat, git status, git diff)
+- Severity mapping: 2 tests
+- Exemptions: 1 test
+- Edge cases: 4 tests (command truncation at 57/60/61 chars)
+
+**hook_pre_subagent_bash:** 50+ tests covering:
+- Chain characters: 11 tests (semicolon, &&, ||, backtick, $(), single & ok, empty)
+- Bare name validation: 11 tests (valid stems, path separators, hidden files, flags, empty, backslash, dotdot, null byte)
+- Heredoc parsing: 8 tests (basic, with name arg, not heredoc, unquoted/double-quoted/lowercase delimiter, no pipe)
+- Writer validation: 9 tests (valid heredoc, unknown writer, bad name arg, non-heredoc, echo pipe variants, wrong delimiter, valid name arg, leading dot/dash)
+- Inspect validation: 10 tests (path under/outside prefix, chaining, path traversal, command substitution, no paths, relative paths, multiple paths)
+
+**hook_pre_llm_tool:** 20+ tests with floor (always-block), probing, gaming, allow-path exemptions, priority ordering, per-rule severity overrides.
+
+**hook_pre_subagent_tool:** 18 tests covering tool-path mapping, unknown tools, path traversal, file_path vs path precedence.
+
+No gaps identified in security hook test coverage.
+
+---
+
+## P7: Schema-First Data Validation
+
+### Compliant.
+
+- All structured data validated via `schemas_embedded` + `schema_core`.
+- 20 agent schemas + 7 tool schemas properly embedded.
+- Wire format schema used by `traffic_interceptor_rewriter` and `intercept_replay`.
+- No procedural shape-checking found that duplicates schema validation.
+- `galdr-style.schema.json` added to `schemas_embedded` (GALDR_STYLE).
+
+### Note: No schema exists for hook input wire format or syn config (.syn/warn.toml, .syn/deny.toml). These are documented as known issues in CONTEXT_MAP.md.
+
+---
+
+## P8: Stale Tests After Contract Changes
+
+### No stale tests identified.
+
+The recent `intercept_core` + `session_io` extraction created new tests that match the current API contracts. The `intercept_replay` binary's `process_line()` function properly uses the new `session_io` API. The `traffic_interceptor_rewriter` was refactored to call `session_io::record_compaction()` for shared compaction flow, and its tests verify the current contract.
+
+---
+
+## P9: Gleipnir Check Accuracy
+
+### Not audited in depth.
+
+Gleipnir's checks are documented in the audit guide as mechanical enforcement via tree-sitter AST analysis. The audit guide explicitly states "Do not duplicate this coverage in architectural audits." No false-positive reports were encountered during this audit.
+
+---
+
+## P10: Orphaned Artifacts
+
+### MINOR — `capability/io_filter` is orphaned
+
+Zero tests, imported by nothing. The crate provides a `run_filter()` function (37 lines) that no binary uses. This has been a known issue since 2026-03-13 (documented in CONTEXT_MAP.md). It should be either integrated into a consumer or removed.
+
+### Workspace alignment: Perfect.
+
+Every workspace member in `Cargo.toml` has a corresponding entry in `deploy_categories.toml`. No phantom deploy entries, no undeploy-able crates.
+
+### Documentation: Current.
+
+CONTEXT_MAP.md lists 85 workspace members but the actual count is now 97 (new crates: `default_apply_core`, `default_apply_io`, `session_io`, `intercept_core`, `intercept_replay`, `announce`, `hook_stop_llm_tts`, `gate_raw_definition_defaults`, `gate_galdr_style_input`, and others added since the last context map refresh). The CONTEXT_MAP.md crate inventory is stale.
+
+---
+
+## Findings Summary Table
+
+| ID | Priority | Category | Location | Finding |
+|----|----------|----------|----------|---------|
+| A1 | CRITICAL | P1+P3 | `senders/announce` | 650-line monolith, 0 tests, 21 process::exit calls in helpers, substantial pure logic trapped in binary |
+| A2 | MODERATE | P1 | `daemons/record_datagrams` | `today()` pure date computation trapped in binary |
+| A3 | MODERATE | P1 | `dispatchers/split_jsonl_batches` | `compute_batches()` pure algorithm trapped in binary |
+| A4 | MODERATE | P4 | `hook_pre_llm_bash` + `hook_pre_llm_tool` | `make_decision()` duplicated across two hooks — should be in `hook_io` |
+| A5 | MODERATE | P4 | `senders/announce` | Direct `fs::write()` and `std::env::var("HOME")` instead of `write_engine` and `ai_home()` |
+| A6 | MODERATE | P4 | `hook_stop_llm_tts` + `hook_post_llm_tool` | Direct `std::env::var("HOME")` instead of `write_engine::ai_home()` |
+| A7 | MODERATE | P5 | `senders/announce` | Missing `send_` prefix, architecturally misplaced — not a sender, is a full application |
+| A8 | MINOR | P1 | `hooks/hook_stop_llm_tts` | `filter_text()` pure markdown stripping trapped in binary |
+| A9 | MINOR | P5 | `gates/gate_paths_verified` | Missing `_input`/`_output` suffix |
+| A10 | MINOR | P5 | `hooks/hook_stop_llm_tts` | Non-standard `hook_stop_` verb pattern |
+| A11 | MINOR | P10 | `capability/io_filter` | Orphaned crate — zero tests, zero consumers |
+| A12 | MINOR | P10 | `CONTEXT_MAP.md` | Stale crate inventory (lists 85 members, actual is 97) |

@@ -38,3 +38,21 @@ Categories are defined in `deploy_categories.toml`.
 - `cargo build` (debug, no `--release`) — compilation checking, produces debug binaries only
 
 A hook intercepts `cargo build --release` and `maturin build` to remind you.
+
+## deploy_categories.toml Reference
+
+Each category in `deploy_categories.toml` specifies a `verify` method that nornir_deploy runs after building to confirm the binary works.
+
+| Method | What it does | When to use |
+|--------|-------------|-------------|
+| `help` | Runs `binary --help`, expects exit 0 | Binaries with clap or manual `--help` |
+| `stdin` | Pipes `verify_input` JSON to stdin, expects exit 0 | Binaries that read JSON from stdin (hooks, converters, rewriters) |
+| `exit_codes` | Runs binary with no args, accepts any code in `valid_exit_codes` | Binaries that exit non-zero on missing args but prove they load |
+| `python_import` | Runs `python -c "import <module>"`, expects exit 0 | PyO3 `.so` modules (gates, interceptors) |
+
+Additional fields:
+- `verify_input` — JSON string piped to stdin (required when `verify = "stdin"`)
+- `valid_exit_codes` — list of accepted exit codes (required when `verify = "exit_codes"`)
+- `binary_names` — optional table mapping crate name to binary name when they differ (e.g., `saga_cli = "saga"`)
+- `pyo3_crates` — crates built with maturin instead of cargo
+- `python_version` — Python version for maturin builds (e.g., `"python3.13"`)

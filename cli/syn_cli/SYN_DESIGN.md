@@ -288,11 +288,14 @@ Located in `.syn/` discovered by walking up the directory tree.
 
 ### PostToolUse Hook (current)
 
-After every Python file write:
-1. Saga runs on the written file → produces fresh .qa
-2. Syn gate mode: compares fresh .qa against baseline sidecar
-3. Decision returned as additionalContext (TOON format)
+After every `.py`, `.rs`, or `.svelte` file write:
+1. Saga runs on the written file → produces fresh `.qa` sidecar
+2. Syn **report mode** (default): filters, groups, formats as TOON
+3. Assessment returned as `hookSpecificOutput.additionalContext`
 4. Broadcast to Hlidskjalf
+
+**Future:** Once the ratchet comparison engine is built, this hook will
+switch to gate mode for per-file regression enforcement.
 
 ### PreToolUse Hook (future)
 

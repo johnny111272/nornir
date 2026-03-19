@@ -1,174 +1,279 @@
-# Strict Audit B -- 2026-03-13
+# Strict Architectural Audit B
 
-Auditor: Claude Opus 4.6 (Auditor B, independent)
-
-## Summary
-
-| Priority | Findings | Critical | High | Medium | Low |
-|----------|----------|----------|------|--------|-----|
-| P1       | 2        | 0        | 1    | 1      | 0   |
-| P2       | 1        | 0        | 0    | 1      | 0   |
-| P3       | 1        | 0        | 0    | 1      | 0   |
-| P4       | 2        | 0        | 1    | 1      | 0   |
-| P5       | 1        | 0        | 0    | 0      | 1   |
-| P6       | 0        | 0        | 0    | 0      | 0   |
-| P7       | 2        | 0        | 0    | 1      | 1   |
-| P8       | 0        | 0        | 0    | 0      | 0   |
-| P9       | 0        | 0        | 0    | 0      | 0   |
-| P10      | 2        | 0        | 0    | 1      | 1   |
-| **Total**| **11**   | **0**    | **2**| **6**  | **3**|
-
-**Overall Assessment:** The workspace is in strong health. The two previous audit rounds and the 10-item improvement plan have resolved the most damaging structural issues (gleipnir_core I/O in Tier 1, static mut unsoundness, JSONL-append duplication, hardcoded paths in writers). The three-tier architecture is well enforced. Binary crates are thin and compose correctly from core/capability crates. All deploy scripts are consistent with the actual crate directories. There are no critical findings.
-
-The remaining findings are medium and low severity: a few pockets of pure logic trapped in binary crates, one composition bypass in the interceptor's raw-append path, zero test coverage for `io_filter`, and an orphaned workspace member (`io_filter` is defined but never imported by any crate). None of these are urgent, but each represents architectural drift that will compound if left.
+**Auditor:** B
+**Date:** 2026-03-19
+**Scope:** Full workspace audit against AUDIT_GUIDE.md invariants P1-P10
 
 ---
 
-## Findings
+## P1: Pure Logic in Binary Crates
 
-### P1-01
+### VIOLATION: `announce` (senders/announce/) — 650-line monolith with extensive pure logic
 
-**Priority:** P1 -- Pure Logic Must Not Live in Binary Crates
-**Severity:** High
-**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 27-116
-**What:** The `classify_exchange` function and its helpers (`is_main_agent`, `tool_count`, `is_web_search_only`) plus the `ExchangeKind` enum and `MAIN_AGENT_IDENTITY` constant are pure logic trapped in a binary crate. These functions take a `serde_json::Value` and return a classification -- no I/O, no side effects, fully deterministic.
-**Why it matters:** The watcher binary (`watch_and_diff_exchange_intercepts`) already delegates its diff logic to `diff_core`. But if any future tool needs to classify exchanges (e.g., a replay analyzer, a traffic summary tool, a compaction counter), that classification logic is locked inside this binary and will be reimplemented. The `MAIN_AGENT_IDENTITY` constant is especially concerning -- if the identity string changes, the hardcoded copy here and any future copies will diverge.
-**Fix:** Extract `ExchangeKind`, `classify_exchange`, `is_main_agent`, `tool_count`, `is_web_search_only`, and `MAIN_AGENT_IDENTITY` into `diff_core` (which already handles exchange splitting and diffing). The interceptor binary becomes thinner orchestration.
+The `announce` binary at 650 lines is the largest single violation in the workspace. It contains substantial pure logic that should be in a core or capability crate:
 
-### P1-02
+1. **`compute_hash()`** (line 402) — pure SHA-256 hash computation over text+voice+speed+model+lang. Deterministic, no I/O.
+2. **`sanitize_filename()`** (line 412) — pure text-to-filename conversion. Deterministic string transformation.
+3. **`build_cache_path()`** (line 427) — partially pure path construction (calls `create_dir_all` inline, but the path logic itself is pure).
+4. **`build_tts_body()`** (line 438) — pure JSON body construction for the ElevenLabs API.
+5. **`pcm_s16le_to_f32()`** (line 643) — pure PCM audio conversion. Takes bytes, returns floats.
+6. **Config resolution logic** (`resolve_settings`, lines 293-351) — multi-layer config merging (CLI > VOICE.lock > profile > default) is pure priority-merge logic once the inputs are resolved.
+7. **`apply_lookup()`** (line 359) — lookup table resolution mixes I/O (file read) with pure matching logic that could be separated.
+8. **`filter_text()`** in `hook_stop_llm_tts` (line 109) — pure markdown stripping logic. If announce grows a text preprocessing pipeline, this will be reimplemented.
 
-**Priority:** P1 -- Pure Logic Must Not Live in Binary Crates
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/watchers/watch_and_diff_exchange_intercepts/src/main.rs` lines 58-91
-**What:** The functions `parse_pace` and `jitter_sleep` (xorshift64 PRNG) are pure logic in a binary crate. `workspace_from_parent_dir` is also a pure function that extracts a workspace name from a path -- a different implementation from `datagram_io::workspace_from_path` but serving a related purpose.
-**Why it matters:** `parse_pace` and `jitter_sleep` are generic utility functions. If another daemon or watcher ever needs rate-limited polling with natural variation, this logic will be reimplemented. `workspace_from_parent_dir` is particularly notable because `datagram_io` already has `workspace_from_path` -- having two workspace derivation functions in different places (one in a binary, one in a capability crate) is exactly the divergence pattern P1 warns about.
-**Fix:** `workspace_from_parent_dir` should be consolidated with `datagram_io::workspace_from_path` or exposed alongside it. The pace/jitter functions are lower priority but could live in a utility module if another binary needs them.
+This binary is on a trajectory to become the monolith the audit guide warns about. An `announce_core` crate should hold hash computation, filename sanitization, config merging, and audio conversion.
 
-### P2-01
+### VIOLATION: `record_datagrams` — hand-rolled date formatting
 
-**Priority:** P2 -- The Three-Tier Dependency Model
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/core/datagram_types/Cargo.toml` line 2
-**What:** The `datagram_types` crate sits in `core/` but its package name is `datagram_types`, not `datagram_types_core`. Per the naming convention, core crates use the `_core` suffix, and the suffix and directory must agree.
-**Why it matters:** An LLM encountering `datagram_types` (no `_core` suffix) in the `core/` directory receives conflicting signals about its tier. The name suggests capability tier; the directory says core tier. A future session might incorrectly add I/O to it (because the name doesn't signal purity), or might place a new types-only crate outside `core/` (following the naming pattern rather than the directory pattern). The crate is genuinely pure (only serde derives, no I/O) and correctly placed in `core/`, so the fix is the name.
-**Fix:** Rename `datagram_types` to `datagram_types_core` (package name, directory name, and all `use` statements). Alternatively, if the `_core` suffix feels redundant for a types-only crate, document this as an explicit naming exception in `NORNIR_NAMING.md` alongside the saga_cli/syn_cli exceptions.
+The `today()` function (line 58, 37 lines) is a hand-rolled epoch-to-civil-date converter. This is pure deterministic math that belongs in a shared utility, not reimplemented in a daemon binary. If any other binary ever needs date-stamped filenames, this will be copied.
 
-### P3-01
+### VIOLATION: `watch_and_diff_exchange_intercepts` — `jitter_sleep` and `parse_pace`
 
-**Priority:** P3 -- process::exit and Panic Discipline
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/core/schema_core/src/lib.rs` lines 49-53
-**What:** Two `.expect()` calls in `EmbeddedValidator::get_validator()`:
-```rust
-let schema: Value = serde_json::from_str(self.schema_json)
-    .expect("embedded schema must be valid JSON");
-Validator::new(&schema)
-    .expect("embedded schema must be valid JSON Schema")
-```
-These are in a `OnceLock::get_or_init` closure, which means they execute lazily on first use rather than at program startup.
-**Why it matters:** These `.expect()` calls are in a core library crate. While the schemas are embedded at compile time via `include_str!()` and a malformed schema would be caught at build time (the include would fail or tests would fail), the `.expect()` pattern is a panic site in production code. If a schema file somehow became corrupted after build (unlikely but not impossible in a dynamic linking scenario), this would panic the entire process without the caller having any opportunity to handle the error gracefully. The improvement plan item #1 (gleipnir_core `.expect()` to `Result`) was completed for gleipnir_core but this parallel pattern in schema_core was not addressed.
-**Fix:** Change `get_validator` to return `Result<&Validator, String>` and propagate the error. The `validate` and `is_valid` methods already return `Result`, so they can propagate naturally. This does change the `OnceLock` pattern slightly (would need `OnceLock<Result<Validator, String>>` or similar), so the risk/reward should be weighed. Given that these are compile-time-embedded schemas, this is medium severity -- the risk is theoretical, not practical.
+- `jitter_sleep()` (line 74) implements xorshift64 PRNG — pure math.
+- `parse_pace()` (line 59) is pure string parsing that returns Result.
+- `workspace_from_parent_dir()` (line 86) is pure path manipulation.
+- `accumulate_line()` (line 216) is pure line accumulation/JSON parsing logic.
 
-### P4-01
+These are small individually but represent the accumulation pattern the audit guide describes.
 
-**Priority:** P4 -- Composition Over Reimplementation
-**Severity:** High
-**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 122-138
-**What:** The `append_raw` function does its own `OpenOptions::new().create(true).append(true).open()` + `write_all` + `flush()` instead of using `write_engine::append_line_fsync`. Critically, it calls `.flush()` but NOT `.sync_all()` (fsync). Every other JSONL append in the workspace uses `write_engine::append_line_fsync` which does call `sync_all()`.
-**Why it matters:** This is a durability inconsistency. `append_raw` writes raw bytes to `rawdata_{session_id}.jsonl` without fsync. If the process crashes or the machine loses power between `flush()` (which only pushes to the OS buffer) and the OS flushing to disk, the rawdata file can lose the last entry. Every other append path in the workspace uses `append_line_fsync` which calls `sync_all()` for durability. The interceptor specifically handles compaction detection -- losing a rawdata entry during a compaction event means losing the evidence of what was compacted. The `append_raw` function exists because it writes raw bytes (not a single JSON line) and needs to append both the bytes and a newline separately, but `write_engine::append_line_fsync` already handles the "line + newline" pattern.
-**Fix:** Use `write_engine::append_line_fsync` if the raw bytes are a single JSON line (which they are -- stdin is one JSON object). If raw-byte fidelity is needed (avoiding re-serialization), extend `write_engine` with an `append_bytes_fsync` function and use that.
+### VIOLATION: `hook_stop_llm_tts` — `filter_text()` pure logic in binary
 
-### P4-02
+The `filter_text()` function (line 109, 33 lines) is entirely pure: takes a string, returns a string. It strips markdown fenced code blocks, tables, inline code, bold, italic, headers, and collapses blank lines. This is reusable text processing that should not be trapped in a hook binary. If `announce` ever wants to pre-filter text, this logic will be reimplemented.
 
-**Priority:** P4 -- Composition Over Reimplementation
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/watchers/watch_and_diff_exchange_intercepts/src/main.rs` lines 345-364
-**What:** The `transcript_path_for`, `open_transcript`, and `append_transcript` functions implement their own file append pattern (OpenOptions + write_all) without using `write_engine::append_line_fsync`. The transcript append does not fsync.
-**Why it matters:** Same pattern as P4-01 -- a parallel file append implementation that lacks fsync. The transcript is a structured log of datagram payloads that the watcher emitted. Losing transcript entries on crash means the replay-vs-watch comparison loses fidelity. Using `write_engine::append_line_fsync` would provide consistency and durability.
-**Fix:** Replace `append_transcript` with `write_engine::append_line_fsync`. The transcript content is already serialized JSON, so it fits the append_line_fsync contract exactly.
+### OBSERVATION: `split_jsonl_batches` — `compute_batches()` is pure and well-isolated
 
-### P5-01
+`compute_batches()` (line 70) is pure batch-size computation. It's small (28 lines) and well-tested, but it is pure logic in a binary. Minor — could reasonably stay unless another binary needs batch computation.
 
-**Priority:** P5 -- Naming Encodes Architecture
-**Severity:** Low
-**File(s):** `/Users/johnny/.ai/smidja/nornir/core/datagram_types/Cargo.toml` line 2
-**What:** Same as P2-01. The package name `datagram_types` lacks the `_core` suffix required for crates in `core/`. This is listed separately under P5 because it is also a naming violation independent of the tier model.
-**Why it matters:** Addressed in P2-01.
-**Fix:** Addressed in P2-01.
+### CLEAN: Writers, senders (excluding announce), check CLIs, hooks (excluding hook_stop_llm_tts)
 
-### P7-01
-
-**Priority:** P7 -- Schema-First Data Validation
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/cli/syn_cli/src/main.rs` lines 36-63
-**What:** The `.syn/warn.toml` and `.syn/deny.toml` configuration files are parsed with ad-hoc TOML deserialization (`SynFilterToml` struct with a single `filter` field) without any schema validation. There is no `.schema.json` file defining what a valid syn configuration looks like.
-**Why it matters:** Without a schema, the configuration format is defined implicitly by the Rust struct. If the format grows (e.g., adding a `severity_threshold` field, or `exclude_tools`), there is no schema to validate against, and malformed config files silently fall through to defaults (the `unwrap_or_else` on line 48). A user who writes `filtere = "..."` (typo) gets no error -- the typo field is silently ignored and the default filter is used. This was identified in the previous improvement plan (item #8) as needing a schema, but the plan item was marked DONE while the actual schema was not added.
-**Fix:** Create `schemas/tools/syn-config.schema.json` defining the warn/deny config shape. Validate config files against it in `load_filter_config`. Add to `schemas_embedded`.
-
-### P7-02
-
-**Priority:** P7 -- Schema-First Data Validation
-**Severity:** Low
-**File(s):** `/Users/johnny/.ai/smidja/nornir/interceptors/traffic_interceptor_rewriter/src/main.rs` lines 60-116
-**What:** The `classify_exchange` function performs procedural shape-checking on the exchange JSON (checking `system[1].text` contains an identity string, checking `tools` array length, checking tool name equals `"web_search"`). This is not schema validation -- it is manual field inspection.
-**Why it matters:** The classification logic checks specific JSON structure expectations (system is an array, index 1 exists, it has a text field, tools is an array, tools[0] has a name field). These structural expectations are not documented in any schema. If the Claude API exchange format changes (e.g., system blocks reorder, tools gain a wrapper), the classification will silently misclassify without any schema validation catching the mismatch. This is lower severity because the classification is inherently heuristic (there is no "exchange classification schema" that would make sense), but the structural expectations of what fields exist and where could be documented.
-**Fix:** This is a judgment call. The classification is heuristic by nature and a schema may not fit well. Consider at minimum documenting the structural expectations in the function's doc comment (currently undocumented: "expects system to be an array with identity at index 1").
-
-### P10-01
-
-**Priority:** P10 -- Orphaned Artifacts
-**Severity:** Medium
-**File(s):** `/Users/johnny/.ai/smidja/nornir/Cargo.toml` line 10, `/Users/johnny/.ai/smidja/nornir/capability/io_filter/`
-**What:** The `io_filter` crate is listed as a workspace member and exists on disk, but is not imported by ANY other crate in the workspace. No `Cargo.toml` in the entire workspace lists `io_filter` as a dependency. It has zero tests. It contains a single 36-line function (`run_filter`) that is never called.
-**Why it matters:** An orphaned crate creates confusion. A future session sees `io_filter` in the workspace, assumes it is used, and may try to compose with it or update it to stay consistent with changes elsewhere. The crate's purpose (stdin-validate-stdout filter contract) is served by `io_check` for the check_* binaries, and no binary currently uses the filter pattern that `io_filter` provides. It appears to have been created for a future use case that never materialized.
-**Fix:** Either remove `io_filter` from the workspace (delete directory, remove from `Cargo.toml` members) or add it as a dependency to the binary crates that should use it. If keeping it, add tests.
-
-### P10-02
-
-**Priority:** P10 -- Orphaned Artifacts
-**Severity:** Low
-**File(s):** `/Users/johnny/.ai/smidja/nornir/capability/io_filter/src/lib.rs` line 28
-**What:** `io_filter::run_filter` uses `print!("{}", output)` instead of `println!` or `write!` to stdout. This is a minor inconsistency (no trailing newline) but more importantly, the function has zero test coverage, so this behavior is unverified.
-**Why it matters:** If `io_filter` were ever adopted by a binary, the lack of trailing newline on stdout output could cause subtle piping issues. Combined with zero tests, the crate is both unused and untested -- a dead artifact.
-**Fix:** Subsumed by P10-01. If keeping the crate, add tests and decide on newline behavior.
+All writer binaries are 16-24 lines of declarative config — exemplary. Simple senders (send_heartbeat, send_alert, send_warning, send_notification) are 25-27 lines. Check CLIs are 20-27 lines. The hook binaries (hook_pre_llm_bash, hook_pre_llm_tool, hook_pre_subagent_bash, hook_pre_subagent_tool) correctly delegate pure logic to `hook_io::rules` and keep only decision orchestration. `rewrite_compaction_summary` correctly delegates to `compaction_inject_core`. `saga_cli` and `syn_cli` correctly delegate to `saga_runner`, `syn_core`, and `report_render_core`.
 
 ---
 
-## Areas Verified Clean
+## P2: Three-Tier Dependency Model
 
-The following areas were audited and found to be in compliance:
+### VIOLATION: `announce` binary depends on no core or capability crates
 
-**Tier model (P2):** All core crates (`error_core`, `format_core`, `schema_core`, `path_core`, `syn_core`, `saga_core`, `gleipnir_core`, `report_render_core`, `diff_core`, `compaction_inject_core`) are pure -- no `std::fs`, `std::io`, `std::net`, or `std::env` imports in any core crate source file. The one exception (`datagram_types` naming) is documented above. Capability crates correctly perform I/O. No binary-to-binary dependencies exist.
+`announce` has zero internal dependencies — it imports only external workspace crates (clap, serde, toml, sha2, reqwest, dotenvy, rodio). This means every piece of infrastructure it needs (config file reading, path resolution, hashing, file I/O) is reimplemented locally. It does not use `write_engine::ai_home()` for path resolution — it constructs `$HOME/.ai/voice` manually (line 244-246). It does not use `write_engine` for any file writes.
 
-**process::exit discipline (P3):** Every `process::exit()` call is in a `main()` function. All helper functions return `Result`. The `.expect()` calls in `schema_core` (documented above) are the only panic sites outside test code and static initializers.
+### OBSERVATION: `schemas_embedded` in capability/ but has no I/O
 
-**Composition (P4):** JSONL-append has been consolidated through `write_engine::append_line_fsync` across the workspace (record_datagrams, intercept_io, traffic_interceptor_rewriter's exchange/precompact paths). The two exceptions (rawdata append, transcript append) are documented above. Writer binaries correctly delegate to `write_engine::run()`. Schema validation correctly delegates to `schema_core` + `schemas_embedded`. Diff logic correctly delegates to `diff_core`. Hook contract correctly delegates to `hook_io`.
+As noted in CONTEXT_MAP.md known issues. `schemas_embedded` only calls `include_str!()` (compile-time) and creates `EmbeddedValidator` instances. It has no runtime I/O. It is misplaced in capability/ — it belongs in core/ or as a special tier-1 crate. Deferred.
 
-**Naming (P5):** All binary directory names match their `Cargo.toml` package names. All verb prefixes match their category directories (check_ in cli/, gate_ in gates/, hook_ in hooks/, send_ in senders/, append_/write_ in writers/, convert_ in converters/, rewrite_ in rewriters/, split_ in dispatchers/, watch_ in watchers/, traffic_ in interceptors/, record_ in daemons/). The saga_cli/syn_cli naming exceptions are documented. The `datagram_types` naming issue is the only finding.
+### OBSERVATION: `datagram_types` naming exception
 
-**Security hook coverage (P6):** Hook test counts are healthy: hook_pre_llm_bash (57 tests), hook_pre_subagent_bash (58 tests), hook_pre_llm_tool (31 tests), hook_pre_subagent_tool (15 tests), hook_post_llm_tool (11 tests). The pre_llm_tool decide function has tests for both malicious detection (floor/probing/gaming deny) and benign allowance (benign_path_allowed, no_path_in_input_allowed). No gaps found in dual-direction coverage.
+In core/ but named `datagram_types` instead of `datagram_core`. Already documented in CONTEXT_MAP.md as deferred.
 
-**Schema-first validation (P7):** All agent pipeline stages have schemas in `schemas/agents/`. All tool data formats have schemas in `schemas/tools/`. The datagram schema exists and is used by `datagram_io::emit_validated`. Gate crates correctly use `schemas_embedded` validators. The syn config gap is documented above.
+### CLEAN: No binary-to-binary dependencies detected
 
-**Stale tests (P8):** No evidence of stale tests. Test assertions match current struct shapes and function signatures. The improvement plan's contract changes (renames, new parameters like `resolve_env`) are reflected in tests.
+Checked all Cargo.toml files. No binary crate depends on another binary crate. The `intercept_replay` binary depends on `intercept_core` (core) and `session_io` (capability) — correct. The `traffic_interceptor_rewriter` depends on `intercept_core`, `session_io`, `compaction_inject_core`, and `schema_core` — correct tier boundaries.
 
-**Gleipnir check accuracy (P9):** Gleipnir_core has no I/O (verified: zero `std::fs`/`std::io`/`std::env` imports). The config loading I/O was extracted per improvement plan item #1. Check matrix, parsing, and classification are pure. No false positive patterns identified in the check definitions.
+### CLEAN: Core crates have no I/O
 
-**Deploy script consistency (P10):** Every deploy script's crate list matches the actual crate directories. No orphaned entries, no missing crates. Workspace `Cargo.toml` members list matches actual directories (verified: all 85 member paths exist).
+All 13 core crates checked: none import `std::fs`, `std::net`, or `std::env`. `gleipnir_core` uses tree-sitter (which parses in-memory buffers, not files) — correct. `default_apply_core` is pure JSON manipulation — correct.
 
 ---
 
-## Improvement Plan Status Verification
+## P3: process::exit and Panic Discipline
 
-The 10-item improvement plan (`plans/IMPROVEMENT_PLAN.md`) was verified:
+### VIOLATION: `announce` — process::exit() in 15+ helper functions
 
-1. **gleipnir_core config.rs I/O in Tier 1** -- VERIFIED FIXED. Zero `std::fs`/`std::io`/`std::env` imports in gleipnir_core.
-2. **record_datagrams static mut unsoundness** -- VERIFIED FIXED. Uses `AtomicBool` + `OnceLock` instead of `static mut`.
-3. **syn_cli pure logic extraction** -- VERIFIED FIXED. Filter engine is in `syn_core`, rendering in `report_render_core`. syn_cli is orchestration.
-4. **JSONL-append duplication** -- VERIFIED FIXED. All JSONL appends use `write_engine::append_line_fsync` (with two minor exceptions documented in P4-01/P4-02).
-5. **hook_pre_llm_tool decide() untested** -- VERIFIED FIXED. 31 tests including decide function with dual-direction coverage.
-6. **no_println exempts entire main.rs** -- Not directly verifiable from source (gleipnir check config is external), but no println calls found in core/capability library code.
-7. **io_check zero tests** -- VERIFIED FIXED. io_check has tests (15+ test functions covering arg parsing and serialization).
-8. **Hook inputs / syn config without schema** -- PARTIALLY FIXED. syn config still lacks a schema (P7-01). Hook input schemas were not added but hook_io handles the contract.
-9. **datagram / path_verify naming** -- VERIFIED FIXED. Renamed to `datagram_io` and `path_verify_io`.
-10. **Hardcoded absolute paths in writers** -- VERIFIED FIXED. Writers use `write_engine::ai_home()` for path construction.
+`announce` has `process::exit()` scattered across helper functions:
+- `get_input_text()` (lines 225, 231, 236) — exits on empty input
+- `load_api_key()` (line 272) — exits when API key missing
+- `stream_and_play()` (lines 474, 478) — exits on API error
+- `download_cache_and_play()` (lines 509, 513) — exits on API error
+- `play_pcm_from_file()` (lines 575, 586, 594) — exits on decode/output errors
+- `play_audio_file()` (lines 611, 619, 627, 635) — exits on decode/output errors
+
+This makes the entire binary untestable. Every function that calls `process::exit()` kills the test harness on error paths. The binary has zero tests.
+
+### OBSERVATION: `announce` main() also has early exits (lines 141, 145, 151, 173, 190)
+
+These are in `main()` itself, which is acceptable per convention. However, the proliferation masks the helper-function exits.
+
+### CLEAN: All other binaries
+
+All other binaries follow the convention correctly:
+- Hook binaries return `ExitCode` via `hook_io::run_hook(decide)`.
+- Complex binaries (syn_cli, saga_cli, split_jsonl_batches, record_datagrams, watch_and_diff, rewrite_compaction_summary, intercept_replay) use the `fn run() -> Result<T, String>` pattern with `process::exit()` only in `main()`.
+- `.unwrap()` calls in production code are limited to `LazyLock` initializers in `hook_pre_subagent_bash` (lines 22, 26, 30) — correctly exempted.
+
+---
+
+## P4: Composition Over Reimplementation
+
+### VIOLATION: `announce` does not use `write_engine::ai_home()` for path resolution
+
+`resolve_voice_dir()` (line 244) and `resolve_audio_dir()` (line 249) manually read `$HOME` and construct `.ai/voice` and `.ai/audio` paths. `write_engine::ai_home()` exists precisely for this purpose and handles the `HOME` env var consistently across the workspace.
+
+### VIOLATION: `hook_post_llm_tool` and `hook_stop_llm_tts` manually construct `~/.ai/tools/bin` path
+
+`tools_bin()` in `hook_post_llm_tool` (line 92) and `announce_bin()` in `hook_stop_llm_tts` (line 101) both read `$HOME` and construct `PathBuf::from(home).join(".ai/tools/bin")`. This is a hardcoded path pattern that should use `write_engine::ai_home()`.
+
+### VIOLATION: `record_datagrams` — hand-rolled date formatting instead of using a shared utility
+
+The `today()` function reimplements epoch-to-civil-date conversion. While no shared date utility currently exists in the workspace, this is a signal that one should be created if date formatting is needed elsewhere.
+
+### CLEAN: Writer, sender, hook, check binaries all compose correctly
+
+Writers use `write_engine::run()`. Senders use `datagram_io::emit()`. Hooks use `hook_io::run_hook()`. Check CLIs use `io_check::run_check()`. Rewriters use core crates (`compaction_inject_core`). The interceptor uses `intercept_core` + `session_io`. This is exemplary composition.
+
+---
+
+## P5: Naming Encodes Architecture
+
+### VIOLATION: `announce` — no verb prefix, wrong category
+
+The binary `announce` lives in `senders/` but has no `send_` prefix. Per the naming convention table, senders use the `send_` prefix. `announce` should be `send_announce` or, given its complexity (650 lines, TTS API integration, audio playback, config management), it arguably belongs in a different category entirely — perhaps `daemons/` or a new `audio/` category.
+
+Additionally, `announce` is not a "fire-and-forget datagram to hlidskjalf socket" — which is the definition of a sender. It makes HTTP API calls, manages an audio cache, spawns child processes for playback, and reads TOML config files. It is architecturally a full application masquerading as a sender.
+
+### VIOLATION: `hook_stop_llm_tts` — verb prefix `hook_stop_` is not in the convention table
+
+The convention specifies `hook_` prefix for hooks. `hook_stop_llm_tts` uses `hook_stop_` which could be read as a different verb prefix. However, this is the CC Stop event hook naming pattern (matching `hook_pre_` and `hook_post_`), so `hook_stop_` is a reasonable extension. Minor.
+
+### OBSERVATION: `intercept_replay` naming
+
+Lives in `interceptors/` and uses `intercept_` prefix — correct per conventions. The name `intercept_replay` accurately describes its function.
+
+### CLEAN: All other crate names match conventions
+
+Verified: All writer names use `append_` or `write_`. All check CLIs use `check_`. All senders (except `announce`) use `send_`. All hooks use `hook_`. All core crates use `_core` suffix (with documented exceptions for `datagram_types`). All capability crates lack `_core` suffix. Directory name = package name = binary name verified for all crates.
+
+---
+
+## P6: Security Hook Coverage
+
+### CLEAN: hook_pre_llm_bash — comprehensive dual-direction test coverage
+
+92 tests covering:
+- Subversion: 6 positive detections (rm lock, chflags, export HOOK env, env override, chmod rules.toml, flock unlock) + benign commands verified not flagged
+- Truncation: 6 positive detections (head/tail/grep/sed/awk on CLAUDE.md, guardrails piped) + benign cat not flagged
+- Evasion: 5 positive detections (git checkout/restore/mv/cp CLAUDE.md, git config hooks) + benign git status/diff not flagged
+- Destruction: 7 positive detections (git reset --hard, checkout ., checkout -- ., restore ., clean -f, clean -fd) + 3 benign negatives (reset --soft, checkout -b, clean -n)
+- Revert: 5 positive detections (checkout -- file, checkout HEAD -- file, restore file, stash, stash push) + 4 benign negatives (restore --staged, stash list/pop/show, checkout branch)
+- Workflow: 5 positive detections (cargo build --release, reordered, cargo install, debug build, maturin) + 3 benign negatives (test, check, clippy)
+- Severity overrides verified for debug build (warn) and release build (ask)
+
+### CLEAN: hook_pre_subagent_bash — comprehensive dual-direction test coverage
+
+53 tests covering shell chaining (11 tests), bare name validation (10 tests), heredoc header parsing (7 tests), writer validation (10 tests), inspect path validation (12 tests), integration (3 tests).
+
+### CLEAN: hook_pre_llm_tool — comprehensive dual-direction test coverage
+
+37 tests covering floor rules (always-deny for SSH/AWS/GPG/Kube/Docker/netrc + override resistance), probing (block/warn/disabled), gaming, benign paths, allow_path exemption, priority ordering.
+
+### CLEAN: hook_pre_subagent_tool — comprehensive dual-direction test coverage
+
+19 tests covering path prefix validation (allow/deny), unknown tool denial, no-tool/no-path handling, path traversal, file_path vs path field priority.
+
+---
+
+## P7: Schema-First Data Validation
+
+### VIOLATION: `announce` — no schema validation for any data
+
+The `announce` binary reads TOML config files (`announce.toml`, `VOICE.lock`, lookup tables, `hits.toml`) and parses them into Rust structs via `serde::Deserialize`. There are no JSON Schema files for any of these data shapes. All validation is structural/procedural through Rust's type system. If the config format changes, there is no schema to update — only Rust structs.
+
+### OBSERVATION: Hook input wire format has no JSON Schema
+
+Already documented in CONTEXT_MAP.md known issues. `hook_io` uses typed accessors but no `.schema.json` file defines the hook input format.
+
+### OBSERVATION: Syn config files (.syn/warn.toml, .syn/deny.toml) have no schema
+
+Already documented in CONTEXT_MAP.md known issues.
+
+### CLEAN: All gate pipelines use schema-first validation
+
+All check CLIs validate via `schemas_embedded` constants. All gate modules validate via `gate_io`. The interceptor validates via `WIRE_SCHEMA` (embedded `cc_wire_schema.json`). Writers validate via `write_engine::run()` which checks against embedded schemas. Datagrams are validated via `datagram_io::emit_validated()` against `validate.datagram.schema.json`.
+
+---
+
+## P8: Stale Tests After Contract Changes
+
+### VIOLATION: `announce` has zero tests
+
+The 650-line binary has no `#[cfg(test)]` module at all. This is not a stale-test problem — it is a no-test problem. The pure logic functions (`compute_hash`, `sanitize_filename`, `build_tts_body`, `pcm_s16le_to_f32`, `resolve_settings`, `filter_text`) are all untested. The `process::exit()` calls in helpers make them structurally untestable without extraction.
+
+### CLEAN: All other binaries have meaningful test coverage
+
+- `hook_pre_llm_bash`: 92 tests
+- `hook_pre_subagent_bash`: 53 tests
+- `hook_pre_llm_tool`: 37 tests
+- `hook_pre_subagent_tool`: 19 tests
+- `hook_post_llm_tool`: 9 tests
+- `hook_stop_llm_tts`: 9 tests
+- `watch_and_diff_exchange_intercepts`: 16 tests
+- `split_jsonl_batches`: 14 tests
+- `record_datagrams`: 7 tests
+- `rewrite_compaction_summary`: 11 tests
+- `send_datagram`: 12 tests
+- `syn_cli`: 4 tests
+- Core crates have substantial test suites (gleipnir_core: 267, format_core: 78, hook_io: 40, syn_core: 39, etc.)
+
+---
+
+## P9: Gleipnir Check Accuracy
+
+Not audited in detail — gleipnir_core has 267 tests which suggests robust self-verification. The audit guide notes this is covered mechanically.
+
+---
+
+## P10: Orphaned Artifacts
+
+### VIOLATION: CONTEXT_MAP.md is stale — does not reflect current workspace
+
+The CONTEXT_MAP.md (dated 2026-03-13) lists 85 workspace members but the current workspace Cargo.toml has 97 members. Missing from CONTEXT_MAP:
+- `core/default_apply_core` — new core crate
+- `core/intercept_core` — new core crate
+- `capability/default_apply_io` — new capability crate
+- `capability/session_io` — new capability crate
+- `interceptors/intercept_replay` — new binary
+- `senders/announce` — new binary
+- `hooks/hook_stop_llm_tts` — new binary
+- Several new gate crates (`gate_raw_definition_defaults`, `gate_galdr_style_input`)
+
+The inventory counts (11 core, 10 capability, etc.) are outdated. The test count (877) is outdated.
+
+### VIOLATION: `io_filter` crate is orphaned
+
+Confirmed: `io_filter` has zero tests, is imported by nothing (checked all Cargo.toml files — no crate lists `io_filter` as a dependency). Already documented in CONTEXT_MAP.md as a known issue but remains unresolved.
+
+### OBSERVATION: deploy_categories.toml may be missing new crates
+
+`default_apply_io` and `default_apply_core` are in the workspace but do not appear in `deploy_categories.toml`. Since they are library crates (not binaries), they don't need deploy entries — they're built as dependencies of gate crates. This is correct behavior but worth noting.
+
+---
+
+## Summary of Findings
+
+### Critical (architectural damage if not addressed)
+
+| # | Finding | Location | Priority |
+|---|---------|----------|----------|
+| 1 | `announce` is a 650-line monolith with pure logic, zero tests, process::exit in helpers, no composition with workspace crates, no schema validation, wrong naming | `senders/announce/src/main.rs` | P1+P3+P4+P5+P7+P8 |
+
+### Significant (will cause drift if not addressed)
+
+| # | Finding | Location | Priority |
+|---|---------|----------|----------|
+| 2 | `hook_post_llm_tool` and `hook_stop_llm_tts` hardcode `~/.ai/tools/bin` path instead of using `write_engine::ai_home()` | hooks/ | P4 |
+| 3 | CONTEXT_MAP.md is stale — 12+ crates missing from inventory | `CONTEXT_MAP.md` | P10 |
+| 4 | `hook_stop_llm_tts` contains pure `filter_text()` in a binary crate | `hooks/hook_stop_llm_tts/src/main.rs` | P1 |
+
+### Minor (documented or low-risk)
+
+| # | Finding | Location | Priority |
+|---|---------|----------|----------|
+| 5 | `record_datagrams` hand-rolled date formatter | `daemons/record_datagrams/src/main.rs` | P1/P4 |
+| 6 | `io_filter` crate orphaned (zero tests, zero imports) | `capability/io_filter/` | P10 |
+| 7 | `schemas_embedded` in capability/ but has no I/O | `capability/schemas_embedded/` | P2 |
+| 8 | `datagram_types` naming exception (should be `datagram_core`) | `core/datagram_types/` | P5 |
+| 9 | Hook input wire format has no JSON Schema | `capability/hook_io/` | P7 |
+
+### Architectural Health Assessment
+
+The workspace is in strong structural health outside of the `announce` binary. The three-tier model is respected. Composition patterns are followed consistently — writers, senders, hooks, and check CLIs are exemplary thin binaries. Security hooks have comprehensive dual-direction test coverage. Schema-first validation is practiced across the pipeline.
+
+The `announce` binary is the single largest source of architectural concern. It violates 6 of 10 audit priorities simultaneously and, at 650 lines with zero tests, represents exactly the monolith accumulation pattern the audit guide warns about. It needs extraction of pure logic to a core crate, restructuring to return `Result` instead of calling `process::exit()`, and comprehensive test coverage.

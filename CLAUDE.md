@@ -62,9 +62,10 @@ When uncertain, read these in order:
 1. **`NORNIR_CONVENTIONS.md`** — All naming, organization, composition, and building rules
 2. **`MUST_READ_BEFORE_BUILDING.md`** — Why `cargo build --release` is wrong, how to use `nornir_deploy`
 3. **`CONTEXT_MAP.md`** — Current crate inventory, freshness flags, "if you need X read Y" guide
-4. **`audit/AUDIT_GUIDE.md`** — Architectural invariants and what "correct" looks like
+4. **`audit/STRUCTURAL_AUDIT_GUIDE.md`** — Architectural invariants and what "correct" looks like
 5. **`hooks/HOOK_DESIGN.md`** — Hook subsystem architecture (when working on hooks)
 6. **`cli/syn_cli/SYN_DESIGN.md`** — Quality pipeline architecture (when working on syn/saga)
+7. **`interceptors/INTERCEPT_DESIGN.md`** — Intercept pipeline architecture (when working on intercept/session)
 
 ---
 
