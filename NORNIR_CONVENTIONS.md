@@ -171,7 +171,6 @@ Before writing logic, check if it already exists:
 | Gate I/O orchestration | `gate_io` |
 | Datagram emission to Hlidskjalf | `datagram_io` |
 | Schema constants | `schemas_embedded` |
-| stdin-validate-stdout filtering | `io_filter` |
 | File-arg diagnostic CLI contract | `io_check` |
 | Directory walking with skip logic | `saga_runner::walk_files` |
 | Path traversal / filename validation | `path_core::validate_path_segment` |

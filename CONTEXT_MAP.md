@@ -61,7 +61,6 @@
 |-------|---------|
 | `schemas_embedded` | All schemas via include_str!() |
 | `path_verify_io` | Filesystem path existence checks |
-| `io_filter` | stdin-validate-stdout filter contract |
 | `io_check` | File-arg diagnostic output contract |
 | `gate_io` | Gate I/O orchestration (read/validate/write) |
 | `hook_io` | Hook input parsing, response formatting, rules |
@@ -112,7 +111,6 @@ If you need to understand... read...
 
 ## Known Issues / Active Work
 
-- `io_filter` crate is orphaned — imported by nothing, zero tests. Candidate for removal.
 - `traffic_interceptor_rewriter` naming exception — should be `intercept_traffic_rewrite` per conventions. Rename deferred.
 - `datagram_types` naming exception — should be `datagram_core` per core crate suffix convention. Rename deferred.
 - `schemas_embedded` lives in capability/ but has no I/O — could be core/. Move deferred.
