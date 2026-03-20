@@ -68,7 +68,7 @@ fn main() -> ExitCode {
 
     // QUIET.lock: silence all CC sessions
     let voice_dir = voice_dir();
-    if Path::new(&voice_dir).join("QUIET.lock").exists() {
+    if voice_dir.join("QUIET.lock").exists() {
         return ExitCode::SUCCESS;
     }
 
@@ -114,14 +114,12 @@ fn main() -> ExitCode {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-fn voice_dir() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    format!("{home}/.ai/voice")
+fn voice_dir() -> PathBuf {
+    write_engine::ai_home().join("voice")
 }
 
 fn announce_bin() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".ai/tools/bin/announce")
+    write_engine::ai_home().join("tools/bin/announce")
 }
 
 // ---------------------------------------------------------------------------

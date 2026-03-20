@@ -90,8 +90,7 @@ fn assess_source(file_path: &Path) -> Option<String> {
 // ── Binary resolution ─────────────────────────────────────────────
 
 fn tools_bin() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
-        .join(".ai/tools/bin")
+    write_engine::ai_home().join("tools/bin")
 }
 
 fn saga_bin() -> PathBuf {
