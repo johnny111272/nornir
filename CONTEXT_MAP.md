@@ -49,7 +49,7 @@
 | `syn_core` | Jq filter compilation, three-tier filtering, SynConfig |
 | `gleipnir_core` | Tree-sitter AST guardrail engine |
 | `diff_core` | Line-level diff and TOML block extraction |
-| `datagram_types` | Datagram, DatagramKind, Priority type definitions |
+| `datagram_core` | Datagram, DatagramKind, Priority type definitions |
 | `report_render_core` | QA report grouping, formatting, serialization |
 | `compaction_inject_core` | Compaction summary instructions injection |
 | `default_apply_core` | Default value application logic |
@@ -112,9 +112,8 @@ If you need to understand... read...
 ## Known Issues / Active Work
 
 - `traffic_interceptor_rewriter` naming exception — should be `intercept_traffic_rewrite` per conventions. Rename deferred.
-- `datagram_types` naming exception — should be `datagram_core` per core crate suffix convention. Rename deferred.
 - `schemas_embedded` lives in capability/ but has no I/O — could be core/. Move deferred.
-- `announce` naming exception — no `send_` prefix, architecturally misplaced in senders/ (650-line TTS app). Decomposition planned (IMPROVEMENT_PLAN.md item 1).
+- `announce` naming exception — no verb prefix. Decomposed (item 1 done) and moved to cli/.
 - `hush` naming exception — no verb prefix, lives in cli/ but is a UserPromptSubmit hook.
 - Hook input wire format has no JSON Schema — typed accessors exist but no `.schema.json` file.
 - Syn config (`.syn/warn.toml`, `.syn/deny.toml`) parsed with typed structs but no schema file.

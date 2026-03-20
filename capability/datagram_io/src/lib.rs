@@ -22,7 +22,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 // Re-export types from core crate — all consumers get them through this crate
-pub use datagram_types::{Datagram, DatagramKind, Priority};
+pub use datagram_core::{Datagram, DatagramKind, Priority};
 
 pub const SOCKET_PATH: &str = "/tmp/ai_logger.sock";
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);

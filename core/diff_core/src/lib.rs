@@ -6,7 +6,7 @@
 //! Pure functions, no I/O.
 
 use serde_json::Value;
-use datagram_types::{Datagram, DatagramKind, Priority};
+use datagram_core::{Datagram, DatagramKind, Priority};
 
 /// The three components extracted from a Claude API exchange.
 #[derive(Debug, Clone)]

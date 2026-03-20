@@ -10,4 +10,4 @@ crate-type = ["rlib"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-datagram_types = { path = "../datagram_types" }
+datagram_core = { path = "../datagram_core" }

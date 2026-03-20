@@ -11,4 +11,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 libc = { workspace = true }
 schemas_embedded = { path = "../schemas_embedded" }
-datagram_types = { path = "../../core/datagram_types" }
+datagram_core = { path = "../../core/datagram_core" }

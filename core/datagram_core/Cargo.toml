@@ -1,5 +1,5 @@
 [package]
-name = "datagram_types"
+name = "datagram_core"
 version = "0.1.0"
 edition = "2021"
 

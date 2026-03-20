@@ -87,7 +87,7 @@ members = [
     "watchers/watch_and_diff_exchange_intercepts",
     "converters/convert_json_to_toml",
     "rewriters/rewrite_compaction_summary",
-    "core/datagram_types",
+    "core/datagram_core",
     "core/diff_core",
     "core/compaction_inject_core",
     "core/intercept_core",
