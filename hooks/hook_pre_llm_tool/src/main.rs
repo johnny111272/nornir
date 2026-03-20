@@ -13,7 +13,7 @@
 use std::process::ExitCode;
 
 use hook_io::rules::{parse_rule_array, parse_severity, parse_toml_table, RawRule, Severity};
-use hook_io::{HookDecision, HookInput};
+use hook_io::{DecisionInput, HookDecision, HookInput};
 
 static RULES_TOML: &str = include_str!("../rules.toml");
 
@@ -128,12 +128,15 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
     if let Some(default_severity) = config.probing {
         for rule in &rules.probing {
             if target.contains(&rule.pattern) {
-                return make_decision(
-                    rule.severity.unwrap_or(default_severity),
-                    "probing",
-                    &rule.description,
-                    target,
-                );
+                return hook_io::make_decision(&DecisionInput {
+                    severity: rule.severity.unwrap_or(default_severity),
+                    category: "probing",
+                    description: &rule.description,
+                    subject: target,
+                    verb_past: "accessed",
+                    verb_present: "access",
+                    max_subject_len: None,
+                });
             }
         }
     }
@@ -142,12 +145,15 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
     if let Some(default_severity) = config.gaming {
         for rule in &rules.gaming {
             if target.contains(&rule.pattern) {
-                return make_decision(
-                    rule.severity.unwrap_or(default_severity),
-                    "gaming",
-                    &rule.description,
-                    target,
-                );
+                return hook_io::make_decision(&DecisionInput {
+                    severity: rule.severity.unwrap_or(default_severity),
+                    category: "gaming",
+                    description: &rule.description,
+                    subject: target,
+                    verb_past: "accessed",
+                    verb_present: "access",
+                    max_subject_len: None,
+                });
             }
         }
     }
@@ -158,53 +164,6 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
 
 fn is_allowed_path(target: &str, allow_paths: &[String]) -> bool {
     allow_paths.iter().any(|prefix| target.starts_with(prefix))
-}
-
-fn make_decision(
-    severity: Severity,
-    category: &str,
-    description: &str,
-    target: &str,
-) -> HookDecision {
-    let event = format!("{} \u{2014} {}", description.to_lowercase(), target);
-    match severity {
-        Severity::Block => HookDecision::Deny {
-            category: category.into(),
-            event,
-            reason: format!(
-                "Access to '{}' blocked ({}: {}).",
-                target, category, description
-            ),
-        },
-        Severity::Ask => HookDecision::Ask {
-            category: category.into(),
-            event,
-            reason: format!(
-                "LLM wants to access '{}' ({}: {}). Allow or deny?",
-                target, category, description
-            ),
-            llm_context: format!(
-                "Your access to '{}' requires user approval ({}: {}). \
-                 The user is being asked whether to allow this. \
-                 Do NOT retry without permission.",
-                target, category, description
-            ),
-        },
-        Severity::Warn => HookDecision::Warn {
-            category: category.into(),
-            event,
-            user_reason: format!(
-                "LLM accessed '{}' ({}: {}). Behavior flagged.",
-                target, category, description
-            ),
-            llm_context: format!(
-                "Your access to '{}' was flagged as {} behavior ({}). \
-                 The user has been notified. If this access is necessary \
-                 for your task, explain why to the user.",
-                target, category, description
-            ),
-        },
-    }
 }
 
 #[cfg(test)]
@@ -287,16 +246,18 @@ mod tests {
         assert!(!is_allowed_path("/home/username/secret", &allow));
     }
 
-    // ── make_decision ─────────────────────────────────────────────
+    // ── make_decision (via hook_io) ─────────────────────────────────
+
+    fn tool_decision(severity: Severity, category: &str, description: &str, target: &str) -> HookDecision {
+        hook_io::make_decision(&DecisionInput {
+            severity, category, description, subject: target,
+            verb_past: "accessed", verb_present: "access", max_subject_len: None,
+        })
+    }
 
     #[test]
     fn make_decision_block_returns_deny() {
-        let decision = make_decision(
-            Severity::Block,
-            "probing",
-            "Hook scripts",
-            "/home/.claude/hooks/myhook",
-        );
+        let decision = tool_decision(Severity::Block, "probing", "Hook scripts", "/home/.claude/hooks/myhook");
         match decision {
             HookDecision::Deny { category, reason, .. } => {
                 assert_eq!(category, "probing");
@@ -309,12 +270,7 @@ mod tests {
 
     #[test]
     fn make_decision_warn_returns_warn() {
-        let decision = make_decision(
-            Severity::Warn,
-            "gaming",
-            "Circumvention attempt",
-            "/some/path",
-        );
+        let decision = tool_decision(Severity::Warn, "gaming", "Circumvention attempt", "/some/path");
         match decision {
             HookDecision::Warn {
                 category,

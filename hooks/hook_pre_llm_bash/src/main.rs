@@ -13,7 +13,7 @@
 use std::process::ExitCode;
 
 use hook_io::rules::{parse_rule_array, parse_severity, parse_toml_table, RawRule, Severity};
-use hook_io::{HookDecision, HookInput};
+use hook_io::{DecisionInput, HookDecision, HookInput};
 use regex::Regex;
 
 static RULES_TOML: &str = include_str!("../rules.toml");
@@ -231,64 +231,18 @@ fn check_category(
                 return None;
             }
             let severity = rule.severity.unwrap_or(default_severity);
-            return Some(make_decision(severity, category, &rule.description, command));
+            return Some(hook_io::make_decision(&DecisionInput {
+                severity,
+                category,
+                description: &rule.description,
+                subject: command,
+                verb_past: "ran",
+                verb_present: "run",
+                max_subject_len: Some(60),
+            }));
         }
     }
     None
-}
-
-fn make_decision(
-    severity: Severity,
-    category: &str,
-    description: &str,
-    command: &str,
-) -> HookDecision {
-    // Truncate command for display (first 60 chars)
-    let short_cmd = if command.len() > 60 {
-        format!("{}...", &command[..57])
-    } else {
-        command.to_string()
-    };
-
-    let event = format!("{} \u{2014} {}", description.to_lowercase(), short_cmd);
-    match severity {
-        Severity::Block => HookDecision::Deny {
-            category: category.into(),
-            event,
-            reason: format!(
-                "Command blocked ({}: {}).\n{}",
-                category, description, short_cmd
-            ),
-        },
-        Severity::Ask => HookDecision::Ask {
-            category: category.into(),
-            event,
-            reason: format!(
-                "LLM wants to run '{}' ({}: {}). Allow or deny?",
-                short_cmd, category, description
-            ),
-            llm_context: format!(
-                "Your command requires user approval ({}: {}). \
-                 The user is being asked whether to allow this. \
-                 Do NOT retry without permission.",
-                category, description
-            ),
-        },
-        Severity::Warn => HookDecision::Warn {
-            category: category.into(),
-            event,
-            user_reason: format!(
-                "LLM ran '{}' ({}: {}). Behavior flagged.",
-                short_cmd, category, description
-            ),
-            llm_context: format!(
-                "Your command was flagged as {} behavior ({}). \
-                 The user has been notified. If this is necessary \
-                 for your task, explain why to the user.",
-                category, description
-            ),
-        },
-    }
 }
 
 #[cfg(test)]
@@ -1038,15 +992,21 @@ mod tests {
         assert!(result.is_none(), "Exempted pattern must return None");
     }
 
-    // ── make_decision ─────────────────────────────────────────────
+    // ── make_decision (via hook_io) ─────────────────────────────────
+
+    fn bash_decision(severity: Severity, category: &str, description: &str, command: &str) -> HookDecision {
+        hook_io::make_decision(&DecisionInput {
+            severity, category, description, subject: command,
+            verb_past: "ran", verb_present: "run", max_subject_len: Some(60),
+        })
+    }
 
     #[test]
     fn make_decision_long_command_truncated() {
         let long_cmd = "a".repeat(80);
-        let decision = make_decision(Severity::Block, "subversion", "test", &long_cmd);
+        let decision = bash_decision(Severity::Block, "subversion", "test", &long_cmd);
         match decision {
             HookDecision::Deny { reason, .. } => {
-                // The short_cmd should be 57 chars + "..."
                 assert!(reason.contains("..."), "Long command must be truncated with ...");
                 assert!(!reason.contains(&long_cmd), "Full command must not appear");
             }
@@ -1057,7 +1017,7 @@ mod tests {
     #[test]
     fn make_decision_short_command_not_truncated() {
         let short_cmd = "rm foo.lock";
-        let decision = make_decision(Severity::Block, "subversion", "test", short_cmd);
+        let decision = bash_decision(Severity::Block, "subversion", "test", short_cmd);
         match decision {
             HookDecision::Deny { reason, .. } => {
                 assert!(reason.contains("rm foo.lock"));
@@ -1070,7 +1030,7 @@ mod tests {
     #[test]
     fn make_decision_exactly_60_chars_not_truncated() {
         let cmd = "a".repeat(60);
-        let decision = make_decision(Severity::Block, "subversion", "test", &cmd);
+        let decision = bash_decision(Severity::Block, "subversion", "test", &cmd);
         match decision {
             HookDecision::Deny { reason, .. } => {
                 assert!(!reason.contains("..."), "Exactly 60 chars should not be truncated");
@@ -1082,7 +1042,7 @@ mod tests {
     #[test]
     fn make_decision_61_chars_is_truncated() {
         let cmd = "a".repeat(61);
-        let decision = make_decision(Severity::Block, "subversion", "test", &cmd);
+        let decision = bash_decision(Severity::Block, "subversion", "test", &cmd);
         match decision {
             HookDecision::Deny { reason, .. } => {
                 assert!(reason.contains("..."), "61 chars should be truncated");

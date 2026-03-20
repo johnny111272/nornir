@@ -72,6 +72,87 @@ pub enum HookDecision {
     },
 }
 
+// ── Shared decision builder ──────────────────────────────────────
+
+/// Input for building a HookDecision from a severity + contextual metadata.
+pub struct DecisionInput<'a> {
+    pub severity: rules::Severity,
+    pub category: &'a str,
+    pub description: &'a str,
+    pub subject: &'a str,
+    /// Past tense verb for the subject: "accessed" (paths) or "ran" (commands)
+    pub verb_past: &'a str,
+    /// Present tense verb: "access" (paths) or "run" (commands)
+    pub verb_present: &'a str,
+    /// Truncate subject to this length if set (e.g. Some(60) for commands)
+    pub max_subject_len: Option<usize>,
+}
+
+/// Build a HookDecision from severity and contextual metadata.
+///
+/// Handles subject truncation, event string formatting, and the
+/// Severity → HookDecision variant mapping with appropriate messages.
+pub fn make_decision(input: &DecisionInput) -> HookDecision {
+    let short = match input.max_subject_len {
+        Some(max) if input.subject.len() > max => {
+            format!("{}...", &input.subject[..max.saturating_sub(3)])
+        }
+        _ => input.subject.to_string(),
+    };
+
+    let event = format!(
+        "{} \u{2014} {}",
+        input.description.to_lowercase(),
+        short
+    );
+
+    match input.severity {
+        rules::Severity::Block => {
+            let subject_label = if input.verb_present == "run" {
+                format!("Command")
+            } else {
+                format!("Access to '{}'", short)
+            };
+            HookDecision::Deny {
+                category: input.category.into(),
+                event,
+                reason: format!(
+                    "{} blocked ({}: {}).\n{}",
+                    subject_label, input.category, input.description, short
+                ),
+            }
+        }
+        rules::Severity::Ask => HookDecision::Ask {
+            category: input.category.into(),
+            event,
+            reason: format!(
+                "LLM wants to {} '{}' ({}: {}). Allow or deny?",
+                input.verb_present, short, input.category, input.description
+            ),
+            llm_context: format!(
+                "Your command requires user approval ({}: {}). \
+                 The user is being asked whether to allow this. \
+                 Do NOT retry without permission.",
+                input.category, input.description
+            ),
+        },
+        rules::Severity::Warn => HookDecision::Warn {
+            category: input.category.into(),
+            event,
+            user_reason: format!(
+                "LLM {} '{}' ({}: {}). Behavior flagged.",
+                input.verb_past, short, input.category, input.description
+            ),
+            llm_context: format!(
+                "Your {} to '{}' was flagged as {} behavior ({}). \
+                 The user has been notified. If this {} is necessary \
+                 for your task, explain why to the user.",
+                input.verb_present, short, input.category, input.description, input.verb_present
+            ),
+        },
+    }
+}
+
 /// Run a PreToolUse hook: read stdin, parse, decide, output.
 ///
 /// The `decide_fn` receives parsed hook input and returns a decision.
