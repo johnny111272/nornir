@@ -73,6 +73,7 @@ members = [
     "hooks/hook_stop_llm_tts",
     "core/gleipnir_core",
     "core/announce_core",
+    "core/time_core",
     "core/saga_core",
     "core/report_render_core",
     "cli/saga_cli",

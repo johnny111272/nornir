@@ -8,8 +8,9 @@ name = "record_datagrams"
 path = "src/main.rs"
 
 [dependencies]
+time_core = { path = "../../core/time_core" }
+datagram_io = { path = "../../capability/datagram_io" }
+write_engine = { path = "../../capability/write_engine" }
 serde_json = { workspace = true }
 clap = { workspace = true }
 libc = { workspace = true }
-datagram_io = { path = "../../capability/datagram_io" }
-write_engine = { path = "../../capability/write_engine" }

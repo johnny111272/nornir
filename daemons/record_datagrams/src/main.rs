@@ -25,7 +25,6 @@ use clap::Parser;
 // =============================================================================
 
 const DEFAULT_SOCKET_PATH: &str = datagram_io::SOCKET_PATH;
-const DEFAULT_LOG_DIR: &str = ".ai/intercept/datagrams";
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 // =============================================================================
@@ -33,8 +32,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(2);
 // =============================================================================
 
 fn default_log_dir() -> PathBuf {
-    let home = std::env::var("HOME");
-    PathBuf::from(home.as_deref().unwrap_or("/tmp")).join(DEFAULT_LOG_DIR)
+    write_engine::ai_home().join("intercept/datagrams")
 }
 
 /// Persistent datagram logger — listens on a Unix socket and writes daily JSONL logs.
@@ -54,44 +52,13 @@ struct Args {
 // Log file management
 // =============================================================================
 
-/// Today's date as YYYY-MM-DD.
+/// Today's date as YYYY-MM-DD (UTC).
 fn today() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-
-    let days = secs / 86400;
-    // Civil date from days since epoch (simplified, handles 1970-2099)
-    let mut year = 1970i64;
-    let mut remaining = days as i64;
-    loop {
-        let year_days = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if remaining < year_days {
-            break;
-        }
-        remaining -= year_days;
-        year += 1;
-    }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-    let mut month = 0usize;
-    for md in &month_days {
-        if remaining < *md as i64 {
-            break;
-        }
-        remaining -= *md as i64;
-        month += 1;
-    }
-    format!("{year:04}-{:02}-{:02}", month + 1, remaining + 1)
+    time_core::civil_date(secs)
 }
 
 /// Path to today's log file.

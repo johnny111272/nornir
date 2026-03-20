@@ -103,6 +103,12 @@ Core crate uses `_types` suffix instead of `_core`. Known deferred issue.
 
 `announce.toml`, `VOICE.lock`, lookup tables, `hits.toml` are parsed via serde with no schema files. Addressed partially by item #1 decomposition.
 
+## 11. Add UTC 'Z' suffix to datagram log filenames
+
+**Priority: Minor** (correctness — UTC ambiguity)
+
+`record_datagrams` names log files `datagrams_2026-03-20.jsonl` using UTC dates from `time_core::civil_date()`. The bare date has confused the LLM on multiple occasions — it interprets it as local time. Add a `Z` suffix or otherwise disambiguate: e.g. `datagrams_2026-03-20Z.jsonl`.
+
 ---
 
 **Process:** Work items top-down. For each: plan mode → execute → verify → commit → next.
