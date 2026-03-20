@@ -108,7 +108,7 @@ resolver = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = "0.9"
-toml = "0.8"
+toml = { version = "0.8", features = ["preserve_order"] }
 toon-format = "0.4"
 jsonschema = "0.29"
 thiserror = "2.0"

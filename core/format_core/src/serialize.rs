@@ -115,6 +115,35 @@ mod tests {
     }
 
     #[test]
+    fn test_to_toml_preserves_key_order() {
+        // Keys deliberately not alphabetical — z before a before m
+        let json_str = r#"{"zebra": 1, "alpha": 2, "mango": 3}"#;
+        let value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let toml_str = to_toml(&value).unwrap();
+        let z_pos = toml_str.find("zebra").unwrap();
+        let a_pos = toml_str.find("alpha").unwrap();
+        let m_pos = toml_str.find("mango").unwrap();
+        assert!(
+            z_pos < a_pos && a_pos < m_pos,
+            "key order not preserved: z={z_pos} a={a_pos} m={m_pos}\n{toml_str}"
+        );
+    }
+
+    #[test]
+    fn test_to_toml_preserves_nested_key_order() {
+        let json_str = r#"{"outer": {"charlie": 1, "bravo": 2, "alpha": 3}}"#;
+        let value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let toml_str = to_toml(&value).unwrap();
+        let c_pos = toml_str.find("charlie").unwrap();
+        let b_pos = toml_str.find("bravo").unwrap();
+        let a_pos = toml_str.find("alpha").unwrap();
+        assert!(
+            c_pos < b_pos && b_pos < a_pos,
+            "nested key order not preserved: c={c_pos} b={b_pos} a={a_pos}\n{toml_str}"
+        );
+    }
+
+    #[test]
     fn test_to_toon_with_array() {
         let value = json!({
             "items": [
