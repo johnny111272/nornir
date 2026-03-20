@@ -72,6 +72,7 @@ members = [
     "hooks/hook_post_llm_tool",
     "hooks/hook_stop_llm_tts",
     "core/gleipnir_core",
+    "core/announce_core",
     "core/saga_core",
     "core/report_render_core",
     "cli/saga_cli",
@@ -94,7 +95,7 @@ members = [
     "interceptors/intercept_replay",
     "daemons/record_datagrams",
     "capability/saga_runner",
-    "senders/announce",
+    "cli/announce",
 ]
 resolver = "2"
 

@@ -72,10 +72,21 @@ dependencies = [
 name = "announce"
 version = "0.1.0"
 dependencies = [
+ "announce_core",
  "clap",
  "dotenvy",
  "reqwest",
  "rodio",
+ "serde",
+ "serde_json",
+ "toml",
+ "write_engine",
+]
+
+[[package]]
+name = "announce_core"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "sha2",

@@ -39,7 +39,6 @@ crates = [
     "send_warning",
     "send_alert",
     "send_datagram",
-    "announce",
 ]
 verify = "exit_codes"
 valid_exit_codes = [0, 1, 2]
@@ -49,9 +48,10 @@ crates = [
     "saga_cli",
     "syn_cli",
     "hush",
+    "announce",
 ]
 verify = "exit_codes"
-valid_exit_codes = [0, 2]
+valid_exit_codes = [0, 1, 2]
 # These crates produce binaries with different names
 [tools.binary_names]
 saga_cli = "saga"
