@@ -9,7 +9,7 @@
 
 /// Severity level for a rule match.
 ///
-/// Four tiers (ascending enforcement):
+/// Three tiers (ascending enforcement):
 ///   Warn  — allow, notify user + LLM (informational)
 ///   Ask   — pause, user decides allow/deny (interactive)
 ///   Block — hard deny, no override

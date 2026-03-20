@@ -1,114 +1,174 @@
 # Nornir Improvement Plan
 
-Generated 2026-03-19 from intersection of strict_audit_A.md and strict_audit_B.md.
+Generated 2026-03-20 from intersection of dual structural audits (A ∩ B) and dual documentation audits (A ∩ B).
+
+**Previous plan (2026-03-19):** Items 1-4, 6-9, 11 completed. Items 5, 10 carried forward.
 
 ---
 
-## 1. Decompose `announce` monolith
+## Structural Findings (A ∩ B intersection)
 
-**Priority: Critical** (P1+P3+P4+P5+P7+P8 — 6 simultaneous violations)
+### S1. Watcher transcript I/O should use session_io or write_engine
 
-650 lines, 0 tests, 21 `process::exit()` in helpers, no `write_engine`/`ai_home()`, no schema validation, misplaced in `senders/`.
+**Priority: Medium** (P1+P4 — pure logic in binary + composition violation)
 
-- Extract pure logic to `core/announce_core`: `compute_hash`, `sanitize_filename`, `build_cache_path`, `build_tts_body`, `pcm_s16le_to_f32`, config resolution
-- Convert all helpers to return `Result<T, String>`, keep `process::exit()` only in `main()`
-- Use `write_engine::ai_home()` for path resolution
-- Add unit tests for all extracted pure functions
-- Move binary from `senders/` to `cli/` (it's a full TTS application, not a sender)
-- Update deploy_categories.toml
+`watch_and_diff_exchange_intercepts` reimplements transcript JSONL append via raw `OpenOptions`/`write_all` without fsync. The `session_io` crate handles session file I/O. The watcher should delegate transcript writing to session_io or use write_engine for fsync.
 
-## 2. Fix `$HOME` hardcoding in hooks
+- Move `transcript_path_for()`, `open_transcript()`, `append_transcript()` to session_io
+- Watcher imports from session_io instead of rolling its own
+- Gains fsync discipline for crash safety
 
-**Priority: Moderate** (P4 — composition violation)
+### S2. `split_jsonl_batches` `compute_batches()` extractable to core
 
-`hook_post_llm_tool` and `hook_stop_llm_tts` both manually read `$HOME` and construct `~/.ai/tools/bin`. Should use `write_engine::ai_home()`.
+**Priority: Low** (P1 — pure logic in binary)
 
-- Add `write_engine` dep to both hook crates
-- Replace `std::env::var("HOME")` with `write_engine::ai_home()`
-- Verify tests still pass
+Pure batch-sizing algorithm (takes total/min/max, returns Vec<usize>) with 10 tests. Single consumer today.
 
-## 3. Extract `make_decision()` to `hook_io`
+- Extract to appropriate core crate when a second consumer appears
+- Not urgent — single consumer, well-tested in place
 
-**Priority: Moderate** (P4 — duplicated pure logic)
+### S3. `hook_stop_llm_tts` has zero tests
 
-`hook_pre_llm_bash` and `hook_pre_llm_tool` each contain their own `make_decision()` with identical logic mapping `Severity` + metadata to `HookDecision`.
+**Priority: Medium** (P6 — untested hook binary)
 
-- Move shared `make_decision()` to `hook_io`
-- Both hooks call the shared function
-- Existing tests stay in the hook binaries (they test integration)
+123 lines, no test module. Contains testable logic: StopEvent deserialization, QUIET.lock checking, project directory resolution priority.
 
-## 4. Extract `record_datagrams` `today()` to a core utility
+- Add tests for deserialization contract
+- Add tests for lock file decision logic
+- Add tests for project directory resolution
 
-**Priority: Moderate** (P1+P4 — pure logic in binary, reimplementation risk)
+### S4. Delete orphaned `senders/announce/` directory
 
-37-line hand-rolled epoch-to-civil-date converter. Untestable as-is (uses `SystemTime::now()` directly).
+**Priority: Low** (P10 — orphaned artifact)
 
-- Extract to `fn civil_date(epoch_secs: u64) -> String` in an appropriate core crate
-- Inject timestamp in caller
-- Add unit tests for edge cases (midnight, leap year, etc.)
+Untracked directory from the announce move to cli/. Should be deleted.
 
-## 5. Refresh CONTEXT_MAP.md
+- `rm -rf senders/announce/`
 
-**Priority: Moderate** (P10 — stale inventory)
+### S5. `saga_runner` 545 lines, zero tests (A only — noted)
 
-Lists 85 members, actual is 97. Missing: `intercept_core`, `session_io`, `intercept_replay`, `announce`, `hook_stop_llm_tts`, `default_apply_core`, `default_apply_io`, `gate_raw_definition_defaults`, `gate_galdr_style_input`, and others.
-
-- Regenerate crate inventory from workspace Cargo.toml
-- Update test counts
-- Update known issues section
-
-## 6. Extract `filter_text()` from `hook_stop_llm_tts`
-
-**Priority: Minor** (P1 — pure logic trapped in binary)
-
-33-line pure markdown stripping function. Reusable if `announce` or other tools need text preprocessing.
-
-- Move to a core crate (could go in `format_core` or a new `text_core`)
-- Keep tests alongside the function
-- Hook binary calls the shared function
-
-## 7. Delete orphaned `io_filter` crate
-
-**Priority: Minor** (P10 — zero tests, zero consumers)
-
-37-line crate imported by nothing. Known issue since 2026-03-13.
-
-- Remove from workspace Cargo.toml
-- Delete `capability/io_filter/` directory
-- Remove from deploy_categories.toml if present
-
-## 8. Rename `datagram_types` to `datagram_core`
-
-**Priority: Minor** (P5 — naming exception)
-
-Core crate uses `_types` suffix instead of `_core`. Known deferred issue.
-
-- Rename directory `core/datagram_types` to `core/datagram_core`
-- Update package name in Cargo.toml
-- Update all dependents (datagram_io, send_datagram, record_datagrams, session_io, etc.)
-- Update workspace Cargo.toml
-
-## 9. Extract `watch_and_diff` pure functions
-
-**Priority: Minor** (P1 — accumulation pattern)
-
-`jitter_sleep` (xorshift64 PRNG), `parse_pace` (string parsing), `workspace_from_parent_dir` (path manipulation), `accumulate_line` (JSON parsing) are pure logic in a binary.
-
-- Small individually but represents accumulation
-- Extract to appropriate core/capability crates when the binary next needs changes
-
-## 10. Add schema validation for `announce` TOML configs
-
-**Priority: Minor** (P7 — no schema validation)
-
-`announce.toml`, `VOICE.lock`, lookup tables, `hits.toml` are parsed via serde with no schema files. Addressed partially by item #1 decomposition.
-
-## 11. Add UTC 'Z' suffix to datagram log filenames
-
-**Priority: Minor** (correctness — UTC ambiguity)
-
-`record_datagrams` names log files `datagrams_2026-03-20.jsonl` using UTC dates from `time_core::civil_date()`. The bare date has confused the LLM on multiple occasions — it interprets it as local time. Add a `Z` suffix or otherwise disambiguate: e.g. `datagrams_2026-03-20Z.jsonl`.
+Significant capability crate with no unit tests. Tested indirectly via saga_cli and syn_cli.
 
 ---
+
+## Documentation Findings (A ∩ B intersection)
+
+### D1. CONTEXT_MAP.md: Refresh crate inventory
+
+**Priority: High** (P1+P4 — stale counts cause reimplementation)
+
+- Total workspace members: 95 → 97
+- Core crates: 13 → 16 (missing: announce_core, time_core, text_core)
+- Capability heading says 12, table has 11
+- announce listed under senders (line 81) but lives in cli/ (line 116 says so — self-contradiction)
+- "3 specialist tools" should be 4
+
+Full regeneration needed. Carried forward from previous plan as item 5.
+
+### D2. HOOK_DESIGN.md: SessionStart output contract wrong
+
+**Priority: High** (P1 — wire format disagreement)
+
+Doc says SessionStart output is `systemMessage`. Code produces `hookSpecificOutput.additionalContext` via `SessionStartResponse::to_json()`. A session building a hook would produce the wrong output.
+
+- Fix event mapping table: SessionStart → `additionalContext`
+- Also check PreCompact output contract (B found it also says `systemMessage` but code has no context field)
+
+### D3. HOOK_DESIGN.md: Settings.json example incomplete
+
+**Priority: Medium** (P1 — missing categories)
+
+Example shows 3 of 6 bash hook categories. Missing: `--destruction`, `--revert`, `--workflow`.
+
+- Update example to show all 6 categories with their configured severities
+
+### D4. HOOK_DESIGN.md: Event type coverage incomplete
+
+**Priority: Medium** (P3 — 7 documented, 11+ in code)
+
+response.rs implements PostToolUseFailure, PermissionRequest, SubagentStop, SubagentStart, Notification, InstructionsLoaded, ConfigChange — none documented.
+
+- Add missing event types to the event mapping table
+- Mark any speculative/unused types as such
+
+### D5. rules.rs: "Four tiers" comment but only three variants
+
+**Priority: Low** (P1 — doc comment disagrees with code)
+
+- Fix comment to say "Three tiers"
+
+### D6. SYN_DESIGN.md: CLI reference missing flags (B only — noted)
+
+`--stdin`, `--kind`, `--narrow` undocumented. The `--stdin` flag is mentioned in a code example but not in the CLI table.
+
+### D7. NORNIR_CONVENTIONS.md: Dependency lookup table missing crates (A only — noted)
+
+session_io, intercept_core, announce_core, time_core, text_core not in lookup table.
+
+---
+
+## Missing Design Documents (A ∩ B intersection)
+
+### M1. Datagram/Hlidskjalf subsystem — no design doc
+
+**Priority: Medium**
+
+4 crates (datagram_core, datagram_io, record_datagrams, 5 send_* binaries) with dual transport, self-alerting, schema validation. No document explains why.
+
+### M2. Gleipnir — no design doc
+
+**Priority: Medium**
+
+Largest core crate. AST analysis across 4 languages, check taxonomy, zone model, Svelte multi-phase. No design reference for sessions modifying gleipnir.
+
+### M3. Write_engine — no design doc
+
+**Priority: Medium**
+
+Most-imported capability crate. WriterConfig, OutputPath, ai_home(), fsync discipline. No document explains the API.
+
+### M4. Announce/voice subsystem — no design doc
+
+**Priority: Medium**
+
+announce_core + announce + hook_io speech integration. Voice directory convention, SILENT.lock, severity-to-voice mapping undocumented.
+
+---
+
+## Carried Forward
+
+### C1. Refresh CONTEXT_MAP.md (was item 5)
+
+Subsumes D1. Full regeneration from workspace Cargo.toml.
+
+### C2. Add schema validation for announce configs (was item 10)
+
+announce.toml, VOICE.lock, lookup tables, hits.toml — no schema files.
+
+---
+
+## Stale MEMORY.md entries (informational)
+
+Audit B flagged:
+- `io_filter crate orphaned` — already deleted
+- `datagram_types naming exception` — already renamed to datagram_core
+
+These entries should be cleaned from MEMORY.md.
+
+---
+
+## Execution Priority
+
+1. **D1/C1** — Refresh CONTEXT_MAP.md (high damage, prevents reimplementation)
+2. **D2** — Fix HOOK_DESIGN.md output contracts (high damage, wrong wire format)
+3. **S3** — Add hook_stop_llm_tts tests (medium, untested binary)
+4. **D3** — Fix HOOK_DESIGN.md settings example (medium, incomplete config)
+5. **D4** — Add missing event types to HOOK_DESIGN.md (medium)
+6. **S1** — Watcher transcript I/O extraction to session_io (medium)
+7. **S4** — Delete senders/announce/ orphan (low, quick)
+8. **D5** — Fix "Four tiers" comment (low, quick)
+9. **M1-M4** — Design documents (medium, substantial writing)
+10. **S2** — Extract compute_batches (low, defer until second consumer)
+11. **C2** — Announce config schemas (low)
 
 **Process:** Work items top-down. For each: plan mode → execute → verify → commit → next.

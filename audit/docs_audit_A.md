@@ -1,210 +1,185 @@
 # Documentation Audit A
 
-**Auditor:** Documentation Auditor A
-**Date:** 2026-03-19
-**Method:** Verified documentation claims against implementation by reading source code, checking file paths, comparing function signatures, enum variants, CLI flags, and crate inventories against workspace Cargo.toml.
+**Auditor:** Claude Opus 4.6 (1M context) — Documentation Auditor A
+**Date:** 2026-03-20
+**Method:** For every actionable claim in workspace documentation, verified against actual implementation by reading code, checking file paths, checking function signatures, and comparing workspace Cargo.toml members.
 
 ---
 
 ## Priority 1: Disagreements Between Documentation and Implementation
 
-### D1. HOOK_DESIGN.md — Severity enum (line 135)
+### D1. CONTEXT_MAP: Core crate count and inventory
 
-**Doc says:** `pub enum Severity { Warn, Block }`
-**Code says:** `pub enum Severity { Warn, Ask, Block }` (capability/hook_io/src/rules.rs line 17)
+**Document says:** "13 core" crates, with a table listing 13 entries (error_core through intercept_core).
 
-The `Ask` variant exists in the implementation but is absent from the HOOK_DESIGN.md Severity enum listing. The doc comment in rules.rs describes "Four tiers" but only lists three variants -- that internal doc comment is also inconsistent (says four, shows three). The CONTEXT_MAP.md already flags this as known stale.
+**Code says:** Workspace Cargo.toml has 16 core/ members. The core/ directory contains 16 crates. Three crates are missing from the CONTEXT_MAP inventory table: `announce_core`, `time_core`, `text_core`.
 
-### D2. HOOK_DESIGN.md — RawRule struct (line 138)
+**Impact:** A fresh session will not know these crates exist and may reimplement their logic.
 
-**Doc says:** `pub struct RawRule { pub pattern: String, pub description: String }`
-**Code says:** `pub struct RawRule { pub pattern: String, pub description: String, pub severity: Option<Severity> }` (capability/hook_io/src/rules.rs line 41-45)
+### D2. CONTEXT_MAP: Capability crate count
 
-The per-rule severity override field is missing from the HOOK_DESIGN.md struct definition.
+**Document says:** "12 capability" crates, with a table listing 12 entries including `session_io`.
 
-### D3. HOOK_DESIGN.md — PostToolUse output contract (lines 92-97)
+**Code says:** Workspace Cargo.toml has 11 capability/ members. The capability/ directory contains 11 crates. The CONTEXT_MAP table lists `session_io` (which exists) but also lists `io_check` and `intercept_io`, which exist. Counting the table entries: `schemas_embedded`, `path_verify_io`, `io_check`, `gate_io`, `hook_io`, `datagram_io`, `intercept_io`, `write_engine`, `saga_runner`, `default_apply_io`, `session_io` = 11. The heading says 12. The heading count does not match the table.
 
-**Doc says:** PostToolUse output is `{"systemMessage": "..."}`
-**Code says:** PostToolUseResponse puts context into `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}` (capability/hook_io/src/response.rs lines 346-367). A top-level `systemMessage` is available via `Universal` fields but is NOT what `run_post_hook` uses -- `run_post_hook` calls `PostToolUseResponse::allow().with_context(msg)` which populates `hookSpecificOutput.additionalContext`.
+### D3. CONTEXT_MAP: Total workspace member count
 
-Disagreement: the wire format shown in the doc does not match the wire format produced by the code. Which is the intended contract?
+**Document says:** "95 workspace members."
 
-### D4. HOOK_DESIGN.md — PostToolUse dispatch table (lines 182-189)
+**Code says:** Workspace Cargo.toml has 97 members.
 
-**Doc says:** `.py --> assess_python(file_path)`, `.rs --> None (future: cargo check)`, `.toml -> None`, `_ --> None`
-**Code says:** The function is named `assess_source` (not `assess_python`). It handles `.py`, `.rs`, AND `.svelte` (all routed to the same saga/syn pipeline). There is no Python-specific runner -- all three extensions use the identical pipeline. (hooks/hook_post_llm_tool/src/main.rs lines 26-28, 60)
+**Breakdown of disagreement:** The doc's sub-totals (13+12+35+8+3+5+6+6+1+1+1+1+2+1=95) do not add up to the actual 97 (16+11+35+12+6+5+5+1+1+1+1+2+1=97). The core count is wrong (13 vs 16), capability count is wrong (12 vs 11), cli count is wrong (the doc says "8 checks + 3 tools" = 11 but cli/ has 12 members), and the senders list is wrong (see D4).
 
-Disagreements:
-- Function name: `assess_python` vs actual `assess_source`
-- Rust files: doc says "None (future)" but code routes `.rs` to the saga/syn pipeline (same as Python)
-- Svelte files: not mentioned in the doc at all, but handled in the code
-- The doc implies per-language runners, but the actual implementation is a single unified `assess_source` for all supported extensions
+### D4. CONTEXT_MAP: `announce` listed as sender, actually in cli/
 
-### D5. HOOK_DESIGN.md — `deploy_hooks.py` reference (line 222)
+**Document says (line 81):** "6 senders in `senders/` -- `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`, `announce`"
 
-**Doc says:** `deploy_hooks.py builds release binaries and symlinks into ~/.ai/tools/bin/`
-**Reality:** `deploy_hooks.py` does not exist. Deployment is handled by `nornir_deploy --build hooks`. The CONTEXT_MAP.md already flags this.
+**Code says:** `announce` lives in `cli/announce/`. Workspace Cargo.toml lists it as `"cli/announce"`. The senders/ directory contains only 5 crates (the five `send_*` binaries). No `announce` directory exists in senders/.
 
-### D6. HOOK_DESIGN.md — Workspace members list (lines 213-218)
+**Internal contradiction:** The same document (line 116) says: "`announce` naming exception -- no verb prefix. Decomposed (item 1 done) and moved to cli/." Lines 81 and 116 of CONTEXT_MAP directly contradict each other about where `announce` lives.
 
-**Doc says:** Five hooks listed: `hook_pre_llm_tool`, `hook_pre_llm_bash`, `hook_pre_subagent_tool`, `hook_pre_subagent_bash`, `hook_post_llm_tool`
-**Code says:** Six hooks exist in the workspace: the five listed plus `hook_stop_llm_tts` (hooks/ directory and workspace Cargo.toml both confirm).
+### D5. CONTEXT_MAP: CLI tool count
 
-The `hook_stop_llm_tts` hook is missing from HOOK_DESIGN.md's workspace members listing.
+**Document says:** "3 specialist tools in `cli/` -- `saga_cli` (binary: saga), `syn_cli` (binary: syn), `hush`"
 
-### D7. SYN_DESIGN.md — PostToolUse integration (lines 289-294)
+**Code says:** cli/ contains 4 non-check crates: `saga_cli`, `syn_cli`, `hush`, and `announce`. The doc counts `announce` as a sender (D4) rather than as a cli tool, but it actually lives in cli/.
 
-**Doc says:** "Syn gate mode: compares fresh .qa against baseline sidecar" and "Decision returned as additionalContext (TOON format)"
-**Code says:** `hook_post_llm_tool` runs syn with only `--stdin` (no `--mode gate`). Since `--mode report` is the default (cli/syn_cli/src/main.rs line 129), the hook uses **report mode**, not gate mode.
+### D6. HOOK_DESIGN: SessionStart output contract says `systemMessage`
 
-The CONTEXT_MAP.md already flags this ("PostToolUse section claims gate mode but actual is report mode").
+**Document says (line 29):** The SessionStart event mapping shows output contract as `systemMessage`.
 
-### D8. NORNIR_CONVENTIONS.md — Stale deploy script references
+**Code says:** `response.rs` `SessionStartResponse::to_json()` (lines 636-650) produces `hookSpecificOutput.additionalContext`, not top-level `systemMessage`. The `systemMessage` field is available via the `WithUniversal` trait as a separate top-level field, but it is not the default output. A session following the doc's event mapping table would misunderstand which JSON field carries the session start context.
 
-**Doc says (line 128):** "add to workspace Cargo.toml and `deploy_writers.py`"
-**Doc says (line 216):** "Gate crates (PyO3) fail to link without Python headers -- use `deploy_gates.py` for those."
-**Reality:** Neither `deploy_writers.py` nor `deploy_gates.py` exist. The correct tool is `nornir_deploy --build writers` and `nornir_deploy --build gates`. The CONTEXT_MAP.md already flags this.
+### D7. HOOK_DESIGN: Settings.json example missing `--workflow` flag
 
-### D9. NORNIR_CONVENTIONS.md — Test exclusion command (line 217)
+**Document says (line 246):** `hook_pre_llm_bash --subversion block --truncation warn --evasion warn`
 
-**Doc says:** `cargo test --workspace $(for d in gates/*/; do echo "--exclude $(basename $d)"; done) --exclude intercept_io`
-**Code says:** `traffic_interceptor_rewriter` is also a PyO3 crate (cdylib+rlib with pyo3 dependency in its Cargo.toml) that would fail to link without Python headers. The doc's exclusion list omits `--exclude traffic_interceptor_rewriter`.
+**Likely state:** Session memory records that `--workflow ask` was added to the hook_pre_llm_bash command in settings.json. The HOOK_DESIGN example may be stale. This requires human verification against the actual `~/.claude/settings.json` (outside the repo).
 
-The MEMORY.md has the correct command with both `--exclude intercept_io --exclude traffic_interceptor_rewriter`, but the committed NORNIR_CONVENTIONS.md does not.
+### D8. hook_post_llm_tool doc comment says `systemMessage`, code produces `additionalContext`
 
-### D10. CONTEXT_MAP.md — Workspace member count (line 36)
+**Document says:** The file-level doc comment in `hooks/hook_post_llm_tool/src/main.rs` line 6 says: "injects the TOON assessment as a systemMessage."
 
-**Doc says:** "98 workspace members: 13 core + 12 capability + 35 gates + 8 checks + 3 tools + 5 writers + 6 hooks + 6 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 2 interceptors + 1 daemon"
-**Code says:** 95 workspace members (counted from Cargo.toml). The breakdown: 13 core + 12 capability + 35 gates + 8 checks + 3 tools (cli) + 5 writers + 6 hooks + 6 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 2 interceptors + 1 daemon = 96 if you count hush (in cli/) separately from checks. But the workspace Cargo.toml has exactly 95 members.
+**Code says:** The function calls `hook_io::run_post_hook(assess)`, which produces `hookSpecificOutput.additionalContext` (via `PostToolUseResponse`). The HOOK_DESIGN document (line 293) correctly says `hookSpecificOutput.additionalContext`. The binary's own doc comment disagrees with both the design doc and the code behavior.
 
-The sum 13+12+35+8+3+5+6+6+1+1+1+1+2+1 = 96, which disagrees with both the stated "98" and the actual 95. The count math itself is internally inconsistent.
+### D9. STRUCTURAL_AUDIT_GUIDE: Gleipnir Rust check list incomplete
 
-### D11. CONTEXT_MAP.md — Binary count (line 73)
+**Document says (Priority 9, lines 182-191):** Lists Rust checks as: `no_unwrap`, `no_println`, `no_clone_spam`, `no_string_abuse`, `no_pub_overuse`, `no_underscore_prefix`, `function_length_rs`, `nesting_depth_rs`, `short_names` / `numbered_names`, `suppression`.
 
-**Doc says:** "67 executables + 35 gate modules"
-**Code says:** Non-gate binary crates: 8 checks + 3 tools + 5 writers + 6 hooks + 6 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 1 intercept_replay + 1 daemon = 34 executables (traffic_interceptor_rewriter is a PyO3 lib, not an executable). 34 + 35 = 69 total, not 67 + 35. The "67 executables" count disagrees with actual.
+**Code says:** `gleipnir_core/src/lib.rs` lines 121-138 shows 13 Rust checks. The audit guide is missing: `param_count_rs` and `short_param_names_rs`. Also the guide names are slightly imprecise: `short_names` should be `no_single_letter_names_rs`, `numbered_names` should be `no_numbered_suffixes_rs`, `suppression` should be `no_suppression_comments_rs`.
 
-### D12. NORNIR_CONVENTIONS.md — Workspace dependencies list (line 239)
+### D10. STRUCTURAL_AUDIT_GUIDE: Gleipnir Python check list incomplete
 
-**Doc says:** Lists `serde, serde_json, serde_yaml, toml, toon-format, jsonschema, thiserror, pyo3, regex, jaq-interpret, jaq-parse, tree-sitter, tree-sitter-python, tree-sitter-rust, tree-sitter-typescript, sha2, clap, libc`
-**Code says:** Workspace Cargo.toml also includes: `tree-sitter-css 0.25`, `tree-sitter-html 0.23`, `reqwest 0.12`, `dotenvy 0.15`, `rodio 0.19`. These five workspace dependencies are missing from the documentation.
+**Document says (lines 227-232):** Lists Python checks including "Import violations (cross-zone, relative, parent), type safety (Any, bare dict/list, large unions), Architecture (classes outside structures/, god classes, dataclass usage)."
 
-### D13. STRUCTURAL_AUDIT_GUIDE.md — Gleipnir check categories (lines 181-191)
+**Code says:** The actual Python check matrix includes additional checks not mentioned in the audit guide summary: `import_count`, `no_reexport_shims`, `check_no_overload`, `check_no_model_dump`, `check_no_dunder_all`, `check_init_files_empty`, `check_no_future_annotations`, `impure_module_quarantine`, `check_structures_import_boundary`, `check_structures_no_functions`, `check_max_functions_outside_zones`, `check_no_throwaway_assignment`, `check_no_json_value`, `check_no_implicit_type_aliases`, `check_hardcoded_config`, `check_no_cast`. The list in the audit guide is a high-level summary, not exhaustive, but may mislead sessions into thinking unlisted checks don't exist.
 
-**Doc says:** Lists Rust checks: `no_unwrap`, `no_println`, `no_clone_spam`, `no_string_abuse`, `no_pub_overuse`, `no_underscore_prefix`, `function_length_rs`, `nesting_depth_rs`, `short_names` / `numbered_names`, `suppression`
-**Code says:** The gleipnir matrix (core/gleipnir_core/src/matrix.rs) also registers `import_count` for Python checks (lines 224, 268). Additionally, gleipnir has a `checks_svelte` module (checks for Svelte files) that is not mentioned in the audit guide's "What Gleipnir Covers" section at all.
+### D11. rules.rs doc comment says "Four tiers" but lists three
 
-The doc claims TypeScript checks exist but doesn't mention Svelte. The code has `checks_svelte/` as a separate module.
+**Document says:** `rules.rs` line 13: "Four tiers (ascending enforcement):" then lists three: Warn, Ask, Block.
 
-### D14. HOOK_DESIGN.md — Event mapping table and hook_stop_llm_tts
-
-**Doc says (line 40):** `hook_stop_llm_tts` is listed as event "Stop" with context "LLM" and scope "TTS playback"
-**Doc says (lines 24-28):** The event mapping table lists: PreToolUse, PostToolUse, SessionStart, SessionEnd, PreCompact. There is no "Stop" event in the mapping table.
-
-The `hook_stop_llm_tts` hook uses an event type that is not defined in the HOOK_DESIGN.md event mapping table.
-
-### D15. HOOK_DESIGN.md — response.rs supports many more event types than documented
-
-**Doc says:** Event mapping covers PreToolUse, PostToolUse, SessionStart, SessionEnd, PreCompact.
-**Code says:** response.rs implements builders for: PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, UserPromptSubmit, Stop, SubagentStop, ConfigChange, SessionStart, SubagentStart, Notification, PreCompact, SessionEnd, InstructionsLoaded. That is 14 event types vs 5 documented.
-
-The response module has grown far beyond what HOOK_DESIGN.md describes. Whether the doc should be updated or the extra response types are speculative implementations is a human judgment call.
+**Code says:** The `Severity` enum has exactly three variants: `Warn`, `Ask`, `Block`.
 
 ---
 
 ## Priority 2: Missing Design Rationale
 
-### M1. Intercept subsystem has no committed design document
+### M1. No design document for the datagram/Hlidskjalf subsystem
 
-Four crates form the intercept pipeline: `intercept_core` (classification), `session_io` (shared file I/O), `traffic_interceptor_rewriter` (live PyO3 module), `intercept_replay` (reconstruction binary). Additional crates participate: `compaction_inject_core`, `diff_core`, `watch_and_diff_exchange_intercepts`.
+Four crates form this subsystem: `datagram_core` (types), `datagram_io` (transport), `send_*` binaries (5 senders), `record_datagrams` (daemon). No committed document explains:
+- Why dual transport (Unix socket + UDP multicast)?
+- What is the datagram schema contract?
+- What is `record_datagrams` and how does it relate to Hlidskjalf?
+- When should a new sender be created vs using `send_datagram` directly?
 
-There is no committed document explaining:
-- Why `session_io` was extracted from the interceptor
-- What `record_compaction` does vs `inject_compaction_system_block` (record_compaction handles the shared capture/truncate/datagram flow; inject_compaction_system_block modifies the request body -- live only)
-- Why replay skips injection but uses the same classification
-- The relationship between the watcher and the replay binary
-- The raw_session_log.jsonl -> derived files reconstruction flow
-- The compaction capture/truncate/inject sequence
+A fresh session encountering this subsystem would not understand the architecture and might add transport logic to a sender binary or hardcode the socket path.
 
-The design rationale lives only in MEMORY.md (session memory). A fresh session with no memory would not understand why these crates are structured this way and would likely add functions directly to `traffic_interceptor_rewriter`.
+### M2. No design document for the quality pipeline (saga_runner + saga_core + report_render_core)
 
-### M2. Datagram subsystem has no design document
+SYN_DESIGN.md explains syn. HOOK_DESIGN.md explains the hook integration. But there is no design document for saga itself. Three crates form the truth-recording layer: `saga_core` (types), `saga_runner` (generation + I/O), `report_render_core` (formatting). No committed document explains:
+- What quality tools saga orchestrates and how
+- What the `.qa` sidecar format is
+- Why report_render_core was extracted from saga_runner
+- What Svalinn is and how it consumes `.qa` files
 
-Three crates form the datagram subsystem: `datagram_types` (core types), `datagram_io` (emission), and `record_datagrams` (daemon). Six sender binaries consume it. The watcher and hooks also emit datagrams.
+### M3. No design document for gleipnir_core
 
-No document explains:
-- The dual-transport architecture (Unix socket + what else?)
-- Why `datagram_types` exists separately from `datagram_io`
-- The socket path ownership rule (only in `datagram_io`)
-- What `record_datagrams` daemon does with received datagrams
-- The relationship between datagrams and the Hlidskjalf dashboard
+`gleipnir_core` is the largest core crate (multiple check modules across 4 languages, a classification matrix, parsing). No design document explains:
+- The FileKind classification system and zone model
+- Why checks are organized by check-category (prohibited, style, suppression, architecture) within language modules
+- The CheckConfig system and how it interacts with the matrix
+- How the Svelte multi-phase check pipeline works (script/style/template/raw)
 
-### M3. The `announce` binary has no design document
+The STRUCTURAL_AUDIT_GUIDE references gleipnir checks but only as "what not to audit." A session modifying gleipnir has no design reference.
 
-At 658 lines, `announce` is the largest binary in the workspace. It is a full ElevenLabs TTS application with caching, profile management, language lookup, and audio playback. It lives in `senders/` but is architecturally a standalone CLI application, not a thin datagram sender.
+### M4. No design document for the write_engine capability crate
 
-No document explains:
-- Why it is in `senders/` rather than `cli/`
-- The caching architecture (hash-based filename, voice directory structure)
-- The profile/config system (announce.toml, VOICE.lock)
-- The language lookup system
-- Why it has zero internal nornir dependencies (no write_engine, no datagram_io, no ai_home)
+`write_engine` is foundational -- nearly every binary depends on it. It provides `ai_home()`, `run()`, `append_line_fsync()`, `write_truncate_fsync()`. No document explains:
+- The WriterConfig declarative pattern and why it exists
+- What `OutputPath::DirectoryName` vs other variants do
+- Why `ai_home()` lives in write_engine rather than a separate crate
+- The fsync discipline and why it matters
 
-The IMPROVEMENT_PLAN.md item 1 calls for decomposition, but no design document captures the current architecture or the intended target architecture.
+### M5. No design document for announce_core + announce
+
+`announce_core` and `announce` (cli/) form a voice alert subsystem. `hook_io` calls `announce` as a subprocess for speech alerts. No document explains the architecture, severity-to-voice mapping, or the relationship with SILENT.lock and the voice directory.
 
 ---
 
 ## Priority 3: Contradictions Between Documents
 
-### C1. SYN_DESIGN.md vs itself: PostToolUse mode
+### C1. CONTEXT_MAP self-contradiction on `announce` location
 
-Line 289-293 says the PostToolUse hook uses "Syn gate mode" for per-file ratchet comparison.
-Line 329-330 says "Gate mode: filtering works, decision logic works, **ratchet comparison NOT YET IMPLEMENTED**"
+CONTEXT_MAP line 81 lists `announce` under "6 senders in `senders/`". CONTEXT_MAP line 116 says `announce` was "moved to cli/". Same document, two conflicting statements. The code agrees with line 116.
 
-If gate mode's core feature (ratchet) is not implemented, the PostToolUse integration section's claim that it uses gate mode is either aspirational or wrong. The actual code uses report mode.
+### C2. HOOK_DESIGN vs hook_post_llm_tool doc comment on output field
 
-### C2. HOOK_DESIGN.md "additionalContext" vs "systemMessage"
-
-Line 25 says PreToolUse output includes `additionalContext`.
-Line 92-97 says PostToolUse output is `{"systemMessage": "..."}`.
-Line 452 (run_post_hook docstring) says "Some(msg) injects into LLM context via additionalContext."
-
-The PostToolUse section claims `systemMessage`, the docstring claims `additionalContext`, and the code produces `hookSpecificOutput.additionalContext`. Three descriptions, two different field names.
+HOOK_DESIGN line 293 says the PostToolUse assessment is returned as `hookSpecificOutput.additionalContext`. The `hook_post_llm_tool/src/main.rs` doc comment (line 6) says the assessment is injected as a `systemMessage`. The code behavior matches HOOK_DESIGN. The binary's own doc comment is wrong relative to both the design doc and the implementation.
 
 ---
 
 ## Priority 4: Stale Inventories
 
-### S1. CONTEXT_MAP.md — `hush` not categorized in inventory
+### S1. Three core crates invisible in CONTEXT_MAP
 
-`hush` is listed under "3 specialist tools in cli/" alongside saga_cli and syn_cli. But hush is described in the Current hooks table (HOOK_DESIGN.md line 41) as a UserPromptSubmit hook, and CONTEXT_MAP.md's known issues section calls it a "UserPromptSubmit hook" that is misplaced. The inventory categorizes it as a tool while acknowledging it is a hook -- this sends mixed signals to a session trying to understand the architecture.
+The following crates exist in workspace Cargo.toml and on disk but are absent from the CONTEXT_MAP Tier 1 inventory table:
 
-### S2. CONTEXT_MAP.md does not list `announce` in the senders inventory description
+| Crate | On disk | In workspace Cargo.toml | In CONTEXT_MAP |
+|-------|---------|------------------------|----------------|
+| `announce_core` | `core/announce_core/` | Yes | No |
+| `time_core` | `core/time_core/` | Yes | No |
+| `text_core` | `core/text_core/` | Yes | No |
 
-The Tier 3 binaries section (line 80) lists "6 senders" with names: `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`, `announce`. The `announce` binary IS listed, but the description says "6 senders in senders/" while the known issues section (line 116) notes it is architecturally misplaced. This is correctly flagged already.
+A future session will not know these crates exist. `announce_core` is particularly important as `announce` (cli/) depends on it and it presumably contains the voice/speech logic that should not be reimplemented.
 
-### S3. deploy_categories.toml vs CONTEXT_MAP.md
+### S2. NORNIR_CONVENTIONS Dependency Lookup table missing crates
 
-deploy_categories.toml lists `intercept_replay` under `[interceptors]` as a cargo crate and `traffic_interceptor_rewriter` as a pyo3_crate. CONTEXT_MAP.md (line 85) correctly describes this: "2 interceptors -- traffic_interceptor_rewriter (PyO3 module), intercept_replay (binary)". No disagreement here -- this is consistent.
+The Dependency Lookup table in NORNIR_CONVENTIONS.md lists what to use for various needs. The following capability crates have no entry: `default_apply_io`, `intercept_io`, `session_io`. The following core crates have no entry: `announce_core`, `time_core`, `text_core`, `compaction_inject_core`, `intercept_core`, `default_apply_core`.
+
+While not all crates need lookup entries (some are niche), `session_io` and `intercept_core` are important enough that sessions working on the intercept pipeline should find them in the lookup table.
+
+### S3. deploy_categories.toml: `announce` is in `[tools]` category
+
+`deploy_categories.toml` lists `announce` under `[tools]` alongside `saga_cli`, `syn_cli`, `hush`. CONTEXT_MAP does not reflect this -- it calls `announce` a sender. This means `nornir_deploy --build senders` will NOT build `announce`. A session following CONTEXT_MAP's categorization would deploy `announce` wrong.
+
+### S4. intercept_replay cc_wire_schema.json: symlink confirmed
+
+INTERCEPT_DESIGN.md says the replay schema is a symlink. Verified: `/Users/johnny/.ai/smidja/nornir/interceptors/intercept_replay/cc_wire_schema.json` is a symlink pointing to `../traffic_interceptor_rewriter/cc_wire_schema.json`. No disagreement -- this is confirmed correct.
 
 ---
 
 ## Summary of Findings
 
-**Priority 1 (Disagreements):** 15 found
-- 6 in HOOK_DESIGN.md (Severity enum, RawRule struct, PostToolUse wire format, dispatch table, deploy script, workspace members)
-- 3 in NORNIR_CONVENTIONS.md (deploy script refs x2, test exclusion command)
-- 3 in CONTEXT_MAP.md (member count, binary count, workspace deps)
-- 2 in SYN_DESIGN.md (PostToolUse mode)
-- 1 in STRUCTURAL_AUDIT_GUIDE.md (gleipnir check list incomplete)
+| Priority | Count | Key items |
+|----------|-------|-----------|
+| P1: Disagreements | 11 | Crate counts (D1-D5), output contracts (D6, D8), settings example (D7), check lists (D9-D10), enum count (D11) |
+| P2: Missing design docs | 5 | Datagram/Hlidskjalf (M1), Saga pipeline (M2), Gleipnir (M3), write_engine (M4), announce (M5) |
+| P3: Contradictions | 2 | announce location (C1), systemMessage vs additionalContext (C2) |
+| P4: Stale inventories | 3 | Invisible core crates (S1), missing lookup entries (S2), deploy category mismatch (S3) |
 
-**Priority 2 (Missing design docs):** 3 found
-- Intercept subsystem (4 crates, no design doc)
-- Datagram subsystem (3 crates, no design doc)
-- Announce binary (658 lines, no design doc)
+### Highest-damage items for immediate attention
 
-**Priority 3 (Contradictions):** 2 found
-- SYN_DESIGN.md contradicts itself on PostToolUse mode
-- HOOK_DESIGN.md contradicts itself on PostToolUse wire format field name
-
-**Most damaging to future sessions:** M1 (missing intercept design doc) and D3/D4 (HOOK_DESIGN.md PostToolUse section). A session working on the intercept pipeline with no design doc will misplace code. A session reading HOOK_DESIGN.md's PostToolUse section will write code against the wrong wire format and the wrong dispatch architecture.
+1. **D1 + S1: Three invisible core crates.** `announce_core`, `time_core`, `text_core` exist but are undocumented. A session will reimplement their logic.
+2. **D4 + C1 + S3: `announce` location confusion.** Three documents disagree about where announce lives and how it deploys. A session will deploy it wrong.
+3. **D6 + D8 + C2: `systemMessage` vs `additionalContext` confusion.** Two documents say `systemMessage`, the code produces `additionalContext`. A session building a new hook will use the wrong output field.
+4. **M1: No datagram subsystem design doc.** Five senders + a daemon + dual transport with no explanation. Sessions will misuse the subsystem.

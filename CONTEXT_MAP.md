@@ -1,6 +1,6 @@
 # Nornir Context Map
 
-**Generated:** 2026-03-19
+**Generated:** 2026-03-20
 **Purpose:** Validation-as-code Rust monorepo. Produces compiled binaries, PyO3 gate modules, and libraries for the `.ai` ecosystem. Schemas embedded at compile time. Three-tier architecture: core (pure) -> capability (I/O) -> binaries.
 
 ---
@@ -35,27 +35,30 @@
 
 ## Crate Inventory
 
-**95 workspace members:** 13 core + 12 capability + 35 gates + 8 checks + 3 tools + 5 writers + 6 hooks + 6 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 2 interceptors + 1 daemon.
+**97 workspace members:** 16 core + 11 capability + 35 gates + 8 checks + 4 tools + 5 writers + 6 hooks + 5 senders + 1 rewriter + 1 converter + 1 dispatcher + 1 watcher + 2 interceptors + 1 daemon.
 
-### Tier 1: Core (13 crates, pure, no I/O)
+### Tier 1: Core (16 crates, pure, no I/O)
 
 | Crate | Purpose |
 |-------|---------|
+| `announce_core` | Voice/TTS config resolution, hash, sanitize, PCM conversion |
+| `compaction_inject_core` | Compaction summary instructions injection |
+| `datagram_core` | Datagram, DatagramKind, Priority type definitions |
+| `default_apply_core` | Default value application logic |
+| `diff_core` | Exchange diffing, TOML block extraction, pace/workspace/accumulate utils |
 | `error_core` | ValidationIssue types, educational error formatting |
 | `format_core` | JSON/YAML/TOML/TOON/TOMLX conversion |
-| `schema_core` | EmbeddedValidator with lazy-static schema loading |
-| `path_core` | Path field extraction, validate_path_segment |
-| `saga_core` | SanityReport + Issue types, pure path functions |
-| `syn_core` | Jq filter compilation, three-tier filtering, SynConfig |
 | `gleipnir_core` | Tree-sitter AST guardrail engine |
-| `diff_core` | Line-level diff and TOML block extraction |
-| `datagram_core` | Datagram, DatagramKind, Priority type definitions |
-| `report_render_core` | QA report grouping, formatting, serialization |
-| `compaction_inject_core` | Compaction summary instructions injection |
-| `default_apply_core` | Default value application logic |
 | `intercept_core` | Exchange classification: ExchangeKind, classify_exchange, has_tool |
+| `path_core` | Path field extraction, validate_path_segment |
+| `report_render_core` | QA report grouping, formatting, serialization |
+| `saga_core` | SanityReport + Issue types, pure path functions |
+| `schema_core` | EmbeddedValidator with lazy-static schema loading |
+| `syn_core` | Jq filter compilation, three-tier filtering, SynConfig |
+| `text_core` | Markdown stripping for TTS and display |
+| `time_core` | civil_date(), iso_zulu() — pure epoch-to-string conversions |
 
-### Tier 2: Capability (12 crates)
+### Tier 2: Capability (11 crates)
 
 | Crate | Purpose |
 |-------|---------|
@@ -63,7 +66,7 @@
 | `path_verify_io` | Filesystem path existence checks |
 | `io_check` | File-arg diagnostic output contract |
 | `gate_io` | Gate I/O orchestration (read/validate/write) |
-| `hook_io` | Hook input parsing, response formatting, rules |
+| `hook_io` | Hook input parsing, response formatting, rules, make_decision |
 | `datagram_io` | Dual-transport datagram emission |
 | `intercept_io` | PyO3: json_to_toml + append_jsonl_line for bifrost |
 | `write_engine` | Config-driven atomic writes, fsync, ai_home() |
@@ -75,10 +78,10 @@
 
 - **35 gate modules** in `gates/` — PyO3 pipeline stage validators
 - **8 check CLIs** in `cli/` — `check_raw_definition` through `check_anthropic_render`
-- **3 specialist tools** in `cli/` — `saga_cli` (binary: saga), `syn_cli` (binary: syn), `hush`
+- **4 specialist tools** in `cli/` — `saga_cli` (binary: saga), `syn_cli` (binary: syn), `hush`, `announce`
 - **5 writers** in `writers/` — `append_truth_qc_report_record`, `append_interview_summaries_record`, `append_embedding_normalize_batch_20`, `append_raw_jsonl`, `write_truth_glossary_record`
 - **6 hooks** in `hooks/` — `hook_pre_llm_tool`, `hook_pre_llm_bash`, `hook_pre_subagent_tool`, `hook_pre_subagent_bash`, `hook_post_llm_tool`, `hook_stop_llm_tts`
-- **6 senders** in `senders/` — `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`, `announce`
+- **5 senders** in `senders/` — `send_alert`, `send_warning`, `send_notification`, `send_heartbeat`, `send_datagram`
 - **1 rewriter** — `rewrite_compaction_summary`
 - **1 converter** — `convert_json_to_toml`
 - **1 dispatcher** — `split_jsonl_batches`

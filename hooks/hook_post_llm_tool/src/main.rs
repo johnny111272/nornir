@@ -3,7 +3,7 @@
 //! When a tool writes a Python, Rust, or Svelte file, runs the quality pipeline:
 //!   saga <file> --sidecar | syn --stdin
 //!
-//! If syn reports violations, injects the TOON assessment as a systemMessage.
+//! If syn reports violations, injects the TOON assessment as additionalContext.
 //! If syn reports zero violations, returns silence (no injection).
 //!
 //! Usage (in ~/.claude/settings.json):

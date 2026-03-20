@@ -26,9 +26,16 @@ verb axis needed.
 | PostToolUse | `post_` | Assess after execution | `hookSpecificOutput.additionalContext` |
 | Stop | `stop_` | React to LLM stop | exit code + optional side effects |
 | UserPromptSubmit | (special) | React to user input | exit code + optional side effects |
-| SessionStart | `start_` | Orient at session begin | `systemMessage` |
+| SessionStart | `start_` | Orient at session begin | `hookSpecificOutput.additionalContext` |
+| SubagentStart | `start_` | Orient subagent at start | `hookSpecificOutput.additionalContext` |
 | SessionEnd | `end_` | Finalize at session close | exit code only |
-| PreCompact | `compact_` | Preserve before compaction | `systemMessage` |
+| PreCompact | `compact_` | Preserve before compaction | `systemMessage` (opt-in via `.system_message()` builder) |
+| PostToolUseFailure | `post_` | React to tool failure | `hookSpecificOutput.additionalContext` |
+| PermissionRequest | `pre_` | Evaluate permission request | `hookSpecificOutput.permissionDecision` |
+| SubagentStop | `stop_` | React to subagent stop | exit code + optional side effects |
+| Notification | — | React to notification | exit code only |
+| ConfigChange | — | React to config change | exit code only |
+| InstructionsLoaded | — | React to instructions load | exit code only |
 
 ### Current hooks
 
@@ -243,7 +250,7 @@ Categories and crate lists are defined in `deploy_categories.toml`.
         },
         {
             "matcher": "Bash",
-            "hooks": [{ "type": "command", "command": "hook_pre_llm_bash --subversion block --truncation warn --evasion warn" }]
+            "hooks": [{ "type": "command", "command": "hook_pre_llm_bash --subversion block --truncation warn --evasion warn --destruction block --revert warn --workflow ask" }]
         }
     ],
     "PostToolUse": [
