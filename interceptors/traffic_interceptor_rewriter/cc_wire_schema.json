@@ -4,7 +4,7 @@
   "description": "Pinned to Claude Code release observed 2026-03-18. Strict: fail immediately on any deviation. Update this schema when CC changes the wire format.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["max_tokens", "messages", "metadata", "model"],
+  "required": ["messages", "model"],
   "_comment": "output_config/stream/system/tools are absent on internal CC utility calls (title generation etc). Strictly typed when present; additionalProperties:false still catches new unknown fields.",
   "properties": {
     "max_tokens": {

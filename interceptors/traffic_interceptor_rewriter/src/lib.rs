@@ -16,7 +16,7 @@
 use compaction_inject_core::inject_compaction_system_block;
 use intercept_core::{classify_exchange, ExchangeKind};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 use schema_core::EmbeddedValidator;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -141,7 +141,7 @@ fn process(
         Ok(rewritten) => {
             dict.set_item("ok", true)?;
             match rewritten {
-                Some(bytes) => dict.set_item("rewritten", bytes.as_slice())?,
+                Some(bytes) => dict.set_item("rewritten", PyBytes::new_bound(py, &bytes))?,
                 None => dict.set_item("rewritten", py.None())?,
             }
             dict.set_item("error", py.None())?;
