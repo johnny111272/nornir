@@ -63,7 +63,7 @@ fn today() -> String {
 
 /// Path to today's log file.
 fn log_path(log_dir: &Path) -> PathBuf {
-    log_dir.join(format!("datagrams_{}.jsonl", today()))
+    log_dir.join(format!("datagrams_{}-Z.jsonl", today()))
 }
 
 // =============================================================================
@@ -259,7 +259,7 @@ mod tests {
         let path = log_path(dir);
         let filename = path.file_name().unwrap().to_string_lossy();
         assert!(filename.starts_with("datagrams_"), "filename: {filename}");
-        assert!(filename.ends_with(".jsonl"), "filename: {filename}");
+        assert!(filename.ends_with("-Z.jsonl"), "filename: {filename}");
     }
 
     // =========================================================================

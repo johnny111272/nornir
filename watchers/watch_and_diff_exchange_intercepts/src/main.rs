@@ -1,5 +1,5 @@
 use clap::Parser;
-use diff_core::{build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, split_exchange, DatagramContext, Exchange};
+use diff_core::{accumulate_line, build_datagram, classify_priority, diff_messages, diff_system_blocks, diff_tools, parse_pace, split_exchange, workspace_from_parent_dir, DatagramContext, Exchange};
 use datagram_io::emit_validated_or_alert;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
@@ -55,20 +55,6 @@ fn parse_pace_arg(input: &str) -> Result<(u64, u64), String> {
 
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Parse "min:max" pace string into (min_ms, max_ms).
-fn parse_pace(input: &str) -> Result<(u64, u64), String> {
-    let parts: Vec<&str> = input.split(':').collect();
-    if parts.len() != 2 {
-        return Err(format!("--pace expects min:max (e.g. 800:3000), got: {input}"));
-    }
-    let min: u64 = parts[0].parse().map_err(|_| format!("Invalid pace min: {}", parts[0]))?;
-    let max: u64 = parts[1].parse().map_err(|_| format!("Invalid pace max: {}", parts[1]))?;
-    if min > max {
-        return Err(format!("--pace min ({min}) must be <= max ({max})"));
-    }
-    Ok((min, max))
-}
-
 /// Simple PRNG — just needs natural variation, not cryptographic quality.
 /// Uses xorshift64 seeded from system time.
 fn jitter_sleep(min_ms: u64, max_ms: u64, seed: &mut u64) {
@@ -78,17 +64,6 @@ fn jitter_sleep(min_ms: u64, max_ms: u64, seed: &mut u64) {
     let range = max_ms - min_ms + 1;
     let delay = min_ms + (*seed % range);
     std::thread::sleep(Duration::from_millis(delay));
-}
-
-/// Derive workspace name from JSONL path's parent directory.
-/// Fallback only — bifrost always passes --workspace explicitly.
-/// With per-session dirs, parent is session_id, not workspace.
-fn workspace_from_parent_dir(path: &str) -> String {
-    let parsed = Path::new(path);
-    parsed.parent()
-        .and_then(|dir| dir.file_name())
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown".into())
 }
 
 // =============================================================================
@@ -213,27 +188,6 @@ fn run_replay(path: &Path, workspace: &str, pace: Option<(u64, u64)>) -> Result<
 // Watch
 // =============================================================================
 
-fn accumulate_line(partial: &mut String, chunk: &str) -> Option<serde_json::Value> {
-    partial.push_str(chunk);
-    if !partial.ends_with('\n') {
-        return None;
-    }
-    let trimmed = partial.trim();
-    if trimmed.is_empty() {
-        partial.clear();
-        return None;
-    }
-    let result = match serde_json::from_str(trimmed) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            eprintln!("Skipping malformed line: {e}");
-            None
-        }
-    };
-    partial.clear();
-    result
-}
-
 struct WatchState {
     filename: String,
     previous: Option<Exchange>,
@@ -352,8 +306,12 @@ fn run_watch(path: &Path, workspace: &str) -> Result<String, String> {
                 std::thread::sleep(WATCH_POLL_INTERVAL);
             }
             Ok(_) => {
-                if let Some(value) = accumulate_line(&mut state.partial_line, &line) {
-                    process_exchange(&mut state, &value, workspace, &mut transcript);
+                match accumulate_line(&mut state.partial_line, &line) {
+                    Ok(Some(value)) => {
+                        process_exchange(&mut state, &value, workspace, &mut transcript);
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("Skipping malformed line: {e}"),
                 }
             }
             Err(e) => {
@@ -537,47 +495,4 @@ mod tests {
         assert_eq!(args.pace, None);
     }
 
-    // =========================================================================
-    // parse_pace
-    // =========================================================================
-
-    #[test]
-    fn parse_pace_valid() {
-        assert_eq!(parse_pace("800:3000").unwrap(), (800, 3000));
-    }
-
-    #[test]
-    fn parse_pace_equal_values() {
-        assert_eq!(parse_pace("1000:1000").unwrap(), (1000, 1000));
-    }
-
-    #[test]
-    fn parse_pace_min_greater_than_max() {
-        let err = parse_pace("3000:800").unwrap_err();
-        assert!(err.contains("min"), "error should mention min: {err}");
-    }
-
-    #[test]
-    fn parse_pace_bad_format() {
-        let err = parse_pace("800").unwrap_err();
-        assert!(err.contains("min:max"), "error should mention format: {err}");
-    }
-
-    // =========================================================================
-    // workspace_from_parent_dir
-    // =========================================================================
-
-    #[test]
-    fn workspace_from_traffic_path() {
-        assert_eq!(
-            workspace_from_parent_dir("/home/user/.ai/intercept/traffic/odinn/session.jsonl"),
-            "odinn"
-        );
-    }
-
-    #[test]
-    fn workspace_from_bare_filename() {
-        // A bare filename has no parent directory name to use
-        assert_eq!(workspace_from_parent_dir("session.jsonl"), "unknown");
-    }
 }

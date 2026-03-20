@@ -826,20 +826,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
-name = "datagram_io"
+name = "datagram_core"
 version = "0.1.0"
 dependencies = [
- "datagram_types",
- "libc",
- "schemas_embedded",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "datagram_types"
+name = "datagram_io"
 version = "0.1.0"
 dependencies = [
+ "datagram_core",
+ "libc",
+ "schemas_embedded",
  "serde",
  "serde_json",
 ]
@@ -876,7 +876,7 @@ dependencies = [
 name = "diff_core"
 version = "0.1.0"
 dependencies = [
- "datagram_types",
+ "datagram_core",
  "serde",
  "serde_json",
 ]
@@ -1654,6 +1654,7 @@ version = "0.1.0"
 dependencies = [
  "hook_io",
  "serde_json",
+ "write_engine",
 ]
 
 [[package]]
@@ -1698,9 +1699,10 @@ name = "hook_stop_llm_tts"
 version = "0.1.0"
 dependencies = [
  "clap",
- "regex",
  "serde",
  "serde_json",
+ "text_core",
+ "write_engine",
 ]
 
 [[package]]
@@ -2049,13 +2051,6 @@ dependencies = [
  "error_core",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "io_filter"
-version = "0.1.0"
-dependencies = [
- "error_core",
 ]
 
 [[package]]
@@ -2976,6 +2971,7 @@ dependencies = [
  "datagram_io",
  "libc",
  "serde_json",
+ "time_core",
  "write_engine",
 ]
 
@@ -3745,6 +3741,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "text_core"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3843,6 +3846,10 @@ dependencies = [
  "num-conv",
  "time-core",
 ]
+
+[[package]]
+name = "time_core"
+version = "0.1.0"
 
 [[package]]
 name = "tinystr"

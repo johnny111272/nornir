@@ -405,6 +405,54 @@ fn tool_name(tool: &Value) -> Option<&str> {
     tool.get("name").and_then(|v| v.as_str())
 }
 
+// =============================================================================
+// Utility functions extracted from watch_and_diff binary
+// =============================================================================
+
+/// Parse "min:max" pace string into (min_ms, max_ms).
+pub fn parse_pace(input: &str) -> Result<(u64, u64), String> {
+    let parts: Vec<&str> = input.split(':').collect();
+    if parts.len() != 2 {
+        return Err(format!("--pace expects min:max (e.g. 800:3000), got: {input}"));
+    }
+    let min: u64 = parts[0].parse().map_err(|_| format!("Invalid pace min: {}", parts[0]))?;
+    let max: u64 = parts[1].parse().map_err(|_| format!("Invalid pace max: {}", parts[1]))?;
+    if min > max {
+        return Err(format!("--pace min ({min}) must be <= max ({max})"));
+    }
+    Ok((min, max))
+}
+
+/// Derive workspace name from a JSONL path's parent directory.
+/// Used as fallback when no explicit workspace is provided.
+pub fn workspace_from_parent_dir(path: &str) -> String {
+    let parsed = std::path::Path::new(path);
+    parsed.parent()
+        .and_then(|dir| dir.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// Accumulate partial JSON lines from streaming input.
+/// Returns Ok(Some(value)) when a complete valid JSON line is received,
+/// Ok(None) when more data is needed, or Err on malformed JSON.
+pub fn accumulate_line(partial: &mut String, chunk: &str) -> Result<Option<Value>, String> {
+    partial.push_str(chunk);
+    if !partial.ends_with('\n') {
+        return Ok(None);
+    }
+    let trimmed = partial.trim();
+    if trimmed.is_empty() {
+        partial.clear();
+        return Ok(None);
+    }
+    let result = serde_json::from_str(trimmed)
+        .map(Some)
+        .map_err(|e| format!("Malformed JSON line: {e}"));
+    partial.clear();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -972,5 +1020,85 @@ mod tests {
         ];
         let dg = build_datagram(&msgs, &[], &[], &test_context("test", "test.jsonl:1", false));
         assert_eq!(dg.payload.unwrap()["system_injection"], false);
+    }
+
+    // =========================================================================
+    // parse_pace
+    // =========================================================================
+
+    #[test]
+    fn parse_pace_valid() {
+        assert_eq!(parse_pace("800:3000").unwrap(), (800, 3000));
+    }
+
+    #[test]
+    fn parse_pace_equal_values() {
+        assert_eq!(parse_pace("1000:1000").unwrap(), (1000, 1000));
+    }
+
+    #[test]
+    fn parse_pace_min_greater_than_max() {
+        let err = parse_pace("3000:800").unwrap_err();
+        assert!(err.contains("min"), "error should mention min: {err}");
+    }
+
+    #[test]
+    fn parse_pace_bad_format() {
+        let err = parse_pace("800").unwrap_err();
+        assert!(err.contains("min:max"), "error should mention format: {err}");
+    }
+
+    // =========================================================================
+    // workspace_from_parent_dir
+    // =========================================================================
+
+    #[test]
+    fn workspace_from_traffic_path() {
+        assert_eq!(
+            workspace_from_parent_dir("/home/user/.ai/intercept/traffic/odinn/session.jsonl"),
+            "odinn"
+        );
+    }
+
+    #[test]
+    fn workspace_from_bare_filename() {
+        assert_eq!(workspace_from_parent_dir("session.jsonl"), "unknown");
+    }
+
+    // =========================================================================
+    // accumulate_line
+    // =========================================================================
+
+    #[test]
+    fn accumulate_complete_line() {
+        let mut partial = String::new();
+        let result = accumulate_line(&mut partial, "{\"key\":\"value\"}\n").unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap()["key"], "value");
+        assert!(partial.is_empty());
+    }
+
+    #[test]
+    fn accumulate_partial_then_complete() {
+        let mut partial = String::new();
+        assert!(accumulate_line(&mut partial, "{\"key\":").unwrap().is_none());
+        assert!(!partial.is_empty());
+        let result = accumulate_line(&mut partial, "\"value\"}\n").unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap()["key"], "value");
+    }
+
+    #[test]
+    fn accumulate_empty_line() {
+        let mut partial = String::new();
+        assert!(accumulate_line(&mut partial, "\n").unwrap().is_none());
+    }
+
+    #[test]
+    fn accumulate_malformed_json() {
+        let mut partial = String::new();
+        let err = accumulate_line(&mut partial, "not json\n").unwrap_err();
+        assert!(err.contains("Malformed"), "error should mention malformed: {err}");
+        assert!(partial.is_empty());
     }
 }
