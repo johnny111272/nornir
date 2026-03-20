@@ -74,6 +74,7 @@ members = [
     "core/gleipnir_core",
     "core/announce_core",
     "core/time_core",
+    "core/text_core",
     "core/saga_core",
     "core/report_render_core",
     "cli/saga_cli",

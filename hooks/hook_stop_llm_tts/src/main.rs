@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use clap::Parser;
-use regex::Regex;
 use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
@@ -80,7 +79,7 @@ fn main() -> ExitCode {
     }
 
     // Filter markdown noise
-    let filtered = filter_text(&message);
+    let filtered = text_core::strip_markdown(&message);
     if filtered.trim().is_empty() {
         return ExitCode::SUCCESS;
     }
@@ -122,115 +121,3 @@ fn announce_bin() -> PathBuf {
     write_engine::ai_home().join("tools/bin/announce")
 }
 
-// ---------------------------------------------------------------------------
-// Text filtering
-// ---------------------------------------------------------------------------
-
-fn filter_text(text: &str) -> String {
-    // Strip fenced code blocks (```...```) — (?s) enables dot-matches-newline
-    let Ok(fenced) = Regex::new(r"(?s)```[^\n]*\n.*?```") else { return text.to_string() };
-    let text = fenced.replace_all(text, "");
-
-    // Strip markdown tables (lines starting with |)
-    let lines: Vec<&str> = text
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('|'))
-        .collect();
-    let text = lines.join("\n");
-
-    // Strip inline code backticks — keep inner text
-    let Ok(inline) = Regex::new(r"`([^`\n]+)`") else { return text };
-    let text = inline.replace_all(&text, "$1");
-
-    // Strip bold (**text**) — keep inner text
-    let Ok(bold) = Regex::new(r"\*\*([^*\n]+)\*\*") else { return text.to_string() };
-    let text = bold.replace_all(&text, "$1");
-
-    // Strip italic (*text*) — keep inner text (after bold stripped)
-    let Ok(italic) = Regex::new(r"\*([^*\n]+)\*") else { return text.to_string() };
-    let text = italic.replace_all(&text, "$1");
-
-    // Strip markdown header prefixes (# ## etc.) — keep heading text
-    let Ok(headers) = Regex::new(r"(?m)^#{1,6}\s+(.+)$") else { return text.to_string() };
-    let text = headers.replace_all(&text, "$1");
-
-    // Collapse 3+ consecutive blank lines → one blank line
-    let Ok(blank_lines) = Regex::new(r"\n{3,}") else { return text.to_string() };
-    let text = blank_lines.replace_all(&text, "\n\n");
-
-    text.trim().to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_fenced_code_block() {
-        let input = "Here is some code:\n```rust\nfn main() {}\n```\nAnd some text.";
-        let result = filter_text(input);
-        assert!(!result.contains("fn main"));
-        assert!(result.contains("Here is some code"));
-        assert!(result.contains("And some text"));
-    }
-
-    #[test]
-    fn strips_markdown_table() {
-        let input = "Before\n| col1 | col2 |\n| ---- | ---- |\n| a    | b    |\nAfter";
-        let result = filter_text(input);
-        assert!(!result.contains('|'));
-        assert!(result.contains("Before"));
-        assert!(result.contains("After"));
-    }
-
-    #[test]
-    fn strips_inline_code_keeps_text() {
-        let result = filter_text("Use the `announce` binary.");
-        assert!(!result.contains('`'));
-        assert!(result.contains("announce"));
-    }
-
-    #[test]
-    fn strips_bold_keeps_text() {
-        let result = filter_text("This is **important** text.");
-        assert!(!result.contains("**"));
-        assert!(result.contains("important"));
-    }
-
-    #[test]
-    fn strips_italic_keeps_text() {
-        let result = filter_text("This is *emphasized* text.");
-        assert!(!result.contains('*'));
-        assert!(result.contains("emphasized"));
-    }
-
-    #[test]
-    fn strips_header_prefix_keeps_text() {
-        let result = filter_text("## My Section\nSome content.");
-        assert!(!result.contains('#'));
-        assert!(result.contains("My Section"));
-        assert!(result.contains("Some content"));
-    }
-
-    #[test]
-    fn collapses_excess_blank_lines() {
-        let result = filter_text("First\n\n\n\nSecond");
-        assert!(!result.contains("\n\n\n"));
-    }
-
-    #[test]
-    fn plain_text_passes_through() {
-        let input = "Hello, this is a plain sentence.";
-        assert_eq!(filter_text(input), input);
-    }
-
-    #[test]
-    fn empty_after_filtering_returns_empty() {
-        let input = "```rust\nfn main() {}\n```";
-        assert!(filter_text(input).trim().is_empty());
-    }
-}
