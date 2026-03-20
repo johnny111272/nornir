@@ -392,12 +392,15 @@ fn emit_to_watchtower(alert: &WatchtowerEvent) {
 fn speak_alert(speech: &str, decision: &str, category: &str) {
     if speech.is_empty() { return; }
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    if home.is_empty() { return; }
-
-    // SILENT.lock: skip announce entirely
-    let voice_dir = format!("{home}/.ai/voice");
-    if std::path::Path::new(&voice_dir).join("SILENT.lock").exists() { return; }
+    // SILENT.lock: global first, then per-workspace
+    let control_voice = write_engine::ai_home().join("control/voice");
+    if control_voice.join("SILENT.lock").exists() { return; }
+    let source = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
+    if let Some(ws) = if source.is_empty() { None } else {
+        workspace_registry::resolve_workspace_from_path(&source).ok().flatten()
+    } {
+        if workspace_registry::workspace_control_dir(&ws).join("SILENT.lock").exists() { return; }
+    }
 
     let severity = match decision {
         "deny" => match category {
@@ -409,8 +412,7 @@ fn speak_alert(speech: &str, decision: &str, category: &str) {
         _ => return,
     };
 
-    let announce = std::path::PathBuf::from(&home).join(".ai/tools/bin/announce");
-    let source = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
+    let announce = write_engine::ai_home().join("tools/bin/announce");
 
     let mut cmd = std::process::Command::new(&announce);
     cmd.args(["--severity", severity]);

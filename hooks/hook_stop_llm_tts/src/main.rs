@@ -8,7 +8,7 @@
 //!     hook_stop_llm_tts --project-dir $CLAUDE_PROJECT_DIR
 
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 
 use clap::Parser;
@@ -65,15 +65,18 @@ fn main() -> ExitCode {
         .map(|p| p.display().to_string())
         .or_else(|| if event.cwd.is_empty() { None } else { Some(event.cwd.clone()) });
 
-    // QUIET.lock: silence all CC sessions
-    let voice_dir = voice_dir();
-    if voice_dir.join("QUIET.lock").exists() {
+    // Resolve workspace from project dir
+    let workspace = project_dir.as_deref().and_then(|p| {
+        workspace_registry::resolve_workspace_from_path(p).ok().flatten()
+    });
+
+    // QUIET.lock: global first, then per-workspace
+    let control_voice = write_engine::ai_home().join("control/voice");
+    if control_voice.join("QUIET.lock").exists() {
         return ExitCode::SUCCESS;
     }
-
-    // Per-workspace QUIET.lock
-    if let Some(ref dir) = project_dir {
-        if Path::new(dir).join("QUIET.lock").exists() {
+    if let Some(ref ws) = workspace {
+        if workspace_registry::workspace_control_dir(ws).join("QUIET.lock").exists() {
             return ExitCode::SUCCESS;
         }
     }
@@ -107,14 +110,6 @@ fn main() -> ExitCode {
 
     // Don't wait — announce manages its own background playback
     ExitCode::SUCCESS
-}
-
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
-
-fn voice_dir() -> PathBuf {
-    write_engine::ai_home().join("voice")
 }
 
 fn announce_bin() -> PathBuf {

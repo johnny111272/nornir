@@ -1,7 +1,7 @@
 use announce_core::{
-    apply_lookup, build_cache_path, build_tts_body, compute_hash, pcm_s16le_to_f32,
-    resolve_settings, Config, HitsTable, LookupTable, ProfileSettings, ResolveInput, Resolved,
-    ELEVENLABS_BASE, HASH_SUFFIX_LEN,
+    apply_lookup, build_cache_path, build_kokoro_body, build_tts_body, compute_hash,
+    pcm_s16le_to_f32, resolve_settings, Backend, Config, HitsTable, LookupTable, ProfileSettings,
+    ResolveInput, Resolved, ELEVENLABS_BASE, HASH_SUFFIX_LEN, KOKORO_BASE,
 };
 use clap::Parser;
 use std::collections::HashMap;
@@ -94,10 +94,21 @@ fn run(args: Cli) -> Result<(), String> {
         return play_audio_file(file_path);
     }
 
-    // --- SILENT.lock: global kill switch ---
-    let voice_dir = write_engine::ai_home().join("voice");
-    if voice_dir.join("SILENT.lock").exists() {
+    let control_voice = write_engine::ai_home().join("control/voice");
+
+    // Resolve workspace from --source if provided
+    let workspace = args.source.as_ref().and_then(|s| {
+        workspace_registry::resolve_workspace_from_path(&s.display().to_string()).ok().flatten()
+    });
+
+    // --- SILENT.lock: global first, then per-workspace ---
+    if control_voice.join("SILENT.lock").exists() {
         return Ok(());
+    }
+    if let Some(ref ws) = workspace {
+        if workspace_registry::workspace_control_dir(ws).join("SILENT.lock").exists() {
+            return Ok(());
+        }
     }
 
     let text = get_input_text(&args)?;
@@ -105,7 +116,7 @@ fn run(args: Cli) -> Result<(), String> {
         eprintln!("announce: --translate is not yet implemented, falling back to English");
     }
 
-    let resolved = resolve_from_args(&args, &voice_dir, text)?;
+    let resolved = resolve_from_args(&args, &control_voice, workspace.as_deref(), text)?;
 
     if args.quiet {
         eprintln!(
@@ -116,19 +127,24 @@ fn run(args: Cli) -> Result<(), String> {
     }
 
     let audio_dir = write_engine::ai_home().join("audio");
-    synthesize_and_play(&args, &resolved, &voice_dir, &audio_dir)
+    synthesize_and_play(&args, &resolved, &control_voice, &audio_dir)
 }
 
 /// Load config, VOICE.lock, API key, and merge into Resolved.
-fn resolve_from_args(args: &Cli, voice_dir: &Path, text: String) -> Result<Resolved, String> {
-    let config = load_config(voice_dir);
-    let voice_lock = args.source.as_ref().and_then(|dir| {
-        let path = dir.join("VOICE.lock");
+fn resolve_from_args(args: &Cli, control_voice: &Path, workspace: Option<&str>, text: String) -> Result<Resolved, String> {
+    let config = load_config(control_voice);
+    let voice_lock = workspace.and_then(|ws| {
+        let path = workspace_registry::workspace_control_dir(ws).join("VOICE.lock");
         fs::read_to_string(&path)
             .ok()
             .and_then(|s| toml::from_str::<ProfileSettings>(&s).ok())
     });
-    let api_key = load_api_key(voice_dir)?;
+    let api_key = if config.backend == Backend::Elevenlabs {
+        let secrets_dir = write_engine::ai_home().join("voice");
+        load_api_key(&secrets_dir)?
+    } else {
+        String::new()
+    };
 
     let input = ResolveInput {
         profile_name: args.profile.as_deref(),
@@ -146,14 +162,14 @@ fn resolve_from_args(args: &Cli, voice_dir: &Path, text: String) -> Result<Resol
 fn synthesize_and_play(
     args: &Cli,
     resolved: &Resolved,
-    voice_dir: &Path,
+    control_voice: &Path,
     audio_dir: &Path,
 ) -> Result<(), String> {
-    let config = load_config(voice_dir);
+    let config = load_config(control_voice);
     ensure_voice_symlinks(&config.voices, audio_dir);
 
     let lookup_table = args.lookup.as_ref().map(|lang_code| {
-        let lookup_path = voice_dir.join("lookups").join(format!("{lang_code}.toml"));
+        let lookup_path = control_voice.join("lookups").join(format!("{lang_code}.toml"));
         fs::read_to_string(&lookup_path)
             .ok()
             .and_then(|contents| toml::from_str::<LookupTable>(&contents).ok())
@@ -182,21 +198,29 @@ fn synthesize_and_play(
         return Ok(());
     }
 
-    // Hit-count-based dispatch: stream on first request, cache on second
-    let hits_path = voice_dir.join("hits.toml");
-    let mut hits = load_hits(&hits_path);
-    let count = hits.hits.get(&cache_hash).copied().unwrap_or(0);
+    match config.backend {
+        Backend::Kokoro => {
+            // Kokoro: always download + cache (local, no cost)
+            kokoro_download_and_play(resolved, &final_text, &cache_path, proj_dir)
+        }
+        Backend::Elevenlabs => {
+            // ElevenLabs: stream first hit, cache on second (save credits)
+            let hits_path = control_voice.join("hits.toml");
+            let mut hits = load_hits(&hits_path);
+            let count = hits.hits.get(&cache_hash).copied().unwrap_or(0);
 
-    if count == 0 && !args.no_cache {
-        hits.hits.insert(cache_hash, 1);
-        save_hits(&hits_path, &hits);
-        stream_and_play(resolved, &final_text, &final_lang, proj_dir)
-    } else if count == 1 && !args.no_cache {
-        hits.hits.insert(cache_hash, 2);
-        save_hits(&hits_path, &hits);
-        download_cache_and_play(resolved, &final_text, &final_lang, &cache_path, proj_dir)
-    } else {
-        stream_and_play(resolved, &final_text, &final_lang, proj_dir)
+            if count == 0 && !args.no_cache {
+                hits.hits.insert(cache_hash, 1);
+                save_hits(&hits_path, &hits);
+                stream_and_play(resolved, &final_text, &final_lang, proj_dir)
+            } else if count == 1 && !args.no_cache {
+                hits.hits.insert(cache_hash, 2);
+                save_hits(&hits_path, &hits);
+                download_cache_and_play(resolved, &final_text, &final_lang, &cache_path, proj_dir)
+            } else {
+                stream_and_play(resolved, &final_text, &final_lang, proj_dir)
+            }
+        }
     }
 }
 
@@ -282,6 +306,44 @@ fn ensure_voice_symlinks(voices: &HashMap<String, announce_core::VoiceDef>, audi
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Kokoro API (local)
+// ---------------------------------------------------------------------------
+
+fn kokoro_download_and_play(
+    settings: &Resolved,
+    text: &str,
+    cache_path: &Path,
+    project_dir: Option<&Path>,
+) -> Result<(), String> {
+    let url = format!("{KOKORO_BASE}/v1/audio/speech");
+    let body = build_kokoro_body(text, &settings.voice_id, settings.speed);
+
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .map_err(|e| format!("kokoro request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "kokoro error {}: {}",
+            response.status(),
+            response.text().unwrap_or_default()
+        ));
+    }
+
+    let bytes = response.bytes().unwrap_or_default();
+    if let Some(parent) = cache_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(cache_path, &bytes);
+    play_file_forked(cache_path, project_dir);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

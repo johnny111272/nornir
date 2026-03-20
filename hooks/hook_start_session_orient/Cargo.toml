@@ -1,15 +1,15 @@
 [package]
-name = "hook_notify_llm_tts"
+name = "hook_start_session_orient"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "hook_notify_llm_tts"
+name = "hook_start_session_orient"
 path = "src/main.rs"
 
 [dependencies]
-write_engine = { path = "../../capability/write_engine" }
 workspace_registry = { path = "../../capability/workspace_registry" }
+write_engine = { path = "../../capability/write_engine" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

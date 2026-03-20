@@ -49,12 +49,13 @@ verb axis needed.
 | `hook_stop_llm_tts` | Stop | LLM | TTS playback |
 | `hush` | UserPromptSubmit | Session | Kill workspace announce playback |
 | `hook_notify_llm_tts` | Notification | Session | TTS for permission/idle alerts |
+| `hook_compact_session_log` | PostCompact | Session | Log compact_summary + TTS announce |
+| `hook_start_session_orient` | SessionStart | Session | Register workspace + session in registry |
 
 ### Planned hooks
 
 | Name | Event | Context | Scope | Purpose |
 |---|---|---|---|---|
-| `hook_start_session_orient` | SessionStart | Session | — | Context injection at session begin |
 | `hook_compact_session_preserve` | PreCompact | Session | — | Handover generation |
 
 ---

@@ -1,0 +1,8 @@
+[package]
+name = "workspace_registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+write_engine = { path = "../write_engine" }
+rusqlite = { workspace = true }

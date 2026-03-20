@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 // =============================================================================
 
 pub const ELEVENLABS_BASE: &str = "https://api.elevenlabs.io";
+pub const KOKORO_BASE: &str = "http://127.0.0.1:8880";
 pub const FILENAME_MAX_TEXT_LEN: usize = 48;
 pub const HASH_SUFFIX_LEN: usize = 4;
 
@@ -29,11 +30,21 @@ pub struct VoiceDef {
 #[derive(Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
+    pub backend: Backend,
+    #[serde(default)]
     pub voices: HashMap<String, VoiceDef>,
     #[serde(default)]
     pub default: ProfileSettings,
     #[serde(default)]
     pub profile: HashMap<String, ProfileSettings>,
+}
+
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    #[default]
+    Kokoro,
+    Elevenlabs,
 }
 
 #[derive(Deserialize, Default)]
@@ -225,6 +236,18 @@ pub fn build_tts_body(text: &str, model: &str, speed: f32, lang: &str) -> serde_
             "speed": speed_rounded
         },
         "language_code": lang
+    })
+}
+
+/// Build the JSON body for a Kokoro TTS request (OpenAI-compatible).
+pub fn build_kokoro_body(text: &str, voice: &str, speed: f32) -> serde_json::Value {
+    let speed_rounded = ((speed as f64) * 100.0).round() / 100.0;
+    serde_json::json!({
+        "model": "kokoro",
+        "input": text,
+        "voice": voice,
+        "speed": speed_rounded,
+        "response_format": "mp3"
     })
 }
 

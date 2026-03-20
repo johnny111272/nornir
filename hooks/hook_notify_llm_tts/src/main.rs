@@ -73,10 +73,17 @@ fn main() -> ExitCode {
         _ => return ExitCode::SUCCESS,
     };
 
-    // SILENT.lock: global TTS kill switch
-    let voice_dir = write_engine::ai_home().join("voice");
-    if voice_dir.join("SILENT.lock").exists() {
+    // SILENT.lock: global first, then per-workspace
+    let control_voice = write_engine::ai_home().join("control/voice");
+    if control_voice.join("SILENT.lock").exists() {
         return ExitCode::SUCCESS;
+    }
+    if let Some(ref ws) = project_dir.as_deref()
+        .and_then(|p| workspace_registry::resolve_workspace_from_path(p).ok().flatten())
+    {
+        if workspace_registry::workspace_control_dir(ws).join("SILENT.lock").exists() {
+            return ExitCode::SUCCESS;
+        }
     }
 
     // Spawn announce in background — do not wait

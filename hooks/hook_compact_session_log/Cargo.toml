@@ -1,15 +1,18 @@
 [package]
-name = "hook_notify_llm_tts"
+name = "hook_compact_session_log"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "hook_notify_llm_tts"
+name = "hook_compact_session_log"
 path = "src/main.rs"
 
 [dependencies]
 write_engine = { path = "../../capability/write_engine" }
 workspace_registry = { path = "../../capability/workspace_registry" }
+datagram_core = { path = "../../core/datagram_core" }
+datagram_io = { path = "../../capability/datagram_io" }
+time_core = { path = "../../core/time_core" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
