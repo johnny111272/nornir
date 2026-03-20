@@ -399,12 +399,12 @@ fn speak_alert(speech: &str, decision: &str, category: &str) {
     let voice_dir = format!("{home}/.ai/voice");
     if std::path::Path::new(&voice_dir).join("SILENT.lock").exists() { return; }
 
-    let profile = match decision {
+    let severity = match decision {
         "deny" => match category {
             "floor" | "subversion" | "destruction" | "chaining" => "critical",
             _ => "alert",
         },
-        "ask" => "alert",
+        "ask" => "notify",
         "warn" => "warn",
         _ => return,
     };
@@ -413,7 +413,7 @@ fn speak_alert(speech: &str, decision: &str, category: &str) {
     let source = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
 
     let mut cmd = std::process::Command::new(&announce);
-    cmd.args(["--profile", profile]);
+    cmd.args(["--severity", severity]);
     if !source.is_empty() {
         cmd.args(["--source", &source]);
     }

@@ -70,6 +70,7 @@ members = [
     "hooks/hook_pre_llm_bash",
     "hooks/hook_post_llm_tool",
     "hooks/hook_stop_llm_tts",
+    "hooks/hook_notify_llm_tts",
     "core/gleipnir_core",
     "core/announce_core",
     "core/time_core",

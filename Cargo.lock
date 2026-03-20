@@ -1649,6 +1649,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hook_notify_llm_tts"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "write_engine",
+]
+
+[[package]]
 name = "hook_post_llm_tool"
 version = "0.1.0"
 dependencies = [

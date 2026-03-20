@@ -18,6 +18,7 @@ crates = [
     "hook_pre_llm_bash",
     "hook_post_llm_tool",
     "hook_stop_llm_tts",
+    "hook_notify_llm_tts",
 ]
 verify = "stdin"
 verify_input = '{"tool_name":"Test","tool_input":{}}'

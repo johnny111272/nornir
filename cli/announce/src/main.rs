@@ -52,6 +52,10 @@ struct Cli {
     #[arg(long)]
     source: Option<PathBuf>,
 
+    /// Alert severity level (metadata for filtering/logging)
+    #[arg(long)]
+    severity: Option<String>,
+
     /// Skip cache lookup and storage
     #[arg(long)]
     no_cache: bool,
