@@ -81,8 +81,9 @@ fn main() -> ExitCode {
         }
     }
 
-    // Filter markdown noise
+    // Filter markdown noise, then make paths speakable
     let filtered = text_core::strip_markdown(&message);
+    let filtered = text_core::tts_clean(&filtered);
     if filtered.trim().is_empty() {
         return ExitCode::SUCCESS;
     }

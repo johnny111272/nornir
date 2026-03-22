@@ -44,6 +44,44 @@ pub fn strip_markdown(text: &str) -> String {
     text.trim().to_string()
 }
 
+/// Transform paths into speakable TTS text.
+///
+/// `~/.ai/control/voice/` → `path: home '.' ai '.' control '.' voice`
+/// `./src/main.rs`         → `path: relative '.' src '.' main.rs`
+/// `@workspace/file`       → `path: workspace '.' file`
+pub fn tts_clean(text: &str) -> String {
+    let Ok(path_re) = Regex::new(r"[~@.]?/[\w.\-/]+|~/") else { return text.to_string() };
+    let text = path_re.replace_all(text, |caps: &regex::Captures| {
+        speakable_path(&caps[0])
+    });
+    text.to_string()
+}
+
+fn speakable_path(path: &str) -> String {
+    let stripped = path.trim_end_matches('/');
+
+    // Determine prefix from first character(s)
+    let (prefix, remainder) = if stripped.starts_with("~/") || stripped == "~" {
+        ("home", stripped.trim_start_matches("~/").trim_start_matches('~'))
+    } else if stripped.starts_with("@/") || stripped.starts_with('@') {
+        ("workspace", stripped.trim_start_matches("@/").trim_start_matches('@'))
+    } else if stripped.starts_with("./") {
+        ("relative", stripped.trim_start_matches("./"))
+    } else {
+        ("", stripped.trim_start_matches('/'))
+    };
+
+    let parts: Vec<&str> = remainder.split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_start_matches('.'))
+        .collect();
+
+    let mut components = vec![prefix.to_string()];
+    components.extend(parts.iter().map(|s| s.to_string()));
+
+    format!("path: {}", components.join(" '.' "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +149,25 @@ mod tests {
     fn empty_after_filtering_returns_empty() {
         let input = "```rust\nfn main() {}\n```";
         assert!(strip_markdown(input).trim().is_empty());
+    }
+
+    // --- tts_clean ---
+
+    #[test]
+    fn tts_clean_home_path() {
+        let result = tts_clean("Check ~/.ai/control/voice/");
+        assert_eq!(result, "Check path: home '.' ai '.' control '.' voice");
+    }
+
+    #[test]
+    fn tts_clean_relative_path() {
+        let result = tts_clean("Edit ./src/main.rs");
+        assert_eq!(result, "Edit path: relative '.' src '.' main.rs");
+    }
+
+    #[test]
+    fn tts_clean_plain_text_unchanged() {
+        let input = "This is a normal sentence.";
+        assert_eq!(tts_clean(input), input);
     }
 }
