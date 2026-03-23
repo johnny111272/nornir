@@ -244,6 +244,20 @@ fn hush() {
         .spawn();
 }
 
+/// Check if the frontmost macOS app is a terminal emulator.
+fn terminal_is_focused() -> bool {
+    let output = match std::process::Command::new("osascript")
+        .args(["-e", "tell application \"System Events\" to get name of first application process whose frontmost is true"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+    let name = String::from_utf8_lossy(&output.stdout);
+    let name = name.trim();
+    matches!(name, "iTerm2" | "Terminal" | "Ghostty" | "kitty" | "WezTerm" | "Alacritty")
+}
+
 /// Drain queued announce messages, playing each sequentially.
 fn drain_queue(verbose: bool) {
     let path = queue_path();
@@ -342,6 +356,46 @@ fn install_signal_handlers() {
 }
 
 // =============================================================================
+// State machine
+// =============================================================================
+
+struct RecordingState {
+    recording: bool,
+    sending_keys: bool,
+}
+
+impl RecordingState {
+    fn new() -> Self {
+        Self { recording: false, sending_keys: false }
+    }
+
+    /// Mic unmuted — start recording, optionally send keystrokes.
+    fn start(&mut self, enigo: &mut enigo::Enigo, combo: &KeyCombo, verbose: bool) {
+        create_recording_lock();
+        hush();
+        self.recording = true;
+
+        if terminal_is_focused() {
+            press_combo(enigo, combo);
+            self.sending_keys = true;
+        } else if verbose {
+            eprintln!("relay_mic_to_voice: no terminal focused, skipping keystrokes");
+        }
+    }
+
+    /// Mic muted — stop recording, drain queue.
+    fn stop(&mut self, enigo: &mut enigo::Enigo, combo: &KeyCombo, verbose: bool) {
+        if self.sending_keys {
+            release_combo(enigo, combo);
+            self.sending_keys = false;
+        }
+        remove_recording_lock();
+        self.recording = false;
+        drain_queue(verbose);
+    }
+}
+
+// =============================================================================
 // Run
 // =============================================================================
 
@@ -353,14 +407,9 @@ fn run(args: Args) -> Result<(), String> {
 
     let device_id = audio::default_input_device()?;
     let initial_muted = audio::is_input_muted(device_id)?;
+    eprintln!("relay_mic_to_voice: device={device_id}, initial_muted={initial_muted}");
 
-    eprintln!(
-        "relay_mic_to_voice: device={device_id}, initial_muted={initial_muted}"
-    );
-
-    // Channel: CoreAudio callback (any thread) → main thread (owns Enigo)
     let (tx, rx) = mpsc::channel::<bool>();
-
     let _listener_ctx = audio::register_mute_listener(device_id, move |muted| {
         let _ = tx.send(muted);
     })?;
@@ -369,55 +418,47 @@ fn run(args: Args) -> Result<(), String> {
 
     let mut enigo = enigo::Enigo::new(&enigo::Settings::default())
         .map_err(|e| format!("enigo init failed: {e}"))?;
+    let mut state = RecordingState::new();
 
-    // Main loop: while holding, send rapid key-repeat events (~30ms interval)
-    // to simulate a physical key hold. Check channel between repeats.
+    event_loop(&rx, &mut enigo, &combo, &mut state, verbose);
+
+    state.stop(&mut enigo, &combo, verbose);
+    eprintln!("relay_mic_to_voice: shutdown");
+    Ok(())
+}
+
+fn event_loop(
+    rx: &mpsc::Receiver<bool>,
+    enigo: &mut enigo::Enigo,
+    combo: &KeyCombo,
+    state: &mut RecordingState,
+    verbose: bool,
+) {
     let repeat_interval = std::time::Duration::from_millis(30);
     let poll_interval = std::time::Duration::from_millis(200);
-    let mut holding = false;
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
-        let timeout = if holding { repeat_interval } else { poll_interval };
+        let timeout = if state.sending_keys { repeat_interval } else { poll_interval };
 
         match rx.recv_timeout(timeout) {
             Ok(muted) => {
                 if verbose {
-                    eprintln!(
-                        "relay_mic_to_voice: mic {}",
-                        if muted { "muted → key up" } else { "unmuted → key down" }
-                    );
+                    let label = if muted { "muted" } else { "unmuted" };
+                    eprintln!("relay_mic_to_voice: mic {label}");
                 }
-                if muted && holding {
-                    release_combo(&mut enigo, &combo);
-                    remove_recording_lock();
-                    holding = false;
-                    drain_queue(verbose);
-                } else if !muted && !holding {
-                    create_recording_lock();
-                    hush();
-                    press_combo(&mut enigo, &combo);
-                    holding = true;
+                if muted && state.recording {
+                    state.stop(enigo, combo, verbose);
+                } else if !muted && !state.recording {
+                    state.start(enigo, combo, verbose);
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if holding {
-                    // Send repeat key events to simulate sustained physical hold
-                    press_combo(&mut enigo, &combo);
-                }
+            Err(mpsc::RecvTimeoutError::Timeout) if state.sending_keys => {
+                press_combo(enigo, combo);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            _ => {}
         }
     }
-
-    // Release any held keys and clean up on shutdown
-    if holding {
-        release_combo(&mut enigo, &combo);
-        remove_recording_lock();
-        drain_queue(verbose);
-    }
-
-    eprintln!("relay_mic_to_voice: shutdown");
-    Ok(())
 }
 
 // =============================================================================
