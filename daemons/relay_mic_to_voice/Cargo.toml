@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+write_engine = { path = "../../capability/write_engine" }
 coreaudio-sys = { workspace = true }
 enigo = { workspace = true }
+serde_json = { workspace = true }
 libc = { workspace = true }
 clap = { workspace = true }

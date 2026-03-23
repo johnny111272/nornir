@@ -216,12 +216,92 @@ mod audio {
 // Speech control
 // =============================================================================
 
+fn recording_lock_path() -> std::path::PathBuf {
+    write_engine::ai_home().join("control/voice/RECORDING.lock")
+}
+
+fn queue_path() -> std::path::PathBuf {
+    write_engine::ai_home().join("voice/queue.jsonl")
+}
+
+fn create_recording_lock() {
+    let path = recording_lock_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::File::create(&path);
+}
+
+fn remove_recording_lock() {
+    let _ = std::fs::remove_file(recording_lock_path());
+}
+
 /// Call `hush` to stop any in-progress announce/TTS playback.
 fn hush() {
     let _ = std::process::Command::new("hush")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// Drain queued announce messages, playing each sequentially.
+fn drain_queue(verbose: bool) {
+    let path = queue_path();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return, // no queue file = nothing to drain
+    };
+
+    let _ = std::fs::remove_file(&path);
+
+    for line in content.lines() {
+        let entry: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
+                if verbose {
+                    eprintln!("relay_mic_to_voice: skipping bad queue entry: {e}");
+                }
+                continue;
+            }
+        };
+
+        let args: Vec<String> = entry["args"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        let text = entry["text"].as_str().unwrap_or("");
+
+        if verbose {
+            eprintln!("relay_mic_to_voice: replaying queued announce: {args:?}");
+        }
+
+        let mut cmd = std::process::Command::new("announce");
+        cmd.args(&args);
+
+        // If text is present, pipe it via --stdin; otherwise pass as positional arg
+        if !text.is_empty() {
+            cmd.arg("--stdin");
+            cmd.stdin(std::process::Stdio::piped());
+        }
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                if !text.is_empty() {
+                    if let Some(ref mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(text.as_bytes());
+                    }
+                }
+                let _ = child.wait(); // sequential — avoid overlapping playback
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("relay_mic_to_voice: failed to spawn announce: {e}");
+                }
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -309,8 +389,11 @@ fn run(args: Args) -> Result<(), String> {
                 }
                 if muted && holding {
                     release_combo(&mut enigo, &combo);
+                    remove_recording_lock();
                     holding = false;
+                    drain_queue(verbose);
                 } else if !muted && !holding {
+                    create_recording_lock();
                     hush();
                     press_combo(&mut enigo, &combo);
                     holding = true;
@@ -326,9 +409,11 @@ fn run(args: Args) -> Result<(), String> {
         }
     }
 
-    // Release any held keys on shutdown
+    // Release any held keys and clean up on shutdown
     if holding {
         release_combo(&mut enigo, &combo);
+        remove_recording_lock();
+        drain_queue(verbose);
     }
 
     eprintln!("relay_mic_to_voice: shutdown");

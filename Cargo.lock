@@ -3729,6 +3729,8 @@ dependencies = [
  "coreaudio-sys",
  "enigo",
  "libc",
+ "serde_json",
+ "write_engine",
 ]
 
 [[package]]

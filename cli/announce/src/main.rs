@@ -112,6 +112,15 @@ fn run(args: Cli) -> Result<(), String> {
     }
 
     let text = get_input_text(&args)?;
+
+    // --- RECORDING.lock: queue non-critical messages during voice recording ---
+    if control_voice.join("RECORDING.lock").exists() {
+        let is_critical = args.severity.as_deref() == Some("critical");
+        if !is_critical {
+            return queue_for_later(&args, &text);
+        }
+    }
+
     if args.translate.is_some() {
         eprintln!("announce: --translate is not yet implemented, falling back to English");
     }
@@ -227,6 +236,50 @@ fn synthesize_and_play(
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
+
+/// Serialize announce invocation to the voice queue for later replay.
+/// Reconstructs argv from the parsed Cli struct so relay_mic_to_voice can replay it.
+fn queue_for_later(args: &Cli, text: &str) -> Result<(), String> {
+    let queue_path = write_engine::ai_home().join("voice/queue.jsonl");
+    if let Some(parent) = queue_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create queue dir: {e}"))?;
+    }
+
+    let mut argv: Vec<String> = Vec::new();
+    if let Some(ref p) = args.profile {
+        argv.extend(["--profile".into(), p.clone()]);
+    }
+    if let Some(ref v) = args.voice {
+        argv.extend(["--voice".into(), v.clone()]);
+    }
+    if let Some(ref s) = args.severity {
+        argv.extend(["--severity".into(), s.clone()]);
+    }
+    if let Some(speed) = args.speed {
+        argv.extend(["--speed".into(), speed.to_string()]);
+    }
+    if let Some(ref src) = args.source {
+        argv.extend(["--source".into(), src.display().to_string()]);
+    }
+    if let Some(ref lang) = args.language {
+        argv.extend(["--language".into(), lang.clone()]);
+    }
+    if let Some(ref lookup) = args.lookup {
+        argv.extend(["--lookup".into(), lookup.clone()]);
+    }
+    if args.no_cache {
+        argv.push("--no-cache".into());
+    }
+
+    let mut entry = serde_json::Map::new();
+    entry.insert("args".into(), serde_json::json!(argv));
+    entry.insert("text".into(), serde_json::json!(text));
+
+    let line = serde_json::to_string(&entry)
+        .map_err(|e| format!("serialize queue entry: {e}"))?;
+
+    write_engine::append_line_fsync(&queue_path, &line)
+}
 
 fn get_input_text(arguments: &Cli) -> Result<String, String> {
     if arguments.stdin {
