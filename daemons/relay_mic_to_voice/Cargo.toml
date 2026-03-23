@@ -1,0 +1,10 @@
+[package]
+name = "relay_mic_to_voice"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+coreaudio-sys = { workspace = true }
+enigo = { workspace = true }
+libc = { workspace = true }
+clap = { workspace = true }

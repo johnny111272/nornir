@@ -90,6 +90,7 @@ verify_input = '{"system":[],"tools":[],"messages":[]}'
 [daemons]
 crates = [
     "record_datagrams",
+    "relay_mic_to_voice",
 ]
 verify = "help"
 

@@ -99,6 +99,7 @@ members = [
     "interceptors/traffic_interceptor_rewriter",
     "interceptors/intercept_replay",
     "daemons/record_datagrams",
+    "daemons/relay_mic_to_voice",
     "capability/saga_runner",
     "cli/announce",
 ]
@@ -129,3 +130,5 @@ reqwest = { version = "0.12", features = ["blocking"] }
 dotenvy = "0.15"
 rodio = "0.19"
 rusqlite = { version = "0.32", features = ["bundled"] }
+coreaudio-sys = "0.2"
+enigo = "0.2"
