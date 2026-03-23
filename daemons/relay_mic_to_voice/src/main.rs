@@ -290,9 +290,16 @@ fn run(args: Args) -> Result<(), String> {
     let mut enigo = enigo::Enigo::new(&enigo::Settings::default())
         .map_err(|e| format!("enigo init failed: {e}"))?;
 
-    // Main loop: drain channel, check shutdown
+    // Main loop: while holding, send rapid key-repeat events (~30ms interval)
+    // to simulate a physical key hold. Check channel between repeats.
+    let repeat_interval = std::time::Duration::from_millis(30);
+    let poll_interval = std::time::Duration::from_millis(200);
+    let mut holding = false;
+
     while !SHUTDOWN.load(Ordering::Relaxed) {
-        match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+        let timeout = if holding { repeat_interval } else { poll_interval };
+
+        match rx.recv_timeout(timeout) {
             Ok(muted) => {
                 if verbose {
                     eprintln!(
@@ -300,20 +307,29 @@ fn run(args: Args) -> Result<(), String> {
                         if muted { "muted → key up" } else { "unmuted → key down" }
                     );
                 }
-                if muted {
+                if muted && holding {
                     release_combo(&mut enigo, &combo);
-                } else {
+                    holding = false;
+                } else if !muted && !holding {
                     hush();
+                    press_combo(&mut enigo, &combo);
+                    holding = true;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if holding {
+                    // Send repeat key events to simulate sustained physical hold
                     press_combo(&mut enigo, &combo);
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 
     // Release any held keys on shutdown
-    release_combo(&mut enigo, &combo);
+    if holding {
+        release_combo(&mut enigo, &combo);
+    }
 
     eprintln!("relay_mic_to_voice: shutdown");
     Ok(())
