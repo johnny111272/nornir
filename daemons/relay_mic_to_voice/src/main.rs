@@ -5,9 +5,11 @@
 //! dictation.
 //!
 //! Usage:
-//!     relay_mic_to_voice                     # default: meta+k
+//!     relay_mic_to_voice                     # default: space
 //!     relay_mic_to_voice --key meta+k        # explicit key combo
 //!     relay_mic_to_voice --verbose            # print state transitions
+//!
+//! On unmute (recording starts), calls `hush` to stop any in-progress speech.
 
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +22,8 @@ use std::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(about = "Relay mic mute state to CC /voice keybinding")]
 struct Args {
-    /// Key combo to simulate (e.g. meta+k, ctrl+shift+f19)
-    #[arg(long, default_value = "meta+k")]
+    /// Key combo to simulate (e.g. space, meta+k, ctrl+shift+f19)
+    #[arg(long, default_value = "space")]
     key: String,
 
     /// Print state transitions to stderr
@@ -211,6 +213,18 @@ mod audio {
 }
 
 // =============================================================================
+// Speech control
+// =============================================================================
+
+/// Call `hush` to stop any in-progress announce/TTS playback.
+fn hush() {
+    let _ = std::process::Command::new("hush")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+// =============================================================================
 // Keystroke simulation
 // =============================================================================
 
@@ -289,6 +303,7 @@ fn run(args: Args) -> Result<(), String> {
                 if muted {
                     release_combo(&mut enigo, &combo);
                 } else {
+                    hush();
                     press_combo(&mut enigo, &combo);
                 }
             }
