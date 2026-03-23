@@ -1,0 +1,74 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::model::WorkspaceProfile;
+
+pub fn load_profiles(config_path: &Path) -> Result<Vec<WorkspaceProfile>, String> {
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content =
+        fs::read_to_string(config_path).map_err(|e| format!("read profiles: {e}"))?;
+
+    let table: BTreeMap<String, toml::Value> =
+        toml::from_str(&content).map_err(|e| format!("parse profiles: {e}"))?;
+
+    let mut profiles: Vec<WorkspaceProfile> = table
+        .into_iter()
+        .filter_map(|(name, value)| parse_profile(name, value))
+        .collect();
+
+    profiles.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(profiles)
+}
+
+fn parse_profile(name: String, value: toml::Value) -> Option<WorkspaceProfile> {
+    let section = value.as_table()?;
+
+    let path = section
+        .get("path")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_default();
+
+    let persona = section
+        .get("persona")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let coding = section
+        .get("coding")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    let languages = extract_string_array(section, "languages")
+        .unwrap_or_else(|| vec!["python".to_string()]);
+
+    let expertise = extract_string_array(section, "expertise").unwrap_or_default();
+    let permissions = extract_string_array(section, "permissions").unwrap_or_default();
+
+    Some(WorkspaceProfile {
+        name,
+        path,
+        persona,
+        coding,
+        languages,
+        expertise,
+        permissions,
+    })
+}
+
+fn extract_string_array(
+    section: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Option<Vec<String>> {
+    section.get(key).and_then(|value| value.as_array()).map(|array| {
+        array
+            .iter()
+            .filter_map(|value| value.as_str().map(String::from))
+            .collect()
+    })
+}

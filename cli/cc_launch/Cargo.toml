@@ -1,0 +1,16 @@
+[package]
+name = "cc_launch"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cc_launch"
+path = "src/main.rs"
+
+[dependencies]
+write_engine = { path = "../../capability/write_engine" }
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+regex = { workspace = true }
+toml = { workspace = true }

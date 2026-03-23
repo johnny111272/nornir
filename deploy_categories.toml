@@ -52,6 +52,7 @@ crates = [
     "syn_cli",
     "hush",
     "announce",
+    "cc_launch",
 ]
 verify = "exit_codes"
 valid_exit_codes = [0, 1, 2]

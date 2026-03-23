@@ -102,6 +102,7 @@ members = [
     "daemons/relay_mic_to_voice",
     "capability/saga_runner",
     "cli/announce",
+    "cli/cc_launch",
 ]
 resolver = "2"
 
@@ -132,3 +133,5 @@ rodio = "0.19"
 rusqlite = { version = "0.32", features = ["bundled"] }
 coreaudio-sys = "0.2"
 enigo = "0.2"
+ratatui = "0.30"
+crossterm = "0.29"
