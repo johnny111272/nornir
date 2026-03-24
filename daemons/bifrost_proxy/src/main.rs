@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use clap::Parser;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
+use http_body_util::combinators::BoxBody;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -366,13 +367,33 @@ fn spawn_watcher(
 }
 
 // =============================================================================
+// Response body helpers
+// =============================================================================
+
+type ProxyBody = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Wrap a Full<Bytes> as a ProxyBody (for error responses).
+fn full_body(bytes: Bytes) -> ProxyBody {
+    Full::new(bytes)
+        .map_err(|never| -> Box<dyn std::error::Error + Send + Sync> { match never {} })
+        .boxed()
+}
+
+/// Wrap an Incoming body as a ProxyBody (for streaming passthrough).
+fn streaming_body(incoming: Incoming) -> ProxyBody {
+    incoming
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })
+        .boxed()
+}
+
+// =============================================================================
 // HTTP handler — gate + dispatch
 // =============================================================================
 
 async fn handle_request(
     request: Request<Incoming>,
     state: Arc<ProxyState>,
-) -> Result<Response<Full<Bytes>>, hyper::Error> {
+) -> Result<Response<ProxyBody>, hyper::Error> {
     let (parts, body) = request.into_parts();
     let body_bytes = body.collect().await?.to_bytes();
 
@@ -456,19 +477,20 @@ fn save_unparseable_request(body: &[u8], intercept_dir: &Path) {
 // Upstream forwarding
 // =============================================================================
 
-fn bad_gateway(message: String) -> Result<Response<Full<Bytes>>, hyper::Error> {
+fn bad_gateway(message: String) -> Result<Response<ProxyBody>, hyper::Error> {
     Ok(Response::builder()
         .status(StatusCode::BAD_GATEWAY)
-        .body(Full::new(Bytes::from(message)))
-        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))))
+        .body(full_body(Bytes::from(message)))
+        .unwrap_or_else(|_| Response::new(full_body(Bytes::new()))))
 }
 
+/// Forward request upstream and stream the response back without buffering.
 async fn forward_upstream(
     original_parts: &hyper::http::request::Parts,
     body: Bytes,
     upstream_addr: &str,
     http_client: &HttpClient,
-) -> Result<Response<Full<Bytes>>, hyper::Error> {
+) -> Result<Response<ProxyBody>, hyper::Error> {
     let upstream_uri = format!("http://{}{}", upstream_addr, original_parts.uri.path());
     let uri: hyper::Uri = match upstream_uri.parse() {
         Ok(u) => u,
@@ -492,22 +514,15 @@ async fn forward_upstream(
 
     match http_client.request(upstream_request).await {
         Ok(upstream_response) => {
+            // Stream response through without buffering — critical for SSE
             let (resp_parts, resp_body) = upstream_response.into_parts();
-            let resp_bytes = match resp_body.collect().await {
-                Ok(b) => b.to_bytes(),
-                Err(e) => {
-                    eprintln!("bifrost_proxy: read upstream response: {e}");
-                    Bytes::from(format!("upstream read error: {e}"))
-                }
-            };
-
-            let mut builder = Response::builder().status(resp_parts.status);
+            let mut response_builder = Response::builder().status(resp_parts.status);
             for (key, val) in &resp_parts.headers {
-                builder = builder.header(key, val);
+                response_builder = response_builder.header(key, val);
             }
-            Ok(builder
-                .body(Full::new(resp_bytes))
-                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))))
+            Ok(response_builder
+                .body(streaming_body(resp_body))
+                .unwrap_or_else(|_| Response::new(full_body(Bytes::new()))))
         }
         Err(e) => {
             eprintln!("bifrost_proxy: upstream error: {e}");
