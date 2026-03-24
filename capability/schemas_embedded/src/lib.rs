@@ -79,6 +79,25 @@ pub static ANTHROPIC_RENDER: EmbeddedValidator =
     EmbeddedValidator::new(ANTH_REND_JSON, "anthropic-render");
 
 // =============================================================================
+// Agent output control surface schemas (3)
+// =============================================================================
+
+static OUT_STRUCT_JSON: &str =
+    include_str!("../../../schemas/agents/agent-output-structure.schema.json");
+pub static OUTPUT_STRUCTURE: EmbeddedValidator =
+    EmbeddedValidator::new(OUT_STRUCT_JSON, "output-structure");
+
+static OUT_CONTENT_JSON: &str =
+    include_str!("../../../schemas/agents/agent-output-content.schema.json");
+pub static OUTPUT_CONTENT: EmbeddedValidator =
+    EmbeddedValidator::new(OUT_CONTENT_JSON, "output-content");
+
+static OUT_DISPLAY_JSON: &str =
+    include_str!("../../../schemas/agents/agent-output-display.schema.json");
+pub static OUTPUT_DISPLAY: EmbeddedValidator =
+    EmbeddedValidator::new(OUT_DISPLAY_JSON, "output-display");
+
+// =============================================================================
 // Agent include fragment schemas (7)
 // =============================================================================
 
@@ -231,6 +250,26 @@ mod tests {
     fn test_anthropic_render_compiles() {
         assert_eq!(ANTHROPIC_RENDER.schema_name(), "anthropic-render");
         assert!(!ANTHROPIC_RENDER.schema_json().is_empty());
+    }
+
+    // Agent output control surface schemas
+
+    #[test]
+    fn test_output_structure_compiles() {
+        assert_eq!(OUTPUT_STRUCTURE.schema_name(), "output-structure");
+        assert!(!OUTPUT_STRUCTURE.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_output_content_compiles() {
+        assert_eq!(OUTPUT_CONTENT.schema_name(), "output-content");
+        assert!(!OUTPUT_CONTENT.schema_json().is_empty());
+    }
+
+    #[test]
+    fn test_output_display_compiles() {
+        assert_eq!(OUTPUT_DISPLAY.schema_name(), "output-display");
+        assert!(!OUTPUT_DISPLAY.schema_json().is_empty());
     }
 
     // Agent include fragment schemas
