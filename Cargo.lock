@@ -243,6 +243,7 @@ dependencies = [
  "compaction_inject_core",
  "http-body-util",
  "hyper",
+ "hyper-tls",
  "hyper-util",
  "intercept_core",
  "libc",

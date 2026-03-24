@@ -62,7 +62,8 @@ struct Args {
 // Shared state
 // =============================================================================
 
-type HttpClient = Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>;
+type HttpsConnector = hyper_tls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
+type HttpClient = Client<HttpsConnector, Full<Bytes>>;
 
 struct ProxyState {
     upstream: String,
@@ -491,7 +492,7 @@ async fn forward_upstream(
     upstream_addr: &str,
     http_client: &HttpClient,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
-    let upstream_uri = format!("http://{}{}", upstream_addr, original_parts.uri.path());
+    let upstream_uri = format!("https://{}{}", upstream_addr, original_parts.uri.path());
     let uri: hyper::Uri = match upstream_uri.parse() {
         Ok(u) => u,
         Err(e) => return bad_gateway(format!("bad upstream URI: {e}")),
@@ -554,7 +555,16 @@ fn run(args: Args) -> Result<(), String> {
     fs::create_dir_all(intercept_dir.join("traffic"))
         .map_err(|e| format!("mkdir traffic: {e}"))?;
 
-    let http_client = Client::builder(TokioExecutor::new()).build_http();
+    // Upstream nginx uses a local CA cert — skip verification (matches mitmweb --ssl-insecure)
+    // Upstream nginx uses a local CA cert — skip verification (matches mitmweb --ssl-insecure)
+    let tls = hyper_tls::native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("TLS connector: {e}"))?;
+    let mut http_connector = hyper_util::client::legacy::connect::HttpConnector::new();
+    http_connector.enforce_http(false);
+    let https_connector = hyper_tls::HttpsConnector::from((http_connector, tls.into()));
+    let http_client = Client::builder(TokioExecutor::new()).build(https_connector);
 
     let state = Arc::new(ProxyState {
         upstream: args.upstream,
