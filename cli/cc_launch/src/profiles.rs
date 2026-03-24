@@ -42,22 +42,25 @@ fn parse_profile(name: String, value: toml::Value) -> Option<WorkspaceProfile> {
     let coding = section
         .get("coding")
         .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-
-    let languages = extract_string_array(section, "languages")
-        .unwrap_or_else(|| vec!["python".to_string()]);
+        .unwrap_or(true); // default: coding enabled
 
     let expertise = extract_string_array(section, "expertise").unwrap_or_default();
-    let permissions = extract_string_array(section, "permissions").unwrap_or_default();
+
+    let primary_descriptor = section
+        .get("primary_descriptor")
+        .and_then(|value| value.as_str())
+        .map(String::from);
+
+    let descriptors = extract_string_array(section, "descriptors").unwrap_or_default();
 
     Some(WorkspaceProfile {
         name,
         path,
         persona,
         coding,
-        languages,
         expertise,
-        permissions,
+        primary_descriptor,
+        descriptors,
     })
 }
 

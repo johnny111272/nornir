@@ -1629,6 +1629,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate_output_content_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_output_display_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
+name = "gate_output_structure_input"
+version = "0.1.0"
+dependencies = [
+ "gate_io",
+ "pyo3",
+ "schemas_embedded",
+]
+
+[[package]]
 name = "gate_paths_resolved_output"
 version = "0.1.0"
 dependencies = [
