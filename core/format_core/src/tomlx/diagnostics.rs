@@ -156,134 +156,146 @@ impl TomlxIssues {
     pub fn format(&self) -> String {
         let mut sections = Vec::new();
 
-        for issue in &self.malformed_section_annotations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Section [{}] has malformed annotation.\n\n  \
-                 Found: {}\n  \
-                 Problem: {}\n\n  \
-                 Fix: Use format: [section]  # target=seconds\n       \
-                      Or: [section]  # target=path, base=~/app/",
-                issue.location, issue.section_name, issue.raw_annotation, issue.reason
-            ));
-        }
-
-        for issue in &self.malformed_field_annotations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Field '{}' has malformed annotation.\n\n  \
-                 Found: {}\n  \
-                 Problem: {}\n\n  \
-                 Fix: Use format: field = value  # unit=seconds\n       \
-                      Or: field = \"path/\"  # path=base",
-                issue.location, issue.field_name, issue.raw_annotation, issue.reason
-            ));
-        }
-
-        for issue in &self.orphan_unit_annotations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Field '{}' has unit annotation but section [{}] has no target.\n\n  \
-                 Rule: Unit annotations require a section target declaration.\n\n  \
-                 Fix: Add target to section: [{}]  # target=seconds\n       \
-                      Or remove the annotation if no conversion needed.",
-                issue.location, issue.field_name, issue.section_name, issue.section_name
-            ));
-        }
-
-        for issue in &self.orphan_path_annotations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Field '{}' has path annotation but section [{}] has no target.\n\n  \
-                 Rule: Path annotations require a section target=path declaration.\n\n  \
-                 Fix: Add target to section: [{}]  # target=path, base=~/app/\n       \
-                      Or remove the annotation if no path expansion needed.",
-                issue.location, issue.field_name, issue.section_name, issue.section_name
-            ));
-        }
-
-        for issue in &self.missing_field_annotations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Section [{}] has target but field '{}' has no {} annotation.\n\n  \
-                 Rule: All fields in targeted sections must have annotations.\n       \
-                       All units must be convertible to the section target.\n\n  \
-                 Fix: Add annotation: {} = value  # {}=...\n       \
-                      Or move to a non-targeted section if this field doesn't need conversion.",
-                issue.location, issue.section_name, issue.field_name, issue.expected_type,
-                issue.field_name, issue.expected_type
-            ));
-        }
-
-        for issue in &self.base_redeclarations {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Section [{}] attempts to redefine '{}' but path bases are document-level constants.\n\n  \
-                 Rule: Path bases must be declared in the FIRST target=path section only.\n       \
-                       Subsequent target=path sections inherit these bases.\n\n  \
-                 '{}' was defined at line {}: {}={}\n\n  \
-                 Fix: Remove '{}=...' from this section header.\n       \
-                      Use: [{}]  # target=path",
-                issue.location, issue.section_name, issue.base_name,
-                issue.base_name, issue.original_line, issue.base_name, issue.original_value,
-                issue.base_name, issue.section_name
-            ));
-        }
-
-        for issue in &self.unknown_units {
-            let suggestions = if issue.suggestions.is_empty() {
-                String::new()
-            } else {
-                format!("\n\n  Did you mean: {}?", issue.suggestions.join(", "))
-            };
-
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Unknown unit '{}' on field '{}'.{}\n\n  \
-                 Supported time units: ms, s, sec, seconds, m, min, minutes, h, hr, hours, d, days, w, weeks\n  \
-                 Supported size units: b, bytes, kb, mb, gb, tb, kib, mib, gib, tib",
-                issue.location, issue.unit, issue.field_name, suggestions
-            ));
-        }
-
-        for issue in &self.incompatible_unit_families {
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Field '{}' has unit={} but section has target={}.\n\n  \
-                 Rule: Unit must be convertible to section target.\n\n  \
-                 {} units ({}) cannot convert to {} units.\n  \
-                 Move this field to a section with target={}.",
-                issue.location, issue.field_name, issue.unit, issue.target,
-                issue.unit_family.to_uppercase(), issue.unit, issue.target_family,
-                if issue.unit_family == "size" { "bytes" } else { "seconds" }
-            ));
-        }
-
-        for issue in &self.undefined_path_references {
-            let defined = if issue.defined_refs.is_empty() {
-                "none".to_string()
-            } else {
-                issue.defined_refs.join(", ")
-            };
-
-            sections.push(format!(
-                "ERROR: {}\n  \
-                 Field '{}' uses path={} but '{}' is not defined in section header.\n\n  \
-                 Defined references: {}\n  \
-                 Built-in references: home, absolute, config\n\n  \
-                 Fix: Add to section header: [section]  # target=path, base=..., {}=/path/\n       \
-                      Or use a defined reference: # path=base",
-                issue.location, issue.field_name, issue.reference, issue.reference,
-                defined, issue.reference
-            ));
-        }
+        sections.extend(self.malformed_section_annotations.iter().map(format_malformed_section));
+        sections.extend(self.malformed_field_annotations.iter().map(format_malformed_field));
+        sections.extend(self.orphan_unit_annotations.iter().map(format_orphan_unit));
+        sections.extend(self.orphan_path_annotations.iter().map(format_orphan_path));
+        sections.extend(self.missing_field_annotations.iter().map(format_missing_field));
+        sections.extend(self.base_redeclarations.iter().map(format_base_redeclaration));
+        sections.extend(self.unknown_units.iter().map(format_unknown_unit));
+        sections.extend(self.incompatible_unit_families.iter().map(format_incompatible_family));
+        sections.extend(self.undefined_path_references.iter().map(format_undefined_path_ref));
 
         if sections.is_empty() {
-            "No issues found.".to_string()
+            "No issues found.".into()
         } else {
             sections.join("\n\n---\n\n")
         }
     }
+}
+
+// -------------------------------------------------------------------------
+// Per-issue-type formatters
+// -------------------------------------------------------------------------
+
+fn format_malformed_section(issue: &MalformedSectionAnnotation) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Section [{}] has malformed annotation.\n\n  \
+         Found: {}\n  \
+         Problem: {}\n\n  \
+         Fix: Use format: [section]  # target=seconds\n       \
+              Or: [section]  # target=path, base=~/app/",
+        issue.location, issue.section_name, issue.raw_annotation, issue.reason
+    )
+}
+
+fn format_malformed_field(issue: &MalformedFieldAnnotation) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Field '{}' has malformed annotation.\n\n  \
+         Found: {}\n  \
+         Problem: {}\n\n  \
+         Fix: Use format: field = value  # unit=seconds\n       \
+              Or: field = \"path/\"  # path=base",
+        issue.location, issue.field_name, issue.raw_annotation, issue.reason
+    )
+}
+
+fn format_orphan_unit(issue: &OrphanUnitAnnotation) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Field '{}' has unit annotation but section [{}] has no target.\n\n  \
+         Rule: Unit annotations require a section target declaration.\n\n  \
+         Fix: Add target to section: [{}]  # target=seconds\n       \
+              Or remove the annotation if no conversion needed.",
+        issue.location, issue.field_name, issue.section_name, issue.section_name
+    )
+}
+
+fn format_orphan_path(issue: &OrphanPathAnnotation) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Field '{}' has path annotation but section [{}] has no target.\n\n  \
+         Rule: Path annotations require a section target=path declaration.\n\n  \
+         Fix: Add target to section: [{}]  # target=path, base=~/app/\n       \
+              Or remove the annotation if no path expansion needed.",
+        issue.location, issue.field_name, issue.section_name, issue.section_name
+    )
+}
+
+fn format_missing_field(issue: &MissingFieldAnnotation) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Section [{}] has target but field '{}' has no {} annotation.\n\n  \
+         Rule: All fields in targeted sections must have annotations.\n       \
+               All units must be convertible to the section target.\n\n  \
+         Fix: Add annotation: {} = value  # {}=...\n       \
+              Or move to a non-targeted section if this field doesn't need conversion.",
+        issue.location, issue.section_name, issue.field_name, issue.expected_type,
+        issue.field_name, issue.expected_type
+    )
+}
+
+fn format_base_redeclaration(issue: &BaseRedeclaration) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Section [{}] attempts to redefine '{}' but path bases are document-level constants.\n\n  \
+         Rule: Path bases must be declared in the FIRST target=path section only.\n       \
+               Subsequent target=path sections inherit these bases.\n\n  \
+         '{}' was defined at line {}: {}={}\n\n  \
+         Fix: Remove '{}=...' from this section header.\n       \
+              Use: [{}]  # target=path",
+        issue.location, issue.section_name, issue.base_name,
+        issue.base_name, issue.original_line, issue.base_name, issue.original_value,
+        issue.base_name, issue.section_name
+    )
+}
+
+fn format_unknown_unit(issue: &UnknownUnit) -> String {
+    let suggestions = if issue.suggestions.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n  Did you mean: {}?", issue.suggestions.join(", "))
+    };
+    format!(
+        "ERROR: {}\n  \
+         Unknown unit '{}' on field '{}'.{}\n\n  \
+         Supported time units: ms, s, sec, seconds, m, min, minutes, h, hr, hours, d, days, w, weeks\n  \
+         Supported size units: b, bytes, kb, mb, gb, tb, kib, mib, gib, tib",
+        issue.location, issue.unit, issue.field_name, suggestions
+    )
+}
+
+fn format_incompatible_family(issue: &IncompatibleUnitFamily) -> String {
+    format!(
+        "ERROR: {}\n  \
+         Field '{}' has unit={} but section has target={}.\n\n  \
+         Rule: Unit must be convertible to section target.\n\n  \
+         {} units ({}) cannot convert to {} units.\n  \
+         Move this field to a section with target={}.",
+        issue.location, issue.field_name, issue.unit, issue.target,
+        issue.unit_family.to_uppercase(), issue.unit, issue.target_family,
+        if issue.unit_family == "size" { "bytes" } else { "seconds" }
+    )
+}
+
+fn format_undefined_path_ref(issue: &UndefinedPathReference) -> String {
+    let defined = if issue.defined_refs.is_empty() {
+        "none".into()
+    } else {
+        issue.defined_refs.join(", ")
+    };
+    format!(
+        "ERROR: {}\n  \
+         Field '{}' uses path={} but '{}' is not defined in section header.\n\n  \
+         Defined references: {}\n  \
+         Built-in references: home, absolute, config\n\n  \
+         Fix: Add to section header: [section]  # target=path, base=..., {}=/path/\n       \
+              Or use a defined reference: # path=base",
+        issue.location, issue.field_name, issue.reference, issue.reference,
+        defined, issue.reference
+    )
 }
 
 #[cfg(test)]

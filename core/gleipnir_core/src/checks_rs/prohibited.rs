@@ -228,12 +228,59 @@ fn in_output_function(node: tree_sitter::Node, source: &[u8]) -> bool {
     false
 }
 
+/// Nornir crate tier derived from file path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustCrateTier {
+    Core,
+    Capability,
+    Binary,
+    Gate,
+    Unknown,
+}
+
+fn classify_rust_tier(file_path: &str) -> RustCrateTier {
+    if file_path.contains("/core/") {
+        RustCrateTier::Core
+    } else if file_path.contains("/capability/") {
+        RustCrateTier::Capability
+    } else if file_path.contains("/cli/")
+        || file_path.contains("/hooks/")
+        || file_path.contains("/writers/")
+        || file_path.contains("/senders/")
+        || file_path.contains("/daemons/")
+        || file_path.contains("/interceptors/")
+    {
+        RustCrateTier::Binary
+    } else if file_path.contains("/gates/") {
+        RustCrateTier::Gate
+    } else {
+        RustCrateTier::Unknown
+    }
+}
+
+/// Check if a node is inside fn run() (binary entry point delegates to run()).
+fn in_run_function(node: tree_sitter::Node, source: &[u8]) -> bool {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if ancestor.kind() == "function_item" {
+            let name = ancestor
+                .child_by_field_name("name")
+                .map(|n| node_text(n, source))
+                .unwrap_or("");
+            return name == "run" || name.starts_with("run_");
+        }
+        current = ancestor.parent();
+    }
+    false
+}
+
 /// Detect println!() and dbg!() macro invocations.
 ///
 /// Skips:
 /// - Test contexts (#[test], #[cfg(test)])
 /// - println! inside fn main() (binary crates use stdout as their interface)
 /// - println! inside output functions (print_*, emit_*, display_*)
+/// - println! inside fn run() in binary crates (run() owns stdout interface)
 ///
 /// dbg!() is always flagged — it is never intentional in production code.
 pub fn check_no_println(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
@@ -256,8 +303,16 @@ pub fn check_no_println(source: &ParsedSource, _config: &CheckConfig) -> Vec<Vio
         }
 
         // println! gets contextual treatment; dbg! is always caught
-        if name == "println" && (in_main_function(node, source.source_bytes) || in_output_function(node, source.source_bytes)) {
-            continue;
+        if name == "println" {
+            if in_main_function(node, source.source_bytes) || in_output_function(node, source.source_bytes) {
+                continue;
+            }
+            // In binary crates, fn run() owns the stdout interface
+            if classify_rust_tier(source.file_path) == RustCrateTier::Binary
+                && in_run_function(node, source.source_bytes)
+            {
+                continue;
+            }
         }
 
         violations.push(violation(
@@ -379,6 +434,11 @@ fn is_implicit_return(block: tree_sitter::Node, target: tree_sitter::Node) -> bo
         Some(p) if matches!(p.kind(), "function_item" | "match_arm" | "closure_expression") => {}
         _ => return false,
     }
+    is_last_expression_in_block(block, target)
+}
+
+/// Check if target is within the last expression of a block.
+fn is_last_expression_in_block(block: tree_sitter::Node, target: tree_sitter::Node) -> bool {
     let mut cursor = block.walk();
     match block.named_children(&mut cursor).last() {
         Some(last) => {
@@ -386,6 +446,82 @@ fn is_implicit_return(block: tree_sitter::Node, target: tree_sitter::Node) -> bo
                 && target.end_byte() <= last.end_byte()
         }
         None => false,
+    }
+}
+
+/// Check if a block is in a value-producing position, handling if-else branches.
+///
+/// A block produces a value when:
+/// 1. It's the body of a function, closure, or match arm (existing implicit return)
+/// 2. It's a branch of an if-else expression that is itself consumed by an
+///    ownership-requiring context (let binding, return, function argument, etc.)
+fn is_value_producing_position(block: tree_sitter::Node, target: tree_sitter::Node) -> bool {
+    // Must be within the last expression of the block
+    if !is_last_expression_in_block(block, target) {
+        return false;
+    }
+
+    match block.parent() {
+        // Direct return contexts (existing logic)
+        Some(p) if matches!(p.kind(), "function_item" | "match_arm" | "closure_expression") => {
+            true
+        }
+        // If-else branches: the block produces a value if the outermost
+        // if_expression is in a value-consuming position.
+        Some(p) if p.kind() == "if_expression" || p.kind() == "else_clause" => {
+            // Walk up through the if/else chain to find the outermost if_expression
+            let mut if_expr = p;
+            loop {
+                match if_expr.parent() {
+                    Some(parent) if parent.kind() == "else_clause" => {
+                        if_expr = parent;
+                    }
+                    Some(parent) if parent.kind() == "if_expression" && if_expr.kind() == "else_clause" => {
+                        if_expr = parent;
+                    }
+                    _ => break,
+                }
+            }
+            // Ensure we landed on the outermost if_expression
+            if if_expr.kind() == "else_clause" {
+                if let Some(parent) = if_expr.parent() {
+                    if parent.kind() == "if_expression" {
+                        if_expr = parent;
+                    }
+                }
+            }
+
+            // Determine the consumption context — walk through expression_statement
+            // wrapper if present (tree-sitter wraps top-level if-expressions in it)
+            let consumer = if_expr.parent();
+            let (check_node, consumer) = match consumer {
+                Some(es) if es.kind() == "expression_statement" => (es, es.parent()),
+                _ => (if_expr, consumer),
+            };
+
+            match consumer {
+                Some(parent) => {
+                    let kind = parent.kind();
+                    // Direct value consumers
+                    if matches!(kind,
+                        "let_declaration" | "assignment_expression" | "return_expression"
+                        | "field_initializer" | "arguments" | "call_expression"
+                        | "match_arm" | "tuple_expression" | "array_expression"
+                    ) {
+                        return true;
+                    }
+                    // Tail position: if-else is the last expression in a block.
+                    // Recurse: the block itself might be in a value-producing
+                    // position (e.g., nested if-else inside another if-else).
+                    if kind == "block" {
+                        return is_value_producing_position(parent, check_node);
+                    }
+                    false
+                }
+                None => false,
+            }
+        }
+        _ => false,
     }
 }
 
@@ -414,8 +550,8 @@ fn clone_is_ownership_transfer(clone_call: tree_sitter::Node, source: &[u8]) -> 
                     || is_fallback_or_error_closure(node, source);
             }
 
-            // Block — check for implicit return (last expression in function body)
-            "block" => return is_implicit_return(node, clone_call),
+            // Block — check for implicit return or if-else value-producing position
+            "block" => return is_value_producing_position(node, clone_call),
 
             // Transparent wrappers — keep walking up
             "arguments" | "parenthesized_expression" | "reference_expression"
@@ -423,6 +559,13 @@ fn clone_is_ownership_transfer(clone_call: tree_sitter::Node, source: &[u8]) -> 
             | "tuple_expression" | "array_expression" => {
                 current = node.parent();
                 continue;
+            }
+
+            // let mut x = val.clone() — cloning to mutate is intentional
+            "let_declaration" => {
+                let mut cursor = node.walk();
+                return node.children(&mut cursor)
+                    .any(|c| c.kind() == "mutable_specifier");
             }
 
             // Anything else — not a recognized transfer
@@ -1358,5 +1501,218 @@ mod tests {
         let parsed = build_parsed_source_rust("/test/mod.rs", source).unwrap();
         let violations = check_no_pub_overuse(&parsed, &default_config());
         assert!(violations.is_empty()); // mod.rs is a module entry point
+    }
+
+    // -- if-else value-producing position (Change 1) --
+
+    #[test]
+    fn to_string_in_if_else_let_binding_ok() {
+        let code = r#"
+            fn format_refs(refs: &[String]) -> String {
+                let display = if refs.is_empty() {
+                    "none".to_string()
+                } else {
+                    refs.join(", ")
+                };
+                display
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert!(violations.is_empty(), "to_string in if-else let binding should be skipped");
+    }
+
+    #[test]
+    fn clone_in_if_else_let_binding_ok() {
+        let code = r#"
+            fn pick(flag: bool, owned: &String, fallback: &String) -> String {
+                let result = if flag {
+                    owned.clone()
+                } else {
+                    fallback.clone()
+                };
+                result
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_clone_spam(&parsed, &default_config());
+        assert!(violations.is_empty(), "clone in if-else let binding should be skipped");
+    }
+
+    #[test]
+    fn to_string_in_else_if_chain_ok() {
+        let code = r#"
+            fn normalize(path: &str) -> String {
+                if path.starts_with("/") {
+                    format!("/{}", path)
+                } else if path.is_empty() {
+                    ".".to_string()
+                } else {
+                    path.to_string()
+                }
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert!(violations.is_empty(), "to_string in else-if implicit return should be skipped");
+    }
+
+    #[test]
+    fn to_string_in_if_else_function_arg_ok() {
+        let code = r#"
+            fn process(paths: &mut Vec<String>, prefix: &str) {
+                paths.push(if prefix.is_empty() {
+                    "(root)".to_string()
+                } else {
+                    prefix.to_string()
+                });
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert!(violations.is_empty(), "to_string in if-else as function arg should be skipped");
+    }
+
+    #[test]
+    fn to_string_in_nested_if_else_ok() {
+        let code = r#"
+            fn workspace(path: &str) -> String {
+                if let Some(relative) = path.strip_prefix("/base/") {
+                    let trimmed = relative.trim_end_matches('/');
+                    if trimmed.is_empty() {
+                        "@".to_string()
+                    } else {
+                        format!("@{}", trimmed)
+                    }
+                } else {
+                    "@".to_string()
+                }
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert!(violations.is_empty(), "to_string in nested if-else tail position should be skipped: {:?}",
+            violations.iter().map(|v| (v.line, &v.message)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn to_string_in_plain_let_binding_still_caught() {
+        let code = r#"
+            fn process() {
+                let name = "hello".to_string();
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "to_string in plain let binding must still be caught");
+    }
+
+    #[test]
+    fn to_string_in_if_body_not_value_position_still_caught() {
+        let code = r#"
+            fn process(flag: bool) {
+                if flag {
+                    let name = "hello".to_string();
+                }
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_string_abuse(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "to_string in if-body let binding (not value position) must still be caught");
+    }
+
+    // -- tier-aware println (Change 2) --
+
+    #[test]
+    fn println_in_run_function_binary_crate_ok() {
+        let source: &'static [u8] = Box::leak(
+            b"fn run() -> Result<i32, String> { println!(\"output\"); Ok(0) }"
+                .to_vec().into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/nornir/cli/syn_cli/src/main.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert!(violations.is_empty(), "println in run() of binary crate should be allowed");
+    }
+
+    #[test]
+    fn println_in_run_prefix_function_binary_crate_ok() {
+        let source: &'static [u8] = Box::leak(
+            b"fn run_file() -> Result<(), String> { println!(\"output\"); Ok(()) }"
+                .to_vec().into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/nornir/cli/saga_cli/src/main.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert!(violations.is_empty(), "println in run_file() of binary crate should be allowed");
+    }
+
+    #[test]
+    fn println_in_run_function_library_crate_caught() {
+        let source: &'static [u8] = Box::leak(
+            b"fn run() { println!(\"debug\"); }"
+                .to_vec().into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/nornir/core/some_core/src/lib.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "println in run() of library crate must still be caught");
+    }
+
+    #[test]
+    fn println_in_helper_function_binary_crate_caught() {
+        let source: &'static [u8] = Box::leak(
+            b"fn helper() { println!(\"debug\"); }\nfn run() -> i32 { helper(); 0 }"
+                .to_vec().into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/nornir/cli/syn_cli/src/main.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "println in helper within binary crate must still be caught");
+    }
+
+    #[test]
+    fn dbg_in_run_function_binary_crate_still_caught() {
+        let source: &'static [u8] = Box::leak(
+            b"fn run() -> i32 { let x = 1; dbg!(x); 0 }"
+                .to_vec().into_boxed_slice(),
+        );
+        let parsed = build_parsed_source_rust("/nornir/cli/syn_cli/src/main.rs", source).unwrap();
+        let violations = check_no_println(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "dbg! must always be caught, even in binary run()");
+    }
+
+    #[test]
+    fn tier_classification() {
+        assert_eq!(classify_rust_tier("/nornir/core/text_core/src/lib.rs"), RustCrateTier::Core);
+        assert_eq!(classify_rust_tier("/nornir/capability/hook_io/src/lib.rs"), RustCrateTier::Capability);
+        assert_eq!(classify_rust_tier("/nornir/cli/syn_cli/src/main.rs"), RustCrateTier::Binary);
+        assert_eq!(classify_rust_tier("/nornir/hooks/hook_pre_llm_bash/src/main.rs"), RustCrateTier::Binary);
+        assert_eq!(classify_rust_tier("/nornir/writers/append_raw_jsonl/src/main.rs"), RustCrateTier::Binary);
+        assert_eq!(classify_rust_tier("/nornir/gates/gate_structure_in/src/lib.rs"), RustCrateTier::Gate);
+        assert_eq!(classify_rust_tier("/other/project/src/main.rs"), RustCrateTier::Unknown);
+    }
+
+    // -- let-mut clone detection (Change 3) --
+
+    #[test]
+    fn clone_into_let_mut_ok() {
+        let code = r#"
+            fn strip(value: &serde_json::Value) -> serde_json::Value {
+                let mut stripped = value.clone();
+                stripped
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_clone_spam(&parsed, &default_config());
+        assert!(violations.is_empty(), "clone into let mut should be skipped");
+    }
+
+    #[test]
+    fn clone_into_let_immutable_still_caught() {
+        let code = r#"
+            fn copy(value: &String) {
+                let copied = value.clone();
+            }
+        "#;
+        let parsed = parse(code);
+        let violations = check_no_clone_spam(&parsed, &default_config());
+        assert_eq!(violations.len(), 1, "clone into immutable let should still be caught");
     }
 }

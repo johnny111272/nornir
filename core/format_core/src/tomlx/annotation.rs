@@ -72,13 +72,10 @@ fn parse_section_annotation(
     let pairs: Vec<&str> = comment.split(',').map(|s| s.trim()).collect();
 
     if pairs.is_empty() {
-        return Err("Empty annotation".to_string());
+        return Err("Empty annotation".into());
     }
 
-    let mut target: Option<TargetFamily> = None;
-    let mut type_annotation: Option<TypeAnnotation> = None;
-    let mut path_bases: HashMap<String, String> = HashMap::new();
-    let mut expand_mode = ExpandMode::default();
+    let mut builder = AnnotationBuilder::default();
 
     for pair in pairs {
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
@@ -89,63 +86,84 @@ fn parse_section_annotation(
         let key = parts[0].trim().to_lowercase();
         let value = parts[1].trim();
 
-        match key.as_str() {
+        builder.apply_key(&key, value)?;
+    }
+
+    validate_annotation_constraints(&builder)?;
+
+    Ok(SectionAnnotation {
+        section_path: section_path.to_string(),
+        line: line_num,
+        target: builder.target,
+        type_annotation: builder.type_annotation,
+        path_bases: builder.path_bases,
+        expand_mode: builder.expand_mode,
+    })
+}
+
+/// In-progress annotation state accumulated from key=value pairs.
+#[derive(Default)]
+struct AnnotationBuilder {
+    target: Option<TargetFamily>,
+    type_annotation: Option<TypeAnnotation>,
+    path_bases: HashMap<String, String>,
+    expand_mode: ExpandMode,
+}
+
+impl AnnotationBuilder {
+    /// Dispatch a single key=value pair into the builder state.
+    fn apply_key(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
             "target" => {
-                target = Some(parse_target(value).ok_or_else(|| {
+                self.target = Some(parse_target(value).ok_or_else(|| {
                     format!("Unknown target '{}'. Use: seconds, ms, bytes, or path", value)
                 })?);
             }
             "type" => {
-                type_annotation = Some(parse_type_annotation(value).ok_or_else(|| {
+                self.type_annotation = Some(parse_type_annotation(value).ok_or_else(|| {
                     format!("Unknown type '{}'. Use: int, float, str, bool, or list[T]", value)
                 })?);
             }
             "expand" => {
-                expand_mode = ExpandMode::from_str(value).ok_or_else(|| {
+                self.expand_mode = ExpandMode::from_str(value).ok_or_else(|| {
                     format!("Unknown expand mode '{}'. Use: user, env, all, or none", value)
                 })?;
             }
             _ => {
-                if RESERVED_PATH_KEYS.contains(&key.as_str()) && key != "target" && key != "expand" && key != "type" {
+                if RESERVED_PATH_KEYS.contains(&key) && key != "target" && key != "expand" && key != "type" {
                     return Err(format!("Reserved key '{}' cannot be used as base name", key));
                 }
-                path_bases.insert(key.clone(), value.to_string());
+                self.path_bases.insert(key.to_string(), value.to_string());
             }
         }
+        Ok(())
+    }
+}
+
+/// Validate cross-field constraints after all pairs are parsed.
+fn validate_annotation_constraints(builder: &AnnotationBuilder) -> Result<(), String> {
+    if builder.target.is_none() && builder.type_annotation.is_none() {
+        return Err("Missing required annotation: at least one of 'target=' or 'type=' required".into());
     }
 
-    // Require at least one of target or type
-    if target.is_none() && type_annotation.is_none() {
-        return Err("Missing required annotation: at least one of 'target=' or 'type=' required".to_string());
-    }
-
-    // Path bases only valid for path target
-    if !path_bases.is_empty() {
-        match &target {
+    if !builder.path_bases.is_empty() {
+        match &builder.target {
             Some(TargetFamily::Path) => {}
             Some(_) => {
                 return Err(format!(
                     "Path bases ({}) only valid for target=path",
-                    path_bases.keys().cloned().collect::<Vec<_>>().join(", ")
+                    builder.path_bases.keys().cloned().collect::<Vec<_>>().join(", ")
                 ));
             }
             None => {
                 return Err(format!(
                     "Path bases ({}) require target=path",
-                    path_bases.keys().cloned().collect::<Vec<_>>().join(", ")
+                    builder.path_bases.keys().cloned().collect::<Vec<_>>().join(", ")
                 ));
             }
         }
     }
-
-    Ok(SectionAnnotation {
-        section_path: section_path.to_string(),
-        line: line_num,
-        target,
-        type_annotation,
-        path_bases,
-        expand_mode,
-    })
+    Ok(())
 }
 
 /// Parse a field line for annotations.

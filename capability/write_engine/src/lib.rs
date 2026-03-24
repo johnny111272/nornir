@@ -95,73 +95,59 @@ enum WriteError {
     BatchLine(String),
 }
 
+/// Heredoc usage hint shared by stdin-empty and invalid-json errors.
+fn heredoc_hint(name: &str) -> String {
+    format!(
+        "For data with quotes or apostrophes, use heredoc:\n\
+         \x20 {name} <<'RECORD'\n\
+         \x20 {{\"field\":\"value with 'quotes'\"}}\n\
+         \x20 RECORD",
+        name = name,
+    )
+}
+
 impl WriteError {
     /// Format error as FAIL:<reason> with educational guidance.
     fn format(&self, config: &WriterConfig) -> String {
         match self {
             WriteError::StdinEmpty => format!(
-                "FAIL:stdin is empty — pipe JSON data into this command.\n\
-                 \n\
-                 Usage:\n\
-                 \x20 echo '<json>' | {name}\n\
-                 \n\
-                 For data with quotes or apostrophes, use heredoc:\n\
-                 \x20 {name} <<'RECORD'\n\
-                 \x20 {{\"field\":\"value with 'quotes'\"}}\n\
-                 \x20 RECORD",
-                name = config.name
+                "FAIL:stdin is empty — pipe JSON data into this command.\n\n\
+                 Usage:\n\x20 echo '<json>' | {name}\n\n{}",
+                heredoc_hint(config.name), name = config.name,
             ),
             WriteError::InvalidJson(detail) => format!(
-                "FAIL:invalid JSON — {detail}\n\
-                 \n\
-                 If your data contains apostrophes or nested quotes, use heredoc:\n\
-                 \x20 {name} <<'RECORD'\n\
-                 \x20 {{\"field\":\"value with 'quotes'\"}}\n\
-                 \x20 RECORD",
-                detail = detail,
-                name = config.name
+                "FAIL:invalid JSON — {detail}\n\n{}",
+                heredoc_hint(config.name), detail = detail,
             ),
             WriteError::SchemaValidation(msg) => format!("FAIL:schema validation — {}", msg),
             WriteError::PathTraversal(input) => format!(
-                "FAIL:path traversal blocked — filename must not contain \"..\" or \"/\"\n\
-                 \n\
+                "FAIL:path traversal blocked — filename must not contain \"..\" or \"/\"\n\n\
                  You provided: \"{input}\"\n\
                  Filenames must be plain stems (e.g., \"entry-123\"), no path separators.",
-                input = input,
             ),
             WriteError::FileExists(path) => format!(
-                "FAIL:output file already exists — refusing to overwrite.\n\
-                 \n\
+                "FAIL:output file already exists — refusing to overwrite.\n\n\
                  Path: {path}\n\
                  This writer creates new files only. Delete the existing file first if intentional.",
-                path = path,
             ),
             WriteError::FileNotFound(path) => format!(
-                "FAIL:output file does not exist — the dispatcher must create the file first.\n\
-                 \n\
+                "FAIL:output file does not exist — the dispatcher must create the file first.\n\n\
                  Expected: {path}\n\
                  Run: touch {path}",
-                path = path,
             ),
             WriteError::DirectoryNotFound(path) => format!(
-                "FAIL:output directory does not exist.\n\
-                 \n\
+                "FAIL:output directory does not exist.\n\n\
                  Expected: {path}\n\
                  Run: mkdir -p {path}",
-                path = path,
             ),
             WriteError::IoFailed(msg) => format!("FAIL:IO error — {}", msg),
             WriteError::BatchTooLarge { got, max } => format!(
                 "FAIL:batch too large — got {got} records, max is {max}.\n\
                  Split the batch into smaller chunks.",
-                got = got,
-                max = max,
             ),
             WriteError::MissingArg(what) => format!(
-                "FAIL:missing argument — {what} is required.\n\
-                 \n\
+                "FAIL:missing argument — {what} is required.\n\n\
                  Run: {name} --help",
-                what = what,
                 name = config.name,
             ),
             WriteError::BatchLine(msg) => msg.clone(),
@@ -224,7 +210,34 @@ fn resolve_output_path(
 // =============================================================================
 
 fn format_help(config: &WriterConfig) -> String {
+    let needs_arg = !matches!(config.output, OutputPath::FixedFile(_));
+    let arg_str = if needs_arg { " <name>" } else { "" };
+
     let mut lines = Vec::new();
+    lines.push(format!("{} — Validated enforcement output tool\n", config.name));
+    format_help_config(config, &mut lines);
+
+    lines.push(String::new());
+    lines.push("USAGE:".into());
+    lines.push(format!("  echo '<json>' | {}{}", config.name, arg_str));
+    lines.push(String::new());
+    lines.push("  For data with quotes or apostrophes, use heredoc:".into());
+    lines.push(format!("  {}{} <<'RECORD'", config.name, arg_str));
+    lines.push("  {\"uid\":\"...\",\"assessment\":\"...\"}".into());
+    lines.push("  RECORD".into());
+
+    lines.push(String::new());
+    lines.push("INSPECT:".into());
+    lines.push(format!("  {} --dump-schema    Print embedded JSON Schema to stdout", config.name));
+
+    lines.push(String::new());
+    format_help_output(config, &mut lines);
+
+    lines.join("\n")
+}
+
+/// Format the HARDCODED CONFIGURATION section of --help output.
+fn format_help_config(config: &WriterConfig, lines: &mut Vec<String>) {
     let format_str = match config.format {
         OutputFormat::Jsonl => "jsonl (append)",
         OutputFormat::Json => "json (write new file)",
@@ -243,10 +256,6 @@ fn format_help(config: &WriterConfig) -> String {
         }
     };
 
-    let needs_arg = !matches!(config.output, OutputPath::FixedFile(_));
-    let arg_str = if needs_arg { " <name>" } else { "" };
-
-    lines.push(format!("{} — Validated enforcement output tool\n", config.name));
     lines.push("HARDCODED CONFIGURATION:".into());
     lines.push(format!("  Schema:      {} (embedded)", config.schema.schema_name()));
     lines.push(format!("  Schema path: {}", config.schema_source_path));
@@ -256,38 +265,20 @@ fn format_help(config: &WriterConfig) -> String {
     if let Some(max) = config.batch_size {
         lines.push(format!("  Max batch:   {} records", max));
     }
+}
 
-    lines.push(String::new());
-    lines.push("USAGE:".into());
-    lines.push(format!("  echo '<json>' | {}{}", config.name, arg_str));
-    lines.push(String::new());
-    lines.push("  For data with quotes or apostrophes, use heredoc:".into());
-    lines.push(format!("  {}{} <<'RECORD'", config.name, arg_str));
-    lines.push("  {\"uid\":\"...\",\"assessment\":\"...\"}".into());
-    lines.push("  RECORD".into());
-
-    lines.push(String::new());
-    lines.push("INSPECT:".into());
-    lines.push(format!("  {} --dump-schema    Print embedded JSON Schema to stdout", config.name));
-
-    lines.push(String::new());
+/// Format the OUTPUT and EXIT CODES sections of --help output.
+fn format_help_output(config: &WriterConfig, lines: &mut Vec<String>) {
     lines.push("OUTPUT:".into());
     match config.frequency {
-        WriteFrequency::Record => {
-            lines.push("  OK              Record written successfully".into());
-        }
-        WriteFrequency::Batch => {
-            lines.push("  OK:<count>      Records written successfully".into());
-        }
+        WriteFrequency::Record => lines.push("  OK              Record written successfully".into()),
+        WriteFrequency::Batch => lines.push("  OK:<count>      Records written successfully".into()),
     }
     lines.push("  FAIL:<reason>   Validation or write failed — see reason".into());
-
     lines.push(String::new());
     lines.push("EXIT CODES:".into());
     lines.push("  0  success".into());
     lines.push("  1  failure".into());
-
-    lines.join("\n")
 }
 
 // =============================================================================

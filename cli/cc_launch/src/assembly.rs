@@ -63,40 +63,48 @@ pub fn write_prompt_file(state: &AppState) -> Result<PathBuf, String> {
 fn assemble_prompt(state: &AppState) -> Result<String, String> {
     let mut parts: Vec<String> = Vec::new();
 
-    // 1. Selected persona
+    // === IDENTITY LAYER (who you are, how you think) ===
+
+    // 1. Always-loaded: cognitive-mode → behavior → communication → safety → anthropic
+    //    Collaboration paradigm is first (00-prefix in cognitive-mode).
+    //    This is the FOUNDATION — how to think, how to behave, how to collaborate.
+    for fragment in &state.library.always {
+        parts.push(read_fragment(&fragment.path)?);
+    }
+
+    // 2. Persona — who you are within the collaboration
     if let Some(index) = state.selected_persona {
         if let Some(persona) = state.library.personas.get(index) {
             parts.push(read_fragment(&persona.path)?);
         }
     }
 
-    // 2. Auto-matched space descriptor (most immediate context)
+    // === CONTEXT LAYER (where you are, what you're working on) ===
+
+    // 3. Auto-matched space descriptor (your workspace environment)
     if let Some(space_idx) = state.auto_space_index() {
         if let Some(descriptor) = state.library.descriptors.get(space_idx) {
             parts.push(read_fragment(&descriptor.path)?);
         }
     }
 
-    // 3. Selected system descriptors (ordered: primary first, siblings, overview last)
+    // 4. System descriptors (primary first, siblings, overview last)
     for index in state.ordered_descriptor_indices() {
         if let Some(descriptor) = state.library.descriptors.get(index) {
             parts.push(read_fragment(&descriptor.path)?);
         }
     }
 
-    // 3-7. Always-loaded fragments (already sorted by category order)
-    for fragment in &state.library.always {
-        parts.push(read_fragment(&fragment.path)?);
-    }
+    // === MODE LAYER (how you work this session) ===
 
-    // 8. Coding fragments (if enabled)
+    // 5. Coding fragments (if enabled)
     if state.coding_enabled {
         for fragment in &state.library.coding {
             parts.push(read_fragment(&fragment.path)?);
         }
     }
 
-    // 9. Language context (always include selected languages)
+    // 6. Language context
     let languages = state.selected_language_names();
     if !languages.is_empty() {
         let lang_tags: Vec<String> = languages
@@ -109,7 +117,7 @@ fn assemble_prompt(state: &AppState) -> Result<String, String> {
         ));
     }
 
-    // 10. Selected expertise (each is a directory with multiple .md files)
+    // 7. Selected expertise
     for (index, selected) in state.selected_expertise.iter().enumerate() {
         if *selected {
             if let Some(fragment) = state.library.expertise.get(index) {

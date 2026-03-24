@@ -88,23 +88,24 @@ pub struct DecisionInput<'a> {
     pub max_subject_len: Option<usize>,
 }
 
-/// Build a HookDecision from severity and contextual metadata.
-///
-/// Handles subject truncation, event string formatting, and the
-/// Severity → HookDecision variant mapping with appropriate messages.
-pub fn make_decision(input: &DecisionInput) -> HookDecision {
+/// Truncate subject and format the event string for a hook decision.
+fn format_event_preamble(input: &DecisionInput) -> (String, String) {
     let short = match input.max_subject_len {
         Some(max) if input.subject.len() > max => {
             format!("{}...", &input.subject[..max.saturating_sub(3)])
         }
         _ => input.subject.to_string(),
     };
+    let event = format!("{} \u{2014} {}", input.description.to_lowercase(), short);
+    (short, event)
+}
 
-    let event = format!(
-        "{} \u{2014} {}",
-        input.description.to_lowercase(),
-        short
-    );
+/// Build a HookDecision from severity and contextual metadata.
+///
+/// Handles subject truncation, event string formatting, and the
+/// Severity → HookDecision variant mapping with appropriate messages.
+pub fn make_decision(input: &DecisionInput) -> HookDecision {
+    let (short, event) = format_event_preamble(input);
 
     match input.severity {
         rules::Severity::Block => {

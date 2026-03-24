@@ -11,7 +11,8 @@ use serde_json::{Map, Value};
 use super::diagnostics::{IncompatibleUnitFamily, TomlxIssues, UndefinedPathReference, UnknownUnit};
 use super::paths::{expand_path, expand_registry_bases};
 use super::types::{
-    FieldAnnotationType, PathRegistry, SectionPathInfo, TargetFamily, TomlxOutput, TypeAnnotation,
+    FieldAnnotationType, PathRegistry, SectionAnnotation, SectionPathInfo, TargetFamily,
+    TomlxOutput, TypeAnnotation,
 };
 use super::units::{convert_unit, lookup_unit, suggest_units, target_family, target_unit_name, UnitFamily};
 use super::validation::{validate_tomlx, ValidatedSection, ValidationResult};
@@ -95,9 +96,9 @@ fn process_sections(
 
     for (section_path, section) in &validation.sections {
         if section_path.is_empty() {
-            if let Some(ann) = &section.annotation {
+            if let Some(annotation) = &section.annotation {
                 let paths = PathContext { registry: &path_registry, config_dir, resolve_env };
-                process_root_fields(&mut data, section, ann, &paths, &mut issues)?;
+                process_root_fields(&mut data, section, annotation, &paths, &mut issues)?;
             }
             continue;
         }
@@ -107,47 +108,14 @@ fn process_sections(
             None => continue,
         };
 
-        match &section.annotation {
-            None => {}
-            Some(ann) => {
-                if let Some(type_ann) = &ann.type_annotation {
-                    section_types.insert(section_path.clone(), type_ann.as_str());
-                    let field_names: Vec<String> = if let Value::Object(map) = section_data {
-                        map.keys().cloned().collect()
-                    } else {
-                        vec![]
-                    };
-                    typed_sections.insert(section_path.clone(), (type_ann.clone(), field_names));
-                }
+        if let Some(annotation) = &section.annotation {
+            record_type_metadata(section_path, section_data, annotation, &mut section_types, &mut typed_sections);
 
-                match &ann.target {
-                    Some(TargetFamily::Time(_)) | Some(TargetFamily::Size) => {
-                        process_unit_section(section_data, section, ann, &mut issues)?;
-                        if let Some(target) = &ann.target {
-                            section_units.insert(
-                                section_path.clone(),
-                                target_unit_name(target).to_string(),
-                            );
-                        }
-                    }
-                    Some(TargetFamily::Path) => {
-                        let paths = PathContext { registry: &path_registry, config_dir, resolve_env };
-                        process_path_section(
-                            section_data, section, ann, &paths, &mut issues,
-                        )?;
-
-                        let bases: HashMap<String, String> = path_registry
-                            .user_defined
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        section_paths.insert(
-                            section_path.clone(),
-                            SectionPathInfo { bases, expand: path_registry.expand_mode },
-                        );
-                    }
-                    None => {}
-                }
+            let paths = PathContext { registry: &path_registry, config_dir, resolve_env };
+            match apply_target_conversion(section_data, section, annotation, &paths, &mut issues)? {
+                TargetResult::Unit(name) => { section_units.insert(section_path.clone(), name); }
+                TargetResult::Path(info) => { section_paths.insert(section_path.clone(), info); }
+                TargetResult::None => {}
             }
         }
     }
@@ -163,6 +131,65 @@ fn process_sections(
     };
 
     Ok(TomlxOutput { data, schema, section_types, section_units, section_paths })
+}
+
+/// Record type annotation metadata for a section (types map + schema fields).
+fn record_type_metadata(
+    section_path: &str,
+    section_data: &Value,
+    annotation: &SectionAnnotation,
+    section_types: &mut HashMap<String, String>,
+    typed_sections: &mut HashMap<String, (TypeAnnotation, Vec<String>)>,
+) {
+    if let Some(type_ann) = &annotation.type_annotation {
+        section_types.insert(section_path.to_string(), type_ann.as_str());
+        let field_names: Vec<String> = match section_data {
+            Value::Object(map) => map.keys().cloned().collect(),
+            _ => vec![],
+        };
+        typed_sections.insert(section_path.to_string(), (type_ann.clone(), field_names));
+    }
+}
+
+/// Result of target-based conversion: what metadata to record.
+enum TargetResult {
+    Unit(String),
+    Path(SectionPathInfo),
+    None,
+}
+
+/// Apply target-based conversion (unit normalization or path expansion) to a section.
+fn apply_target_conversion(
+    section_data: &mut Value,
+    section: &ValidatedSection,
+    annotation: &SectionAnnotation,
+    paths: &PathContext,
+    issues: &mut TomlxIssues,
+) -> Result<TargetResult, FormatError> {
+    match &annotation.target {
+        Some(TargetFamily::Time(_)) | Some(TargetFamily::Size) => {
+            process_unit_section(section_data, section, annotation, issues)?;
+            let unit_name = annotation.target.as_ref()
+                .map(|target| target_unit_name(target).to_string())
+                .unwrap_or_default();
+            Ok(TargetResult::Unit(unit_name))
+        }
+        Some(TargetFamily::Path) => {
+            process_path_section(section_data, section, annotation, paths, issues)?;
+            Ok(TargetResult::Path(snapshot_path_bases(paths.registry)))
+        }
+        None => Ok(TargetResult::None),
+    }
+}
+
+/// Snapshot current path bases from the registry into a SectionPathInfo.
+fn snapshot_path_bases(registry: &PathRegistry) -> SectionPathInfo {
+    let bases: HashMap<String, String> = registry
+        .user_defined
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    SectionPathInfo { bases, expand: registry.expand_mode }
 }
 
 fn build_document_schema(typed_sections: &HashMap<String, (TypeAnnotation, Vec<String>)>) -> Value {

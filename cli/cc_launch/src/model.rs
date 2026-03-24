@@ -63,6 +63,7 @@ pub struct WorkspaceProfile {
     pub persona: String,
     pub coding: bool,
     pub expertise: Vec<String>,
+    pub permissions: Vec<String>,
     pub primary_descriptor: Option<String>,
     pub descriptors: Vec<String>,
 }
@@ -337,6 +338,8 @@ impl AppState {
         }
 
         // Permissions are NEVER auto-selected — user must explicitly enable
+
+        // Permissions: never auto-selected. User toggles manually in TUI.
 
         // Set system descriptors based on primary_descriptor + smart family logic
         self.apply_descriptor_defaults(&profile);
