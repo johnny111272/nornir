@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CC Wire Format — /v1/messages request body",
+  "description": "Pinned to Claude Code release observed 2026-03-18. Strict: fail immediately on any deviation. Update this schema when CC changes the wire format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["messages", "model"],
+  "_comment": "output_config/stream/system/tools are absent on internal CC utility calls (title generation etc). Strictly typed when present; additionalProperties:false still catches new unknown fields.",
+  "properties": {
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stream": {
+      "type": "boolean"
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "thinking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget_tokens", "type"],
+      "properties": {
+        "budget_tokens": {"type": "integer", "minimum": 0},
+        "type": {"type": "string", "enum": ["enabled", "disabled"]}
+      }
+    },
+    "output_config": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["effort"],
+          "properties": {
+            "effort": {"type": "string"}
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["format"],
+          "properties": {
+            "format": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {"type": "string"},
+                "schema": {"type": "object"}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id"],
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "JSON-encoded object: {device_id, account_uuid, session_id}"
+        }
+      }
+    },
+    "system": {
+      "oneOf": [
+        {"type": "string"},
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"type": "string", "enum": ["text"]},
+              "text": {"type": "string"},
+              "cache_control": {"type": ["object", "null"]}
+            }
+          }
+        }
+      ]
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["name", "description", "input_schema"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "description": {"type": "string"},
+              "input_schema": {"type": "object"},
+              "defer_loading": {"type": "boolean"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["name", "type"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "type": {"type": "string", "minLength": 1},
+              "max_uses": {"type": "integer", "minimum": 0}
+            }
+          }
+        ]
+      }
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "role": {"type": "string", "enum": ["user", "assistant"]},
+          "content": {
+            "oneOf": [
+              {"type": "string"},
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": {"type": "string"}
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -92,6 +92,7 @@ verify_input = '{"system":[],"tools":[],"messages":[]}'
 crates = [
     "record_datagrams",
     "relay_mic_to_voice",
+    "bifrost_proxy",
 ]
 verify = "help"
 

@@ -1,0 +1,24 @@
+[package]
+name = "bifrost_proxy"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bifrost_proxy"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+libc.workspace = true
+
+intercept_core = { path = "../../core/intercept_core" }
+compaction_inject_core = { path = "../../core/compaction_inject_core" }
+schema_core = { path = "../../core/schema_core" }
+session_io = { path = "../../capability/session_io" }
+write_engine = { path = "../../capability/write_engine" }
+workspace_registry = { path = "../../capability/workspace_registry" }

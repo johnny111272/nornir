@@ -103,6 +103,7 @@ members = [
     "interceptors/intercept_replay",
     "daemons/record_datagrams",
     "daemons/relay_mic_to_voice",
+    "daemons/bifrost_proxy",
     "capability/saga_runner",
     "cli/announce",
     "cli/cc_launch",
@@ -138,3 +139,7 @@ coreaudio-sys = "0.2"
 enigo = "0.2"
 ratatui = "0.30"
 crossterm = "0.29"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy"] }
+http-body-util = "0.1"
