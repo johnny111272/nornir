@@ -1,0 +1,15 @@
+[package]
+name = "hook_session_start_inject"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hook_session_start_inject"
+path = "src/main.rs"
+
+[dependencies]
+write_engine = { path = "../../capability/write_engine" }
+workspace_registry = { path = "../../capability/workspace_registry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }

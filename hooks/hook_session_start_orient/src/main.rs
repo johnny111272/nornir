@@ -5,7 +5,7 @@
 //! Creates the control directory for the workspace if it doesn't exist.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_start_session_orient --project-dir $CLAUDE_PROJECT_DIR
+//!     hook_session_start_orient --project-dir $CLAUDE_PROJECT_DIR
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use serde::Deserialize;
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "hook_start_session_orient", about = "SessionStart hook: register workspace + session")]
+#[command(name = "hook_session_start_orient", about = "SessionStart hook: register workspace + session")]
 struct Cli {
     /// Session project directory (from $CLAUDE_PROJECT_DIR)
     #[arg(long)]

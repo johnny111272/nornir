@@ -1,10 +1,10 @@
 [package]
-name = "hook_start_session_orient"
+name = "hook_session_start_orient"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "hook_start_session_orient"
+name = "hook_session_start_orient"
 path = "src/main.rs"
 
 [dependencies]

@@ -20,7 +20,8 @@ crates = [
     "hook_stop_llm_tts",
     "hook_notify_llm_tts",
     "hook_compact_session_log",
-    "hook_start_session_orient",
+    "hook_session_start_orient",
+    "hook_session_start_inject",
 ]
 verify = "stdin"
 verify_input = '{"tool_name":"Test","tool_input":{}}'

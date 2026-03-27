@@ -2042,7 +2042,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "hook_start_session_orient"
+name = "hook_session_start_inject"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+ "workspace_registry",
+ "write_engine",
+]
+
+[[package]]
+name = "hook_session_start_orient"
 version = "0.1.0"
 dependencies = [
  "clap",
