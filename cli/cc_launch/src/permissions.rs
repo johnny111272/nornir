@@ -1,23 +1,45 @@
+/// A permission is a set of paths exempt from hook probing/gaming checks.
+/// These are superpowers — only for sessions that work ON the security system.
+/// Most sessions need zero permissions.
+///
+/// The actual mechanism is HOOK_LLM_ALLOW_PATHS (colon-separated paths).
 pub struct Permission {
     pub name: &'static str,
-    pub env_var: &'static str,
     pub description: &'static str,
+    pub paths: &'static [&'static str],
 }
 
-pub static KNOWN_PERMISSIONS: &[Permission] = &[
-    Permission {
-        name: "Gleipnir",
-        env_var: "GLEIPNIR_ENABLED",
-        description: "Guardrail system access",
-    },
-    Permission {
-        name: "Voice/TTS",
-        env_var: "VOICE_ENABLED",
-        description: "Text-to-speech announcements",
-    },
-    Permission {
-        name: "Workspace Registry",
-        env_var: "WORKSPACE_REGISTRY_ENABLED",
-        description: "Cross-workspace awareness",
-    },
-];
+pub static KNOWN_PERMISSIONS: &[Permission] = &[Permission {
+    name: "Security Infrastructure",
+    description: "Bypass probing/gaming alerts for nornir, tools, and claude settings",
+    paths: &[
+        "/Users/johnny/.ai/smidja/nornir/",
+        "/Users/johnny/.ai/tools/",
+        "/Users/johnny/.claude/",
+    ],
+}];
+
+/// Build HOOK_LLM_ALLOW_PATHS from selected permissions.
+/// Returns None if no permissions selected.
+pub fn build_allow_paths(selected: &[bool]) -> Option<String> {
+    let mut paths: Vec<&str> = Vec::new();
+
+    for (index, is_selected) in selected.iter().enumerate() {
+        if !*is_selected {
+            continue;
+        }
+        if let Some(permission) = KNOWN_PERMISSIONS.get(index) {
+            for path in permission.paths {
+                if !paths.contains(path) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths.join(":"))
+    }
+}

@@ -51,9 +51,9 @@ fn run(arguments: Cli) -> Result<(), String> {
 }
 
 fn exec_claude(prompt_path: &Path, state: &AppState) -> Result<(), String> {
-    // Set permission env vars
-    for (env_var, value) in assembly::build_env_vars(state) {
-        std::env::set_var(env_var, value);
+    // Set HOOK_LLM_ALLOW_PATHS if any permissions selected
+    if let Some(allow_paths) = assembly::build_allow_paths(state) {
+        std::env::set_var("HOOK_LLM_ALLOW_PATHS", allow_paths);
     }
 
     let mut command = std::process::Command::new("claude");

@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::model::AppState;
-use crate::permissions::KNOWN_PERMISSIONS;
 
 pub fn estimate_tokens(state: &AppState) -> usize {
     let mut total_bytes: usize = 0;
@@ -57,6 +56,13 @@ pub fn write_prompt_file(state: &AppState) -> Result<PathBuf, String> {
     let output_path = std::env::temp_dir().join("cc_launch_prompt.xml");
     fs::write(&output_path, &prompt)
         .map_err(|e| format!("write prompt file: {e}"))?;
+
+    // Persist assembled prompt into workspace for hook-based re-injection on compact
+    if let Some(workspace) = state.workspace_path() {
+        let workspace_copy = workspace.join(".SYSTEM_PROMPT.md");
+        let _ = fs::write(&workspace_copy, &prompt);
+    }
+
     Ok(output_path)
 }
 
@@ -153,14 +159,6 @@ fn read_expertise_dir(directory: &Path) -> Result<String, String> {
     Ok(file_contents.join("\n\n"))
 }
 
-pub fn build_env_vars(state: &AppState) -> Vec<(&'static str, &'static str)> {
-    let mut vars = Vec::new();
-    for (index, selected) in state.selected_permissions.iter().enumerate() {
-        if *selected {
-            if let Some(permission) = KNOWN_PERMISSIONS.get(index) {
-                vars.push((permission.env_var, "1"));
-            }
-        }
-    }
-    vars
+pub fn build_allow_paths(state: &AppState) -> Option<String> {
+    crate::permissions::build_allow_paths(&state.selected_permissions)
 }

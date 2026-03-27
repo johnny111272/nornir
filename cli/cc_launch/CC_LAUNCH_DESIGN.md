@@ -10,12 +10,12 @@ It lives at `nornir/cli/cc_launch/` within the nornir Rust workspace.
 
 ### The Problem
 
-Anthropic's default Claude Code initialization locks Claude into a single operating mode: coding-focused, task-completion, execution-first. This makes Claude good at coding, mediocre at general tasks, and terrible at system design and architecture.
+Anthropic's default Claude Code initialization locks Claude into a single operating mode: coding-focused, task-completion, execution-first. This makes Claude adequate at coding, mediocre at general tasks, and terrible at system design and architecture.
 
 The user's work spans three distinct levels:
-- **System Architecture** — components, data flow, interactions, boundaries. High-level orchestration.
-- **System Design** — solution exploration, tradeoff comparison, approach selection. The middle level where multiple viable approaches are held open and compared before committing.
-- **Implementation** — writing code, running tests, debugging. Building what was designed.
+- **System Architecture** — components, data flow, interactions, boundaries.
+- **System Design** — solution exploration, tradeoff comparison, approach selection.
+- **Implementation** — writing code, running tests, debugging.
 
 Anthropic's init collapses all three into "write code." This creates constant friction: Claude jumps to implementation during architecture, picks the first viable solution during design, and treats every interaction as a coding task.
 
@@ -23,112 +23,94 @@ Anthropic's init collapses all three into "write code." This creates constant fr
 
 Replace Anthropic's one-size-fits-all initialization with a composable system. The user selects a workspace, persona, and capabilities through a TUI. The launcher assembles a system prompt tailored to the session from a library of atomic XML fragments. Different sessions get different initializations.
 
+**The system prompt IS the expertise.** A focused prompt produces a specialist. A broad prompt produces a generalist. The launcher shapes expertise through precise selection — every fragment included must be relevant to this specific session. Loading "just in case" dilutes expertise.
+
 ### Core Design Principles
 
 **1. Everything in a prompt is a weight.** Early position = high importance. Loading instructions "just in case" actively biases behavior. Only load what's needed for this specific session.
 
-**2. Frameworks persist, rules decay.** Under attention splitting, training data overrides rules. A logically coherent thinking framework generates correct behavior situationally, including for unenumerated cases. Each instruction carries a `<principle>` (the WHY) that creates internal gravity.
+**2. Frameworks persist, rules decay.** Under attention splitting, training data overrides rules. A logically coherent thinking framework generates correct behavior situationally. Each instruction carries a `<principle>` (the WHY) that creates internal gravity.
 
-**3. Personas exploit training data.** "You ARE Odin" activates strategic thinking, cross-domain vision, planning-before-action from thousands of pages of Norse literature. Zero tokens spent explaining it. The mythology IS the thinking framework, loaded for free.
+**3. Personas exploit training data.** "You ARE Odin" activates strategic thinking, cross-domain vision, planning-before-action from thousands of pages of Norse literature. Zero tokens spent explaining it.
 
-**4. Vocabulary becomes behavioral triggers.** Terms defined in the init ("architect", "design", "collaborate to") activate specific cognitive modes during conversation without needing runtime rules.
+**4. Collaboration is THE foundation.** If the LLM cannot collaborate, its other capabilities are worthless. The collaboration paradigm is the first thing in the system prompt, before cognitive frameworks, before personas, before anything.
 
----
-
-## The Three-Axis Model
-
-The initialization system operates across three independent axes. See `PROMPT_DESIGN.md` in `~/.ai/control/library/` for full details.
-
-### Axis 1: Cognitive Mode (how to perceive)
-Thinking frameworks always loaded. Shapes all reasoning.
-- "Everything is a Map" — clean structure = free mental map
-- "Everything is Documentation" — clear naming = free embedded documentation
-
-### Axis 2: Paradigm (how we're working together)
-Flows through gates: **Collaboration** → **Planning** → **Execution**
-- Collaboration is the default. Open-ended thinking together.
-- Planning: Claude structures, user approves. Explicit gate.
-- Execution: semi-autonomous, build what was approved.
-- Transitions are user-controlled, not Claude-initiated.
-
-### Axis 3: Work Mode (what altitude)
-- **Architect** — components and connections. Feasibility dips allowed, then back up.
-- **Design** — multiple approaches held open, tradeoffs compared, optimal selected.
-- **Implement** — build the designed thing. Follow the design, don't redesign.
-
-Work Mode and Paradigm are NOT pre-selected in the launcher. They are always-loaded frameworks that activate through conversation vocabulary ("let's architect this", "collaborate to design").
+**5. Derive, don't configure.** Languages come from the descriptors you select. Expertise comes from the workspace profile. The launcher figures out smart defaults — you override only when you insist.
 
 ---
 
-## The Fragment Library
+## Prompt Assembly Order
 
-Located at `~/.ai/control/library/`. Contains composable atomic fragments in XML format.
+The order reflects priority of importance for LLM effectiveness:
 
-### Directory Structure
+### Layer 1: Identity (who you are, how you think)
 
-```
-control/library/
-├── behavior/          13 .xml — always loaded, mode-independent behavioral invariants
-├── communication/      4 .xml — always loaded, how information flows
-├── safety/             6 .xml — always loaded, decision-point guardrails
-├── cognitive-mode/     4 .xml — always loaded, thinking frameworks
-├── anthropic/          3 .xml — always loaded, CC platform mechanics
-├── coding/             5 .xml — conditional, only when coding enabled
-├── personas/           8 .xml — one selected per session (or none)
-├── expertise/         10 subdirs with .md files — selectable domain knowledge
-├── PROMPT_DESIGN.md       — design philosophy document
-├── RAW.md                 — raw Anthropic system prompt (reference)
-└── EXTRACTION_LOG.md      — provenance tracking
-```
+Assembled in this order within the always-loaded category:
 
-### Fragment XML Format
+1. **Collaboration paradigm** (`cognitive-mode/00-collaboration-paradigm.xml`) — THE foundation. Without collaboration, everything else is useless.
+2. **Cognitive frameworks** (`cognitive-mode/*.xml`) — how to think: mental maps, error models, naming-as-instruction, economic pressure.
+3. **Behavioral atoms** (`behavior/*.xml`) — how to act: follow-dont-lead, active reading, never invent data, say I don't know.
+4. **Communication rules** (`communication/*.xml`) — response style, question format, no time estimates.
+5. **Safety guardrails** (`safety/*.xml`) — activate at decision points: destructive actions, high confidence, errors.
+6. **Anthropic platform mechanics** (`anthropic/*.xml`) — how CC tools work, memory, hooks. Mechanical knowledge.
+7. **Persona** (`personas/*.xml`) — who you are within the collaboration.
 
-Instructions use `<instruction>` with `<principle>`, `<therefore>`, `<example>`:
+### Layer 2: Context (where you are, what you're working on)
 
-```xml
-<instruction category="behavior" id="follow-dont-lead" load="always">
-  <principle>
-    The WHY — the argument that persists under attention splitting.
-  </principle>
-  <therefore>
-    The behavioral implication. What to do, grounded in the reasoning.
-  </therefore>
-  <example>
-    <good>Correct behavior</good>
-    <bad>The failure mode</bad>
-  </example>
-</instruction>
-```
+8. **Space descriptor** (`spaces/*.xml`) — auto-loaded when persona + workspace path match. Workflow, materials, boundaries for collaboration environments.
+9. **System descriptors** (`systems/*.xml`) — manually selected. Primary first, siblings next, overview last. SOPs, stack, structure, conventions for technical systems.
 
-Personas use `<persona>` with `<identity>`, `<context>`, `<collaboration>`:
+### Layer 3: Mode (how you work this session)
 
-```xml
-<persona id="odinn" archetype="All-Father">
-  <identity>You ARE Odin — the All-Father...</identity>
-  <context><item>You design paths — others walk them</item></context>
-  <collaboration><item>We think architecturally together</item></collaboration>
-</persona>
-```
+10. **Coding fragments** (`coding/*.xml`) — only when coding is enabled. Implementation-specific atoms.
+11. **Language context** — derived from selected descriptors. `<context><language>rust</language>...</context>`
+12. **Expertise modules** (`expertise/*/`) — selected domain knowledge.
 
-Platform mechanics use `<platform>` with content-appropriate inner tags.
+---
 
-### Always-Loaded Categories
+## Systems and Spaces
 
-| Category | Count | Purpose |
-|----------|-------|---------|
-| cognitive-mode | 4 | Thinking frameworks — mental map, naming, error model, economic pressure |
-| behavior | 13 | Invariants — collaboration paradigm, consistency, follow-dont-lead, stop-on-failure, active reading, audit rigor, say-i-dont-know, etc. |
-| communication | 4 | Info flow — style, no time estimates, question format, learning style |
-| safety | 6 | Guardrails — error traceback, context exhaustion, confidence check, data safety, no fabricated URLs, action reversibility |
-| anthropic | 3 | CC platform — system mechanics, tool usage, auto memory |
+### Systems (`library/systems/*.xml`)
 
-### Conditionally-Loaded
+Technical system descriptors. Tag: `<workspace>`. Describe codebases, infrastructure, build pipelines. Selectable in the TUI's Systems section.
 
-| Category | Condition | Purpose |
-|----------|-----------|---------|
-| coding | Coding toggle ON | Implementation atoms — refactoring, script hygiene, test integrity, self-verifying software, security awareness |
-| expertise | User selection or workspace profile cascade | Domain knowledge — functional programming, boundary architecture, schema-first, security mindset, voice preservation, knowledge synthesis, etc. |
-| personas | User selection (one or none) | Mythological archetype that shapes collaboration style |
+Key attributes on the root tag:
+- `id` — system name
+- `parent` — parent system (for family grouping)
+- `languages` — comma-separated languages used by this system
+
+Family behavior:
+- **Selecting a child** (e.g., regin) → auto-selects siblings + parent overview at end
+- **Selecting a parent** (e.g., nornir) → just the primary, children available but unchecked
+- **Explicit `descriptors` array** in profile for exceptions (e.g., yggdrasil lists all children)
+
+Descriptor families (via parent attribute):
+- `agent-pipeline`: verdandi, draupnir, regin, galdr
+- `yggdrasil`: hlidskjalf, svalinn, kvasir, ratatoskr
+- `guardrail-system` (parent=nornir): gleipnir, saga, syn
+- Standalone: nornir, bifrost
+
+### Spaces (`library/spaces/*.xml`)
+
+Collaboration environment descriptors. Tag: `<space>`. Describe workflows, materials, boundaries for thinking/planning workspaces. NOT selectable in the TUI.
+
+Auto-load rule: if persona id matches a space id AND the workspace path contains `/spaces/{id}`, the space descriptor is automatically included. Being Bragi in nornir does NOT load the Bragi space.
+
+### Language Derivation
+
+Languages are derived from descriptors, never manually configured in profiles. When you select systems in the TUI, the union of all `languages` attributes from selected descriptors determines which languages are active. Adding a system automatically adds its languages. Python is always included when coding is enabled.
+
+---
+
+## Permissions
+
+Permissions are superpowers — rare, deliberate path exemptions for sessions that work ON the security system.
+
+The actual mechanism is `HOOK_LLM_ALLOW_PATHS` — a colon-separated list of paths exempt from probing/gaming hook checks. See `~/.ai/tools/scripts/start_tyr` for the real example.
+
+**Permissions are NEVER auto-selected.** They must be manually toggled in the TUI. Most sessions need zero permissions.
+
+**IMPORTANT:** The current `permissions.rs` contains FABRICATED env var names (GLEIPNIR_ENABLED, VOICE_ENABLED, WORKSPACE_REGISTRY_ENABLED). These are wrong and need replacing with the real `HOOK_LLM_ALLOW_PATHS` mechanism. See the pending work section.
 
 ---
 
@@ -136,56 +118,72 @@ Platform mechanics use `<platform>` with content-appropriate inner tags.
 
 Config file: `~/.ai/control/cc_launch_profiles.toml`
 
-Each profile defines defaults that cascade when the workspace is selected in the TUI:
+Each profile defines defaults that cascade when the workspace is selected:
 
 ```toml
 [nornir]
 path = "/Users/johnny/.ai/smidja/nornir"
 persona = "eitri"
+primary_descriptor = "nornir"
 coding = true
-languages = ["rust", "python"]
-expertise = ["functional-programming", "boundary-architecture", "schema-first", "security-mindset", "data-pipeline", "anti-rigidity"]
+expertise = ["functional-programming", "boundary-architecture", "schema-first"]
 permissions = ["gleipnir"]
 ```
 
+### Profile Fields
+
+| Field | Purpose |
+|-------|---------|
+| `path` | Working directory for claude. Also used for space auto-matching. |
+| `persona` | Which persona XML to load. |
+| `primary_descriptor` | System descriptor that loads first. Triggers family selection. |
+| `descriptors` | Additional descriptors to pre-select (e.g., yggdrasil children). |
+| `coding` | Whether coding mode is enabled (default: true). |
+| `expertise` | Which expertise modules to pre-select. |
+| `permissions` | NOT USED for auto-selection. Parsed but ignored. Permissions are manual only. |
+
 ### Cascade Behavior
 
-1. User selects workspace → profile fills all defaults (persona, coding, languages, expertise, permissions)
-2. User can override ANY default before launching
-3. Coding toggle auto-selects/deselects coding-related expertise
-4. Python is always selected (cannot be deselected)
-5. Selecting "Auto (current dir)" clears all profile defaults
-
-### Workspace CD
-
-If a workspace with a `path` is selected, `cc_launch` sets `current_dir` on the claude process before exec. Claude starts in the workspace directory regardless of where cc_launch was invoked.
+1. User selects workspace → profile fills defaults (persona, coding, expertise, descriptors)
+2. Languages derived from selected descriptors (not in profile)
+3. Permissions NOT auto-selected (manual only)
+4. User can override ANY default before launching
+5. Coding toggle: "Disable coding mode" — when disabled, languages greyed and locked
+6. Selecting "Auto (current dir)" clears all profile defaults
 
 ---
 
-## Session Lifecycle and Injection Points
+## Coding Mode
+
+Coding is ON by default. The TUI shows "Disable coding mode" — checking it turns coding OFF.
+
+When coding is **enabled** (default):
+- Coding fragments (`coding/*.xml`) loaded into prompt
+- Language selectors active, derived from descriptors
+- Python always included
+
+When coding is **disabled**:
+- Coding fragments NOT loaded
+- Language selections persist but greyed out and unresponsive
+- Languages NOT included in prompt
+
+This is critical for non-coding sessions (architecture, design, planning, interviewing). Loading coding atoms biases the LLM toward implementation thinking.
+
+---
+
+## Session Lifecycle
 
 ### New Session (cc_launch → claude)
 
 ```
 cc_launch TUI
-  → user selects workspace, persona, coding, expertise, permissions
-  → assembles system prompt from library XML
+  → user selects workspace, persona, systems, expertise
+  → languages derived from descriptor union
+  → prompt assembled in layer order (identity → context → mode)
   → writes to /tmp/cc_launch_prompt.xml
-  → sets env vars for permissions
+  → sets env vars for permissions (HOOK_LLM_ALLOW_PATHS)
   → exec: claude --system-prompt-file /tmp/cc_launch_prompt.xml [passthrough flags]
 ```
-
-### Prompt Assembly Order
-
-1. Selected persona (if any)
-2. cognitive-mode fragments (always)
-3. behavior fragments (always)
-4. communication fragments (always)
-5. safety fragments (always)
-6. anthropic platform fragments (always)
-7. coding fragments (if coding enabled)
-8. Language context block (selected languages)
-9. Selected expertise modules
 
 ### Continuation (claude --continue)
 
@@ -198,119 +196,79 @@ cc_launch TUI
 
 The SessionStart hook fires on EVERY session start, including continuations. This is a live injection point that survives continuation.
 
-**Implication:** cc_launch only applies to NEW sessions. For continuations, the user runs `claude --continue` directly. Any mid-session corrections that need to survive continuation should go through CLAUDE.md, memory, or the SessionStart hook — not the system prompt.
-
 ---
 
 ## Architecture
 
-### Crate Structure
+### Source Files
 
-```
-nornir/cli/cc_launch/
-├── Cargo.toml
-└── src/
-    ├── main.rs          (75 lines)  — CLI args, run(), exec into claude
-    ├── model.rs         (224 lines) — Fragment, Library, AppState, Section, WorkspaceProfile
-    ├── library.rs       (235 lines) — Scan library dir, regex-parse XML metadata
-    ├── assembly.rs      (130 lines) — Prompt composition, token estimation, temp file
-    ├── profiles.rs      (74 lines)  — Load workspace profiles from TOML
-    ├── permissions.rs   (23 lines)  — Known permission/env-var definitions
-    └── tui.rs           (513 lines) — Ratatui event loop, layout, rendering
-```
+All at `nornir/cli/cc_launch/src/`:
 
-### Dependencies
-
-- `write_engine` — only for `ai_home()` path resolution
-- `clap` — CLI arg parsing with trailing var arg for passthrough
-- `ratatui` + `crossterm` — TUI framework
-- `regex` — XML root tag attribute extraction
-- `toml` — workspace profile parsing
-
-### Key Design Choices
-
-- **Regex, not XML parser** — root tag attributes are predictable and on the first line. Regex is sufficient. Full file content included verbatim in assembled prompt.
-- **Deterministic temp file** — `/tmp/cc_launch_prompt.xml` overwrites on each launch. No accumulation.
-- **Unix exec** — `Command::exec()` replaces the process. No parent wrapper. Clean terminal handoff.
-- **Token estimation** — `bytes / 4` heuristic. Sufficient for ballpark display in TUI.
-- **Panic hook** — restores terminal from raw mode before printing panic. Standard ratatui practice.
+| File | Purpose |
+|------|---------|
+| `main.rs` | CLI args via clap, scan → TUI → assemble → exec claude |
+| `model.rs` | Fragment, Descriptor (parent, languages, kind), AppState, WorkspaceProfile, smart selection logic |
+| `library.rs` | Scans library/ dirs, parses XML attrs via regex (id, parent, languages, load) |
+| `assembly.rs` | Prompt composition in layer order, token estimation, env var building |
+| `tui.rs` | 3-column ratatui TUI with scrolling, cursor tracking, panic hook |
+| `profiles.rs` | Loads workspace profiles from TOML |
+| `permissions.rs` | **FABRICATED** — needs replacing with real HOOK_LLM_ALLOW_PATHS mechanism |
 
 ### TUI Layout
 
 ```
-┌─ Workspace ──────────┐  ┌─ Session Summary ──────────┐
-│  ● Auto (current dir) │  │                            │
-│  ○ Bragi              │  │  Workspace: Nornir          │
-│  ○ Mimir              │  │  Persona:   Eitri           │
-│  ○ Nornir             │  │  Coding:    enabled (rust)  │
-│  ○ ...                │  │  Expertise: ...             │
-├─ Persona ────────────┤  │  Permissions: gleipnir      │
-│  ○ None               │  │                            │
-│  ● Eitri              │  │  Always loaded:             │
-│  ○ ...                │  │    30 fragments             │
-├─ Coding ─────────────┤  │                            │
-│  [x] Enable coding    │  │  Est. tokens: ~4200        │
-│  [x] python (always)  │  │                            │
-│  [x] rust             │  └────────────────────────────┘
-│  [ ] typescript       │
-├─ Expertise ──────────┤
-│  [x] Functional Prog  │
-│  [x] Boundary Arch    │
-│  [ ] Voice Preserv.   │
-├─ Permissions ────────┤
-│  [x] Gleipnir         │
-│  [ ] Voice/TTS        │
-└────────────────────────┘
+┌─ Workspace ──────┐  ┌─ Systems ─────────────┐  ┌─ Session Summary ──────┐
+│  ● Auto           │  │  [x] Nornir           │  │  Workspace: Nornir      │
+│  ○ Bragi          │  │  [ ] Bifrost           │  │  Persona:   Eitri       │
+│  ○ Nornir         │  │  [x] Gleipnir (guard.) │  │  Context:               │
+│  ○ Regin          │  │  ...                   │  │    1. Nornir             │
+├─ Persona ────────┤  ├─ Expertise ────────────┤  │  Coding:    rust, py    │
+│  ○ None           │  │  [x] Functional Prog   │  │  Expertise: ...         │
+│  ● Eitri          │  │  [ ] Voice Preserv.    │  │  Permissions: none      │
+├─ Coding ─────────┤  └────────────────────────┘  │                         │
+│  [ ] Disable      │                              │  Est. tokens: ~4200     │
+│  [x] python       │                              └─────────────────────────┘
+│  [x] rust         │
+├─ Permissions ────┤
+│  [ ] Gleipnir     │
+└──────────────────┘
  Tab section  ↑↓ navigate  Space toggle  Enter launch  q quit
 ```
 
+Column 1 (Identity): Workspace, Persona, Coding, Permissions
+Column 2 (Content): Systems (scrollable), Expertise
+Column 3 (Summary): Ordered context, token estimate
+
+### Key Design Choices
+
+- **Regex, not XML parser** — root tag attributes are predictable and on the first line
+- **Deterministic temp file** — `/tmp/cc_launch_prompt.xml` overwrites each launch
+- **Unix exec** — `Command::exec()` replaces the process. No parent wrapper
+- **Token estimation** — `bytes / 4` heuristic for TUI display
+- **Panic hook** — restores terminal from raw mode before printing panic
+
 ---
 
-## What's Been Done
+## Pending Work
 
-### Library (control/library/)
-- [x] Anthropic prompt fractured into 9 atomic pieces, 6 absorbed into our categories, 3 kept as platform mechanics
-- [x] 23 original behavior atoms reorganized into 5 directories (behavior, communication, safety, cognitive-mode, coding)
-- [x] All atoms converted to XML format with principle/therefore/example
-- [x] 5 new atoms created: active-reading, audit-means-rigorous, if-it-seems-obvious, say-i-dont-know, no-fabricated-urls
-- [x] 3 new safety atoms: action-reversibility (with trash-over-rm), prefer-editing-over-creating, read-before-modifying, security-awareness
-- [x] 8 personas converted to lean XML format
-- [x] PROMPT_DESIGN.md capturing the full design philosophy
-- [x] Workspace profiles config created
+### Critical
+- [ ] Replace permissions.rs with real `HOOK_LLM_ALLOW_PATHS` mechanism (current env vars are fabricated)
 
-### Launcher (cc_launch)
-- [x] Ratatui TUI with 5 sections: Workspace, Persona, Coding, Expertise, Permissions
-- [x] Workspace profile cascade (select workspace → all defaults filled)
-- [x] Language multi-select (Python always on)
-- [x] Coding toggle auto-selects coding expertise
-- [x] Prompt assembly in correct order
-- [x] Token estimation in summary panel
-- [x] Workspace cd before exec
-- [x] Deployed to ~/.ai/tools/bin/cc_launch
-
-## What's NOT Done
-
-### Library Gaps
-- [ ] System architecture thinking framework (equivalent depth to coding_reference/ docs)
+### Library
+- [ ] System architecture thinking framework
 - [ ] System design thinking framework
-- [ ] Code planning thinking framework ("first viable ≠ best viable", hold options open)
-- [ ] Expertise modules not yet converted to XML
-- [ ] PROMPT_DESIGN.md open work items need updating (some are done)
+- [ ] Expertise modules: convert from .md to two-tier XML
+- [ ] Rewrite kept anthropic fragments for tone
 
-### Launcher Features
-- [ ] Auto-detect workspace from CWD on startup (pre-select matching profile)
-- [ ] Warn or skip prompt assembly when --continue/--resume detected in passthrough flags
-- [ ] Persist last-used selections per workspace (remember previous choices)
-- [ ] Scrolling for long lists in small terminals
+### Launcher
+- [ ] Auto-detect workspace from CWD on startup
+- [ ] Warn when --continue/--resume detected in passthrough flags
+- [ ] Expertise auto-derivation from descriptors (like languages)
 
 ### Integration
-- [ ] SessionStart hook timing investigation — does it fire before or after CLAUDE.md is read?
-- [ ] Mid-session injection system — stripping system-reminders and replacing with library fragments
-- [ ] Expertise tier system — brief XML reminders (in prompt) vs full reference material (loaded interactively on demand)
-
-### Anthropic Prompt
-- [ ] Rewrite kept anthropic fragments for tone (remove coding-first framing)
-- [ ] Verify --system-prompt-file fully replaces default prompt (or does Anthropic's still layer on top?)
+- [ ] SessionStart hook timing investigation
+- [ ] Verify --system-prompt-file fully replaces default prompt
+- [ ] ~/.ai/control/ lockdown — exemption mechanism needed
 
 ---
 
@@ -320,10 +278,12 @@ nornir/cli/cc_launch/
 |------|---------|
 | `~/.ai/control/library/` | Fragment library root |
 | `~/.ai/control/library/PROMPT_DESIGN.md` | Design philosophy document |
+| `~/.ai/control/library/systems/README.md` | System descriptor format spec |
+| `~/.ai/control/library/spaces/README.md` | Space descriptor format spec |
+| `~/.ai/control/library/systems/DISPATCH_PROTOCOL.md` | Agent dispatch template for writing new descriptors |
 | `~/.ai/control/cc_launch_profiles.toml` | Workspace profile definitions |
 | `~/.ai/smidja/nornir/cli/cc_launch/` | Launcher crate |
-| `~/.ai/smidja/nornir/cli/cc_launch/CC_LAUNCH_DESIGN.md` | This document |
-| `~/.ai/phoenix/coding_reference/` | Deep coding reference docs (future model for architecture/design frameworks) |
+| `~/.ai/tools/scripts/start_tyr` | Real permissions example (HOOK_LLM_ALLOW_PATHS) |
 | `/tmp/cc_launch_prompt.xml` | Assembled prompt output (overwritten each launch) |
 
 ## Usage
@@ -334,7 +294,4 @@ cc_launch
 
 # Pass flags through to claude
 cc_launch -- --model sonnet
-
-# The TUI presents, you configure, Enter launches:
-# claude --system-prompt-file /tmp/cc_launch_prompt.xml [flags]
 ```
