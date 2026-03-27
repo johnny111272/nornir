@@ -6,7 +6,7 @@
 //!
 //! All public API is pure — no I/O, no side effects.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use saga_core::SanityReport;
 
@@ -39,28 +39,33 @@ pub struct CheckGroup {
 // =============================================================================
 
 pub fn group_issues(reports: &[SanityReport]) -> Vec<CheckGroup> {
-    let mut groups: BTreeMap<(String, String), (saga_core::Issue, Vec<LocatedIssue>)> =
-        BTreeMap::new();
+    // Index by borrowed (tool, code) → position in groups vec.
+    // Avoids cloning key strings on every iteration.
+    let mut index: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut groups: Vec<(saga_core::Issue, Vec<LocatedIssue>)> = Vec::new();
 
     for report in reports {
         for issue in &report.issues {
-            let key = (issue.tool.clone(), issue.code.clone());
-            let located = LocatedIssue {
+            let idx = match index.get(&(issue.tool.as_str(), issue.code.as_str())) {
+                Some(&idx) => idx,
+                None => {
+                    let idx = groups.len();
+                    index.insert((&issue.tool, &issue.code), idx);
+                    groups.push((issue.clone(), Vec::new()));
+                    idx
+                }
+            };
+            groups[idx].1.push(LocatedIssue {
                 file: report.relative_path.clone(),
                 line: issue.line,
                 message: issue.message.clone(),
-            };
-            groups
-                .entry(key)
-                .or_insert_with(|| (issue.clone(), Vec::new()))
-                .1
-                .push(located);
+            });
         }
     }
 
-    groups
+    let mut result: Vec<CheckGroup> = groups
         .into_iter()
-        .map(|((tool, code), (rep, issues))| {
+        .map(|(rep, issues)| {
             let file_count = {
                 let mut files: Vec<&str> = issues.iter().map(|li| li.file.as_str()).collect();
                 files.sort();
@@ -71,8 +76,8 @@ pub fn group_issues(reports: &[SanityReport]) -> Vec<CheckGroup> {
                 .map(|li| li.message.clone())
                 .unwrap_or_default();
             CheckGroup {
-                tool,
-                code,
+                tool: rep.tool,
+                code: rep.code,
                 severity: rep.severity,
                 signal: rep.signal,
                 direction: rep.direction,
@@ -82,7 +87,11 @@ pub fn group_issues(reports: &[SanityReport]) -> Vec<CheckGroup> {
                 file_count,
             }
         })
-        .collect()
+        .collect();
+
+    // BTreeMap gave sorted output; maintain that contract.
+    result.sort_by(|a, b| (&a.tool, &a.code).cmp(&(&b.tool, &b.code)));
+    result
 }
 
 pub fn total_issues(groups: &[CheckGroup]) -> usize {

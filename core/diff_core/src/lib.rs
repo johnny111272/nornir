@@ -179,7 +179,7 @@ fn merge_into(map: &mut serde_json::Map<String, Value>, label: &str, value: Valu
                 arr.push(value);
             }
             (existing_val, _) => {
-                let prev = existing_val.clone();
+                let prev = std::mem::take(existing_val);
                 *existing_val = Value::Array(vec![prev, value]);
             }
         },

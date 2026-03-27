@@ -121,11 +121,11 @@ fn report_missing_annotations(
 
 fn register_path_bases(
     section_path: &str,
-    annotation: &SectionAnnotation,
+    annotation: &mut SectionAnnotation,
     state: &mut ValidationState,
 ) {
     if state.path_registry.declared_at.is_none() {
-        state.path_registry.user_defined = annotation.path_bases.clone();
+        state.path_registry.user_defined = std::mem::take(&mut annotation.path_bases);
         state.path_registry.expand_mode = annotation.expand_mode;
         state.path_registry.declared_at = Some(annotation.line);
     } else {
@@ -173,7 +173,7 @@ fn report_orphan_annotations(
 
 fn validate_section_fields(
     section_path: &str,
-    annotation: Option<SectionAnnotation>,
+    mut annotation: Option<SectionAnnotation>,
     field_parses: &[(usize, FieldLineParse)],
     state: &mut ValidationState,
 ) {
@@ -201,7 +201,7 @@ fn validate_section_fields(
         }
     }
 
-    match &annotation {
+    match &mut annotation {
         Some(ann) => {
             if let Some(target) = &ann.target {
                 report_missing_annotations(section_path, target, &unannotated_fields, &mut state.issues);
