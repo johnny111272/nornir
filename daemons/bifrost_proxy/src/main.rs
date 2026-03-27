@@ -502,8 +502,11 @@ async fn forward_upstream(
         .method(&original_parts.method)
         .uri(uri);
 
+    // Copy headers, excluding Host and Content-Length.
+    // Content-Length must be recalculated — compaction rewriting changes body size.
+    // hyper sets it correctly from the Full<Bytes> body.
     for (key, val) in &original_parts.headers {
-        if key != hyper::header::HOST {
+        if key != hyper::header::HOST && key != hyper::header::CONTENT_LENGTH {
             builder = builder.header(key, val);
         }
     }
