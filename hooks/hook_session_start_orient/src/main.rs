@@ -83,5 +83,17 @@ fn main() -> ExitCode {
     let control_dir = workspace_registry::workspace_control_dir(&workspace);
     let _ = std::fs::create_dir_all(&control_dir);
 
+    // Move .SYSTEM_PROMPT.md into session-specific dir (if present).
+    // cc_launch writes this ephemeral file at launch; we relocate it so
+    // hook_session_start_inject can re-inject from a stable, session-keyed path.
+    if !event.session_id.is_empty() {
+        let src = std::path::Path::new(&project_dir).join(".SYSTEM_PROMPT.md");
+        if src.exists() {
+            let session_dir = control_dir.join(&event.session_id);
+            let _ = std::fs::create_dir_all(&session_dir);
+            let _ = std::fs::rename(&src, session_dir.join("SYSTEM_PROMPT.md"));
+        }
+    }
+
     ExitCode::SUCCESS
 }

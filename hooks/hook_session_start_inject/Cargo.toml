@@ -12,4 +12,3 @@ write_engine = { path = "../../capability/write_engine" }
 workspace_registry = { path = "../../capability/workspace_registry" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }

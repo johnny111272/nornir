@@ -1,11 +1,10 @@
-//! SessionStart hook: inject files into LLM context on resume, clear, or compact.
+//! SessionStart hook: re-inject system prompt on compact, resume, or clear.
 //!
-//! Reads inject.toml (embedded at compile time) which maps session start events
-//! to file lists. Files are resolved relative to the workspace directory (cwd).
-//! Content is concatenated in listing order and emitted as additionalContext.
+//! On compaction the assembled system prompt drops out of context. This hook
+//! reads it back from the session-specific path where hook_session_start_orient
+//! placed it and emits it as additionalContext.
 //!
-//! This is the recovery mechanism for context lost during compaction — cc_launch
-//! writes .SYSTEM_PROMPT.md at launch, and this hook re-injects it when needed.
+//! Path: ~/.ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.md
 
 use std::io::{self, Read};
 use std::path::Path;
@@ -13,20 +12,14 @@ use std::process::{Command, ExitCode, Stdio};
 
 use serde::Deserialize;
 
-const INJECT_CONFIG: &str = include_str!("../inject.toml");
-
 #[derive(Deserialize)]
 struct SessionEvent {
     #[serde(default)]
     source: String,
     #[serde(default)]
-    cwd: String,
-}
-
-#[derive(Deserialize)]
-struct EventConfig {
+    session_id: String,
     #[serde(default)]
-    files: Vec<String>,
+    cwd: String,
 }
 
 fn announce(workspace: &str, source: &str, project_dir: &str) {
@@ -49,8 +42,8 @@ fn announce(workspace: &str, source: &str, project_dir: &str) {
     let _ = cmd.spawn();
 }
 
-fn workspace_name(cwd: &str) -> String {
-    Path::new(cwd)
+fn workspace_name(workspace_path: &str) -> String {
+    Path::new(workspace_path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string())
@@ -62,36 +55,27 @@ fn run() -> Option<(String, String, String)> {
 
     let event: SessionEvent = serde_json::from_str(&input).ok()?;
 
-    if event.source.is_empty() || event.cwd.is_empty() {
+    // Only re-inject on compact, resume, or clear — not startup
+    match event.source.as_str() {
+        "compact" | "resume" | "clear" => {}
+        _ => return None,
+    }
+
+    if event.session_id.is_empty() || event.cwd.is_empty() {
         return None;
     }
 
-    let config: std::collections::HashMap<String, EventConfig> =
-        toml::from_str(INJECT_CONFIG).ok()?;
+    let workspace = workspace_name(&event.cwd);
+    let prompt_path = workspace_registry::workspace_control_dir(&workspace)
+        .join(&event.session_id)
+        .join("SYSTEM_PROMPT.md");
 
-    let event_config = config.get(&event.source)?;
-
-    if event_config.files.is_empty() {
+    let content = std::fs::read_to_string(&prompt_path).ok()?;
+    if content.is_empty() {
         return None;
     }
 
-    let workspace = Path::new(&event.cwd);
-    let mut parts: Vec<String> = Vec::new();
-
-    for file in &event_config.files {
-        let path = workspace.join(file);
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if !content.is_empty() {
-                parts.push(content);
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        return None;
-    }
-
-    Some((parts.join("\n\n"), event.source, event.cwd))
+    Some((content, event.source, event.cwd))
 }
 
 fn main() -> ExitCode {
