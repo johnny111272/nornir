@@ -1,0 +1,133 @@
+# gleipnir_statistics.toml — enforcement parameters
+# Embedded at compile time via include_str!()
+# Lock with: chflags schg gleipnir_statistics.toml
+
+# ─── Defaults ──────────────────────────────────────────────────────
+# Base values. Any parameter not overridden in a specific section
+# inherits from here.
+
+[defaults]
+max_function_lines = 50
+max_function_params = 5
+max_nesting_depth = 4
+min_param_length = 4
+max_union_members = 5
+max_functions_outside_zones = 3
+max_function_imports = 3
+max_other_imports = 3
+min_functions_for_pub_check = 4
+
+# ─── Rust ──────────────────────────────────────────────────────────
+# Rust files currently use defaults for everything.
+# Uncomment to tune independently.
+
+# [rust]
+# max_function_lines = 50
+
+# ─── TypeScript / Svelte ───────────────────────────────────────────
+
+# [typescript]
+# max_function_lines = 50
+
+# ─── Python v1 ─────────────────────────────────────────────────────
+# Per-FileKind overrides. Unlisted kinds use [defaults].
+
+[v1.pure_function]
+max_function_lines = 25
+
+[v1.impure_function]
+max_function_lines = 25
+
+[v1.unsafe_pure]
+max_function_lines = 25
+
+[v1.unsafe_impure]
+max_function_lines = 25
+
+# [v1.data_structure]
+# [v1.script]
+# [v1.test]
+# [v1.outside]
+
+# ─── V2 zone architecture ──────────────────────────────────────────
+# Per-level parameters. CC bounds define level identity.
+# Style parameters inherit from [defaults] unless overridden.
+# max_cc absent = no ceiling.
+
+[v2.ffi]
+min_cc = 1
+max_cc = 1
+max_function_lines = 10
+max_nesting_depth = 2
+max_function_params = 3
+
+[v2.primitive]
+min_cc = 1
+max_cc = 1
+max_function_lines = 10
+max_nesting_depth = 2
+max_function_params = 3
+
+[v2.simple]
+min_cc = 1
+max_cc = 3
+max_function_lines = 20
+max_nesting_depth = 3
+max_function_params = 4
+
+[v2.dispatch]
+min_cc = 1
+max_cc = 2
+max_function_lines = 20
+max_nesting_depth = 1
+max_function_params = 3
+max_functions_outside_zones = 0
+
+[v2.composed]
+min_cc = 4
+max_cc = 8
+max_function_lines = 30
+max_nesting_depth = 4
+max_function_params = 5
+
+[v2.assembled]
+min_cc = 1
+max_cc = 2
+max_function_lines = 30
+max_nesting_depth = 2
+max_function_params = 5
+
+[v2.orchestrate]
+min_cc = 1
+max_cc = 5
+max_function_lines = 30
+max_nesting_depth = 2
+max_function_params = 5
+
+[v2.entry_point]
+min_cc = 1
+max_cc = 2
+max_function_lines = 30
+max_nesting_depth = 4
+max_function_params = 5
+max_functions_outside_zones = 1
+
+# ─── V2 transform zone overrides ──────────────────────────────────
+# Transform functions are shape conversion — tighter CC and nesting
+# than pure/impure at the same level. LOC stays inherited.
+
+[v2.transform.ffi]
+max_cc = 1
+max_nesting_depth = 1
+
+[v2.transform.primitive]
+max_cc = 1
+max_nesting_depth = 1
+
+[v2.transform.simple]
+max_cc = 2
+max_nesting_depth = 2
+
+[v2.transform.composed]
+max_cc = 4
+max_nesting_depth = 3

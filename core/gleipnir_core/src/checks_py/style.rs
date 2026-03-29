@@ -7,6 +7,7 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+use crate::classify;
 use crate::parsing::{find_nodes_by_type, node_field, node_line, node_text, walk_tree};
 use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
 
@@ -407,6 +408,40 @@ fn names_from_target<'a>(
     results
 }
 
+/// Extract alias names from a with_clause node (e.g., `with open(f) as handle:`).
+/// AST path: with_clause → with_item → as_pattern → as_pattern_target → identifier
+fn names_from_with_clause<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &'a [u8],
+) -> Vec<(usize, &'a str)> {
+    let mut results = Vec::new();
+    for target_node in walk_tree(node) {
+        if target_node.kind() == "as_pattern_target" {
+            results.extend(names_from_target_recursive(target_node, source));
+        }
+    }
+    results
+}
+
+/// Extract identifier names from a node, recursing into children.
+/// Handles wrapper nodes like as_pattern_target that contain identifiers.
+fn names_from_target_recursive<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &'a [u8],
+) -> Vec<(usize, &'a str)> {
+    if node.kind() == "identifier" {
+        return vec![(node_line(node), node_text(node, source))];
+    }
+    let mut results = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "identifier" {
+            results.push((node_line(child), node_text(child, source)));
+        }
+    }
+    results
+}
+
 fn collect_body_target_names<'a>(
     func_node: tree_sitter::Node<'a>,
     source: &'a [u8],
@@ -428,6 +463,7 @@ fn collect_body_target_names<'a>(
                     results.extend(names_from_target(left, source));
                 }
             }
+            "with_clause" => results.extend(names_from_with_clause(node, source)),
             _ => {}
         }
     }
@@ -545,6 +581,197 @@ pub fn check_short_param_names(source: &ParsedSource, config: &CheckConfig) -> V
     violations
 }
 
+// -------------------------------------------------------------------------
+// short_local_names
+// -------------------------------------------------------------------------
+
+/// Allowlist for short local variable names that are idiomatic or conventional.
+const SHORT_LOCAL_ALLOWLIST: &[&str] = &[
+    "db", "ok", "io", "fn", "fp", "fh", "ip", "tx", "rx", "ui", "pk", "op",
+];
+
+pub fn check_short_local_names(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let min_len = config.min_param_length;
+
+    for func_node in find_nodes_by_type(source.tree.root_node(), "function_definition") {
+        let func_name = match node_field(func_node, "name") {
+            Some(n) => node_text(n, source.source_bytes),
+            None => continue,
+        };
+
+        for (line, name) in collect_body_target_names(func_node, source.source_bytes) {
+            if name.starts_with('_') || name.len() <= 1 {
+                // Single-letter names are caught by no_single_letter_names
+                continue;
+            }
+            if name.len() < min_len && !SHORT_LOCAL_ALLOWLIST.contains(&name) {
+                violations.push(violation(
+                    line,
+                    format!("short local variable '{name}' in {func_name}()"),
+                ));
+            }
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// cyclomatic_complexity (radon parity)
+// -------------------------------------------------------------------------
+
+/// Compute cyclomatic complexity for a function node.
+///
+/// Counts decision points matching radon's algorithm:
+/// if, elif, for, while, except, boolean and/or, ternary,
+/// comprehension for/if, match case, assert, loop/try else.
+///
+/// Nested function definitions are excluded — they get their own CC score.
+pub fn cyclomatic_complexity(func_node: tree_sitter::Node, source: &[u8]) -> usize {
+    let body = match node_field(func_node, "body") {
+        Some(b) => b,
+        None => return 1,
+    };
+    let mut complexity: usize = 1;
+    cc_walk(body, source, &mut complexity);
+    complexity
+}
+
+fn cc_walk(node: tree_sitter::Node, source: &[u8], complexity: &mut usize) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            // Skip nested functions — they have their own CC
+            "function_definition" | "async_function_definition" => continue,
+
+            "if_statement" => *complexity += 1,
+            "elif_clause" => *complexity += 1,
+            "conditional_expression" => *complexity += 1,
+
+            "for_statement" | "async_for_statement" => {
+                *complexity += 1;
+                if has_else_clause(child) {
+                    *complexity += 1;
+                }
+            }
+
+            "while_statement" => {
+                *complexity += 1;
+                if has_else_clause(child) {
+                    *complexity += 1;
+                }
+            }
+
+            "except_clause" => *complexity += 1,
+
+            // else clause on try_statement (not on if — that's not a decision point)
+            "else_clause" => {
+                if let Some(parent) = child.parent() {
+                    if parent.kind() == "try_statement" {
+                        *complexity += 1;
+                    }
+                }
+            }
+
+            "boolean_operator" => {
+                let op = node_field(child, "operator")
+                    .map(|n| node_text(n, source))
+                    .unwrap_or("");
+                if op == "and" || op == "or" {
+                    *complexity += 1;
+                }
+            }
+
+            // Comprehension: for_in_clause adds +1, if_clause adds +1
+            "for_in_clause" => *complexity += 1,
+            "if_clause" => *complexity += 1,
+
+            // Match/case: each case arm adds +1
+            "case_clause" => {
+                // Wildcard `case _:` doesn't add — it's the default
+                if !is_wildcard_case(child, source) {
+                    *complexity += 1;
+                }
+            }
+
+            "assert_statement" => *complexity += 1,
+
+            _ => {}
+        }
+        cc_walk(child, source, complexity);
+    }
+}
+
+fn has_else_clause(node: tree_sitter::Node) -> bool {
+    let mut cursor = node.walk();
+    let result = node.named_children(&mut cursor)
+        .any(|child| child.kind() == "else_clause");
+    result
+}
+
+fn is_wildcard_case(case_node: tree_sitter::Node, source: &[u8]) -> bool {
+    let mut cursor = case_node.walk();
+    for child in case_node.named_children(&mut cursor) {
+        if child.kind() == "case_pattern" {
+            let text = node_text(child, source).trim().to_string();
+            return text == "_";
+        }
+    }
+    false
+}
+
+// -------------------------------------------------------------------------
+// check_v2_cc_level — gravity and ceiling enforcement
+// -------------------------------------------------------------------------
+
+/// Check that function cyclomatic complexity matches the v2 level.
+///
+/// Gravity: CC below the level minimum → function must move down.
+/// Ceiling: CC above the level maximum → function must move up.
+pub fn check_v2_cc_level(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+    let level = classification.level;
+
+    let min_cc = config.min_cc;
+    let max_cc = config.max_cc;
+
+    // Levels without CC bounds (Structure, EntryPoint, Outside) have min=0/max=MAX
+    if min_cc == 0 && max_cc == usize::MAX {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+    let func_kinds = ["function_definition", "async_function_definition"];
+
+    for kind in &func_kinds {
+        for func_node in find_nodes_by_type(source.tree.root_node(), kind) {
+            let func_name = node_field(func_node, "name")
+                .map(|n| node_text(n, source.source_bytes))
+                .unwrap_or("<unknown>");
+
+            let cc = cyclomatic_complexity(func_node, source.source_bytes);
+
+            if cc < min_cc {
+                violations.push(violation(
+                    node_line(func_node),
+                    format!(
+                        "{func_name}() gravity violation: CC={cc} belongs at a lower level (min CC={min_cc} for {level:?})",
+                    ),
+                ));
+            } else if cc > max_cc {
+                violations.push(violation(
+                    node_line(func_node),
+                    format!(
+                        "{func_name}() ceiling violation: CC={cc} exceeds {level:?} maximum of {max_cc}",
+                    ),
+                ));
+            }
+        }
+    }
+
+    violations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,8 +783,14 @@ mod tests {
         build_parsed_source("/test/file.py", source).unwrap()
     }
 
+    fn parse_with_path(code: &str, path: &str) -> ParsedSource<'static> {
+        let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
+        let path: &'static str = Box::leak(path.to_string().into_boxed_str());
+        build_parsed_source(path, source).unwrap()
+    }
+
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside)
+        CheckConfig::for_kind(FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- function_length --
@@ -820,6 +1053,161 @@ def foo():
     fn underscore_prefix_param_skipped() {
         let parsed = parse("def foo(_x):\n    pass\n");
         let violations = check_short_param_names(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- cyclomatic_complexity --
+
+    #[test]
+    fn cc_straight_line_is_1() {
+        let parsed = parse("def foo():\n    x = 1\n    return x\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 1);
+    }
+
+    #[test]
+    fn cc_single_if_is_2() {
+        let parsed = parse("def foo(x):\n    if x:\n        return 1\n    return 0\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 2);
+    }
+
+    #[test]
+    fn cc_if_elif_else_is_3() {
+        let parsed = parse("def foo(x):\n    if x > 0:\n        return 1\n    elif x < 0:\n        return -1\n    else:\n        return 0\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 3);
+    }
+
+    #[test]
+    fn cc_for_loop_is_2() {
+        let parsed = parse("def foo(xs):\n    for x in xs:\n        pass\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 2);
+    }
+
+    #[test]
+    fn cc_for_with_else_is_3() {
+        let parsed = parse("def foo(xs):\n    for x in xs:\n        pass\n    else:\n        pass\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 3);
+    }
+
+    #[test]
+    fn cc_while_is_2() {
+        let parsed = parse("def foo():\n    while True:\n        break\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 2);
+    }
+
+    #[test]
+    fn cc_except_handlers() {
+        let parsed = parse("def foo():\n    try:\n        pass\n    except ValueError:\n        pass\n    except TypeError:\n        pass\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 3);
+    }
+
+    #[test]
+    fn cc_try_else_counts() {
+        let parsed = parse("def foo():\n    try:\n        pass\n    except ValueError:\n        pass\n    else:\n        pass\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 3);
+    }
+
+    #[test]
+    fn cc_boolean_and_or() {
+        let parsed = parse("def foo(a, b, c):\n    if a and b or c:\n        pass\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        // 1 (base) + 1 (if) + 1 (and) + 1 (or) = 4
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 4);
+    }
+
+    #[test]
+    fn cc_ternary() {
+        let parsed = parse("def foo(x):\n    return 1 if x else 0\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 2);
+    }
+
+    #[test]
+    fn cc_list_comprehension() {
+        let parsed = parse("def foo(xs):\n    return [x for x in xs if x > 0]\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        // 1 (base) + 1 (for_in_clause) + 1 (if_clause) = 3
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 3);
+    }
+
+    #[test]
+    fn cc_assert_counts() {
+        let parsed = parse("def foo(x):\n    assert x > 0\n");
+        let func = find_nodes_by_type(parsed.tree.root_node(), "function_definition")[0];
+        assert_eq!(cyclomatic_complexity(func, parsed.source_bytes), 2);
+    }
+
+    #[test]
+    fn cc_nested_function_excluded() {
+        let parsed = parse("def outer():\n    def inner():\n        if True:\n            pass\n    return inner\n");
+        let funcs = find_nodes_by_type(parsed.tree.root_node(), "function_definition");
+        let outer = funcs[0];
+        // outer has CC=1 — the inner function's if doesn't count
+        assert_eq!(cyclomatic_complexity(outer, parsed.source_bytes), 1);
+    }
+
+    // -- check_v2_cc_level --
+
+    fn v2_config(level: crate::structures::Level) -> CheckConfig {
+        CheckConfig::for_v2(level, crate::structures::Zone::Pure, &crate::STATISTICS)
+    }
+
+    #[test]
+    fn cc_ceiling_violation_in_primitive() {
+        let parsed = parse_with_path(
+            "def foo(x):\n    if x:\n        return 1\n    return 0\n",
+            "/project/src/pkg/logic/pure/check/primitive.py",
+        );
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Primitive));
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("ceiling"));
+    }
+
+    #[test]
+    fn cc_no_gravity_for_cc1_in_simple() {
+        let parsed = parse_with_path(
+            "def foo():\n    return 1\n",
+            "/project/src/pkg/logic/pure/check/simple.py",
+        );
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Simple));
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn cc_gravity_violation_in_composed() {
+        let parsed = parse_with_path(
+            "def foo(x):\n    if x:\n        return 1\n    return 0\n",
+            "/project/src/pkg/logic/pure/check/composed.py",
+        );
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Composed));
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("gravity"));
+    }
+
+    #[test]
+    fn cc_correct_in_simple() {
+        let parsed = parse_with_path(
+            "def foo(x):\n    if x:\n        return 1\n    return 0\n",
+            "/project/src/pkg/logic/pure/check/simple.py",
+        );
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Simple));
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn cc_correct_in_composed() {
+        let parsed = parse_with_path(
+            "def foo(a, b, c, d):\n    if a:\n        if b:\n            return 1\n    elif c:\n        return 2\n    return 0\n",
+            "/project/src/pkg/logic/pure/check/composed.py",
+        );
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Composed));
         assert!(violations.is_empty());
     }
 }

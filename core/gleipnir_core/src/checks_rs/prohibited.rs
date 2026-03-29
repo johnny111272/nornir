@@ -657,7 +657,7 @@ fn detect_string_from_literal(node: tree_sitter::Node, source: &[u8]) -> bool {
 /// LLMs make everything pub to avoid compiler errors about unused/unreachable
 /// code, rather than designing proper module boundaries.
 /// Only fires when there are multiple functions and ALL are pub.
-pub fn check_no_pub_overuse(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+pub fn check_no_pub_overuse(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
     // lib.rs and mod.rs are structural entry points — pub is expected
     let filename = source.file_path.rsplit('/').next().unwrap_or(source.file_path);
     if filename == "lib.rs" || filename == "mod.rs" {
@@ -685,8 +685,8 @@ pub fn check_no_pub_overuse(source: &ParsedSource, _config: &CheckConfig) -> Vec
         }
     }
 
-    // Only flag when there are 4+ functions AND all are bare pub
-    if total_fns >= 4 && pub_fns == total_fns {
+    // Only flag when there are enough functions AND all are bare pub
+    if total_fns >= config.min_functions_for_pub_check && pub_fns == total_fns {
         vec![violation(
             1,
             "every function is pub — design module boundaries instead".to_string(),
@@ -722,7 +722,7 @@ mod tests {
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside)
+        CheckConfig::for_kind(FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- no_unwrap --

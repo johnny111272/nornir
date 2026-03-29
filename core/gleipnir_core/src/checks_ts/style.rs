@@ -402,7 +402,7 @@ mod tests {
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside)
+        CheckConfig::for_kind(FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- function_length --

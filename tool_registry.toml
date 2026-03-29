@@ -1,0 +1,53 @@
+# Tool registry — deployed writer tools for agent definition L8 resolution.
+# Each entry describes a writer binary's capabilities so regin can match
+# an agent's output spec to the correct tool.
+#
+# Generated entries are appended by generate_writer.py.
+
+[[tools]]
+binary_name = "append_embedding_normalize_batch_20"
+invocation = "append_embedding_normalize_batch_20 <<'EOF'\n{json_data}\nEOF"
+output_format = "jsonl"
+write_frequency = "batch"
+output_path_kind = "fixed_file"
+schema_path = "spaces/bragi/definitions/schemas/embedding-target.schema.json"
+file_path = "spaces/bragi/interview/embedding_format/normalized.jsonl"
+
+[[tools]]
+binary_name = "append_interview_summaries_record"
+invocation = "append_interview_summaries_record {name} <<'EOF'\n{json_data}\nEOF"
+output_format = "jsonl"
+write_frequency = "record"
+output_path_kind = "directory_prefix"
+schema_path = "spaces/bragi/schemas/summaries.schema.json"
+directory_path = "spaces/bragi/interview/interviews"
+name_suffix = ".summaries.jsonl"
+
+[[tools]]
+binary_name = "append_raw_jsonl"
+invocation = "append_raw_jsonl {name} <<'EOF'\n{json_data}\nEOF"
+output_format = "jsonl"
+write_frequency = "record"
+output_path_kind = "directory_name"
+schema_path = "schemas/tools/raw-jsonl.schema.json"
+directory_path = "traffic"
+name_extension = "jsonl"
+
+[[tools]]
+binary_name = "append_truth_qc_report_record"
+invocation = "append_truth_qc_report_record <<'EOF'\n{json_data}\nEOF"
+output_format = "jsonl"
+write_frequency = "record"
+output_path_kind = "fixed_file"
+schema_path = "spaces/bragi/schemas/qc-report.schema.json"
+file_path = "spaces/bragi/truth/qc_semantic_report.jsonl"
+
+[[tools]]
+binary_name = "write_truth_glossary_record"
+invocation = "write_truth_glossary_record {name} <<'EOF'\n{json_data}\nEOF"
+output_format = "json"
+write_frequency = "record"
+output_path_kind = "directory_name"
+schema_path = "spaces/bragi/schemas/glossary.schema.json"
+directory_path = "spaces/bragi/truth/quarantine"
+name_extension = "json"

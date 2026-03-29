@@ -2,7 +2,7 @@
 //!
 //! Checks: no_cast, no_overload, no_bare_except, no_broad_exceptions,
 //! no_print, no_model_dump, no_future_annotations, init_files_empty,
-//! no_dunder_all.
+//! no_dunder_all, no_nested_functions (+ no_closures), no_recursion.
 
 use crate::parsing::{find_nodes_by_type, node_field, node_line, node_text};
 use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
@@ -211,13 +211,7 @@ fn model_dump_patterns() -> Vec<String> {
         .collect()
 }
 
-pub fn check_no_model_dump(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
-    // Config-based exemption for boundary files
-    let filename = source.file_path.rsplit('/').next().unwrap_or(source.file_path);
-    if config.boundary_files.iter().any(|f| f == filename) {
-        return Vec::new();
-    }
-
+pub fn check_no_model_dump(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     let patterns = model_dump_patterns();
     let mut violations = Vec::new();
 
@@ -287,6 +281,223 @@ pub fn check_init_files_empty(source: &ParsedSource, _config: &CheckConfig) -> V
 }
 
 // -------------------------------------------------------------------------
+// no_nested_functions — any function_definition inside another
+// -------------------------------------------------------------------------
+
+/// Detect nested function definitions.
+///
+/// Walks the entire tree looking for function_definition nodes whose
+/// ancestor chain includes another function_definition. Distinguishes
+/// closures (inner function references names from outer scope) from
+/// plain nested definitions — each gets a different check name so
+/// gleipnir_messages.toml can provide targeted guidance.
+///
+/// Returns violations tagged either "no_nested_functions" or "no_closures".
+pub fn check_no_nested_functions(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+    collect_nested_functions(root, None, source.source_bytes, &mut violations);
+    violations
+}
+
+fn collect_nested_functions(
+    node: tree_sitter::Node,
+    enclosing_func: Option<tree_sitter::Node>,
+    source: &[u8],
+    violations: &mut Vec<Violation>,
+) {
+    let is_func = node.kind() == "function_definition";
+
+    if is_func {
+        if let Some(outer) = enclosing_func {
+            let inner_name = node_field(node, "name")
+                .map(|n| node_text(n, source))
+                .unwrap_or("<anonymous>");
+
+            // Determine if this is a closure (captures names from outer scope)
+            let outer_params = collect_param_names(outer, source);
+            let outer_locals = collect_local_names(outer, source);
+            let mut outer_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for name in &outer_params {
+                outer_names.insert(name.as_str());
+            }
+            for name in &outer_locals {
+                outer_names.insert(name.as_str());
+            }
+
+            let inner_refs = collect_free_references(node, source);
+            let is_closure = inner_refs.iter().any(|name| outer_names.contains(name.as_str()));
+
+            if is_closure {
+                violations.push(Violation {
+                    line: node_line(node),
+                    check_name: "no_closures".to_string(),
+                    severity: Severity::Error,
+                    message: format!("closure '{inner_name}' captures from enclosing scope"),
+                    detail: String::new(),
+                    signal: String::new(),
+                    direction: String::new(),
+                    canary: String::new(),
+                });
+            } else {
+                violations.push(Violation {
+                    line: node_line(node),
+                    check_name: "no_nested_functions".to_string(),
+                    severity: Severity::Error,
+                    message: format!("nested function '{inner_name}'"),
+                    detail: String::new(),
+                    signal: String::new(),
+                    direction: String::new(),
+                    canary: String::new(),
+                });
+            }
+        }
+    }
+
+    let current_func = if is_func { Some(node) } else { enclosing_func };
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_nested_functions(child, current_func, source, violations);
+    }
+}
+
+/// Collect parameter names from a function_definition.
+fn collect_param_names(func: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    let params = match node_field(func, "parameters") {
+        Some(p) => p,
+        None => return names,
+    };
+    let mut cursor = params.walk();
+    for child in params.named_children(&mut cursor) {
+        match child.kind() {
+            "identifier" => names.push(node_text(child, source).to_string()),
+            "typed_parameter" | "typed_default_parameter" | "default_parameter" => {
+                if let Some(name_node) = child.named_child(0) {
+                    if name_node.kind() == "identifier" {
+                        names.push(node_text(name_node, source).to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Collect local variable names from assignments in a function body.
+fn collect_local_names(func: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    let body = match node_field(func, "body") {
+        Some(b) => b,
+        None => return names,
+    };
+    for assign in find_nodes_by_type(body, "assignment") {
+        if let Some(left) = node_field(assign, "left") {
+            if left.kind() == "identifier" {
+                names.push(node_text(left, source).to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Collect identifier references inside a function that aren't its own params/locals.
+/// This is approximate — good enough for closure detection.
+fn collect_free_references(func: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let own_params = collect_param_names(func, source);
+    let own_locals = collect_local_names(func, source);
+    let mut own_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for name in own_params {
+        own_names.insert(name);
+    }
+    for name in own_locals {
+        own_names.insert(name);
+    }
+
+    let body = match node_field(func, "body") {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+
+    let mut refs = Vec::new();
+    for ident in find_nodes_by_type(body, "identifier") {
+        let name = node_text(ident, source);
+        // Skip builtins and common names
+        if name == "self" || name == "cls" || name == "True" || name == "False" || name == "None" {
+            continue;
+        }
+        if !own_names.contains(name) {
+            refs.push(name.to_string());
+        }
+    }
+    refs
+}
+
+// -------------------------------------------------------------------------
+// no_recursion — function calls itself by name
+// -------------------------------------------------------------------------
+
+pub fn check_no_recursion(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+    collect_recursive_calls(root, None, source.source_bytes, &mut violations);
+    violations
+}
+
+fn collect_recursive_calls(
+    node: tree_sitter::Node,
+    enclosing_func_name: Option<&str>,
+    source: &[u8],
+    violations: &mut Vec<Violation>,
+) {
+    let is_func = node.kind() == "function_definition";
+    let func_name = if is_func {
+        node_field(node, "name").map(|n| node_text(n, source))
+    } else {
+        None
+    };
+
+    if let Some(name) = func_name {
+        find_self_calls(node, name, source, violations);
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect_recursive_calls(child, Some(name), source, violations);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_recursive_calls(child, enclosing_func_name, source, violations);
+    }
+}
+
+fn find_self_calls(
+    func_node: tree_sitter::Node,
+    func_name: &str,
+    source: &[u8],
+    violations: &mut Vec<Violation>,
+) {
+    let body = match node_field(func_node, "body") {
+        Some(b) => b,
+        None => return,
+    };
+    for call in find_nodes_by_type(body, "call") {
+        let callee = match node_field(call, "function") {
+            Some(f) => f,
+            None => continue,
+        };
+        if callee.kind() == "identifier" && node_text(callee, source) == func_name {
+            violations.push(violation(
+                node_line(call),
+                format!("recursive call to '{func_name}'"),
+            ));
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
 // no_dunder_all
 // -------------------------------------------------------------------------
 
@@ -342,7 +553,7 @@ mod tests {
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside)
+        CheckConfig::for_kind(FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- no_cast --
@@ -471,13 +682,70 @@ mod tests {
         assert_eq!(violations.len(), 1);
     }
 
+    // -- no_nested_functions --
+
     #[test]
-    fn model_dump_exempted_by_config() {
-        let code = "result = obj.model_dump()\n";
+    fn nested_function_caught() {
+        let code = "def outer():\n    def inner():\n        return 1\n    return inner()\n";
         let parsed = parse(code);
-        let mut config = default_config();
-        config.boundary_files = vec!["file.py".to_string()];
-        let violations = check_no_model_dump(&parsed, &config);
+        let violations = check_no_nested_functions(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].check_name, "no_nested_functions");
+        assert!(violations[0].message.contains("inner"));
+    }
+
+    #[test]
+    fn closure_caught_with_correct_check_name() {
+        let code = "def outer(data):\n    x = 10\n    def inner():\n        return x + data\n    return inner()\n";
+        let parsed = parse(code);
+        let violations = check_no_nested_functions(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].check_name, "no_closures");
+        assert!(violations[0].message.contains("closure"));
+    }
+
+    #[test]
+    fn flat_functions_ok() {
+        let code = "def foo():\n    return 1\ndef bar():\n    return 2\n";
+        let parsed = parse(code);
+        let violations = check_no_nested_functions(&parsed, &default_config());
         assert!(violations.is_empty());
     }
+
+    #[test]
+    fn doubly_nested_both_caught() {
+        let code = "def a():\n    def b():\n        def c():\n            pass\n        pass\n    pass\n";
+        let parsed = parse(code);
+        let violations = check_no_nested_functions(&parsed, &default_config());
+        assert_eq!(violations.len(), 2); // b and c both flagged
+    }
+
+    // -- no_recursion --
+
+    #[test]
+    fn recursive_call_caught() {
+        let code = "def factorial(n):\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)\n";
+        let parsed = parse(code);
+        let violations = check_no_recursion(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("factorial"));
+    }
+
+    #[test]
+    fn non_recursive_call_ok() {
+        let code = "def foo():\n    return bar()\ndef bar():\n    return 1\n";
+        let parsed = parse(code);
+        let violations = check_no_recursion(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn method_call_same_name_not_flagged() {
+        // obj.process() inside def process() — the callee is an attribute, not an identifier
+        let code = "def process(data):\n    return data.process()\n";
+        let parsed = parse(code);
+        let violations = check_no_recursion(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
 }

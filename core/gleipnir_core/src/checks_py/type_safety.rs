@@ -22,20 +22,6 @@ fn violation(line: usize, message: String) -> Violation {
     }
 }
 
-/// Check if file matches any pattern in unsafe_files config.
-fn file_matches_unsafe(file_path: &str, unsafe_files: &[String]) -> bool {
-    let filename = file_path.rsplit('/').next().unwrap_or(file_path);
-    unsafe_files.iter().any(|pat| {
-        if pat.contains('*') {
-            // Simple glob: only support trailing *
-            let prefix = pat.trim_end_matches('*');
-            filename.starts_with(prefix)
-        } else {
-            filename == pat
-        }
-    })
-}
-
 pub fn check_no_object(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     let mut violations = Vec::new();
 
@@ -66,11 +52,7 @@ pub fn check_no_json_value(source: &ParsedSource, _config: &CheckConfig) -> Vec<
     violations
 }
 
-pub fn check_no_any_types(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
-    // Config-based exemption for OUTSIDE files with exceptions
-    if file_matches_unsafe(source.file_path, &config.unsafe_files) {
-        return Vec::new();
-    }
+pub fn check_no_any_types(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
 
     let mut violations = Vec::new();
 
@@ -271,7 +253,7 @@ mod tests {
     }
 
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(crate::structures::FileKind::Outside)
+        CheckConfig::for_kind(crate::structures::FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- no_object --
@@ -315,15 +297,6 @@ mod tests {
         let parsed = parse("def foo(x: Any) -> Any:\n    return x\n");
         let violations = check_no_any_types(&parsed, &default_config());
         assert!(!violations.is_empty());
-    }
-
-    #[test]
-    fn any_exempted_by_config() {
-        let parsed = parse("def foo(x: Any) -> Any:\n    return x\n");
-        let mut config = default_config();
-        config.unsafe_files = vec!["file.py".to_string()];
-        let violations = check_no_any_types(&parsed, &config);
-        assert!(violations.is_empty());
     }
 
     #[test]

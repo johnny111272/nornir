@@ -8,6 +8,7 @@ pub use saga_core::{Issue, SanityReport, qa_path, source_path_from_qa};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 // =============================================================================
@@ -16,6 +17,60 @@ use std::time::Instant;
 
 static RUFF_TOML: &str = include_str!("../ruff.toml");
 static PYRIGHTCONFIG_JSON: &str = include_str!("../pyrightconfig.json");
+static V2_PROJECTS_TOML: &str = include_str!("../v2_projects.toml");
+
+/// Parsed list of project root paths that have opted in to v2 zone checks.
+static V2_PROJECT_PATHS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    #[derive(serde::Deserialize)]
+    struct ProjectEntry {
+        path: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct V2Projects {
+        #[serde(default)]
+        projects: Vec<ProjectEntry>,
+    }
+    let parsed: V2Projects =
+        toml::from_str(V2_PROJECTS_TOML).expect("v2_projects.toml parse error");
+    parsed.projects.into_iter().map(|entry| entry.path).collect()
+});
+
+/// Check if a file belongs to a project that has opted in to v2 zone checks.
+fn is_v2_project(file_path: &Path) -> bool {
+    let path_str = file_path.to_string_lossy();
+    V2_PROJECT_PATHS.iter().any(|prefix| path_str.starts_with(prefix.as_str()))
+}
+
+/// Version override for `--test v1` / `--test v2`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionOverride {
+    /// Use v2_projects.toml routing (default)
+    Auto,
+    /// Force v1 checks regardless of project
+    ForceV1,
+    /// Force v2 checks regardless of project
+    ForceV2,
+}
+
+// Thread-local override for gleipnir version routing.
+// Set via set_version_override(), read by run_gleipnir().
+std::thread_local! {
+    static VERSION_OVERRIDE: std::cell::Cell<VersionOverride> = const { std::cell::Cell::new(VersionOverride::Auto) };
+}
+
+/// Set the gleipnir version override. Affects all subsequent `run_gleipnir()` calls
+/// on this thread.
+pub fn set_version_override(version: VersionOverride) {
+    VERSION_OVERRIDE.with(|cell| cell.set(version));
+}
+
+fn use_v2(file_path: &Path) -> bool {
+    VERSION_OVERRIDE.with(|cell| match cell.get() {
+        VersionOverride::Auto => is_v2_project(file_path),
+        VersionOverride::ForceV1 => false,
+        VersionOverride::ForceV2 => true,
+    })
+}
 
 fn saga_tmp() -> PathBuf {
     std::env::temp_dir().join("saga")
@@ -63,15 +118,21 @@ fn violation_to_issue(violation: gleipnir_core::Violation) -> Issue {
 }
 
 /// Run gleipnir guardrail checks on a Python file.
+///
+/// Routes to v2 zone checks for projects listed in v2_projects.toml,
+/// otherwise uses v1 rules.
 pub fn run_gleipnir(file_path: &Path) -> Vec<Issue> {
     let source = match std::fs::read(file_path) {
         Ok(bytes) => bytes,
         Err(_) => return Vec::new(),
     };
-    gleipnir_core::run_checks(&file_path.to_string_lossy(), &source)
-        .into_iter()
-        .map(violation_to_issue)
-        .collect()
+    let path_str = file_path.to_string_lossy();
+    let violations = if use_v2(file_path) {
+        gleipnir_core::run_checks_v2(&path_str, &source)
+    } else {
+        gleipnir_core::run_checks(&path_str, &source)
+    };
+    violations.into_iter().map(violation_to_issue).collect()
 }
 
 /// Run gleipnir Rust checks on a file.

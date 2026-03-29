@@ -16,11 +16,17 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use structures::{
-    CheckConfig, CheckMessages, FileKind, ParsedSource, Severity, Violation,
+    CheckConfig, CheckMessages, FileKind, Level, ParsedSource, Severity, StatisticsToml,
+    V2Classification, Violation, Zone,
 };
 
 // Embedded messages, parsed once on first access.
 static MESSAGES_TOML: &str = include_str!("../gleipnir_messages.toml");
+static STATISTICS_TOML: &str = include_str!("../gleipnir_statistics.toml");
+
+pub static STATISTICS: LazyLock<StatisticsToml> = LazyLock::new(|| {
+    toml::from_str(STATISTICS_TOML).expect("gleipnir_statistics.toml parse error")
+});
 
 static MESSAGES: LazyLock<HashMap<String, CheckMessages>> = LazyLock::new(|| {
     toml::from_str(MESSAGES_TOML).expect("gleipnir_messages.toml parse error")
@@ -68,8 +74,14 @@ fn stamp_and_collect(
     mut check_violations: Vec<Violation>,
     output: &mut Vec<Violation>,
 ) {
-    let msgs = messages(name);
+    let default_msgs = messages(name);
     for viol in &mut check_violations {
+        // If the check set its own check_name, use that for message lookup
+        let msgs = if !viol.check_name.is_empty() && viol.check_name != name {
+            messages(&viol.check_name)
+        } else {
+            default_msgs
+        };
         stamp(viol, name, severity, msgs);
     }
     output.extend(check_violations);
@@ -90,8 +102,48 @@ pub fn run_checks(
         .unwrap_or("");
 
     let kind = classify::classify_file(file_path, first_line);
-    let config = CheckConfig::for_kind(kind);
+    let config = CheckConfig::for_kind(kind, &STATISTICS);
     let entries = matrix::checks_for_kind(kind);
+
+    let parsed = match parsing::build_parsed_source(file_path, source) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut violations = Vec::new();
+    for entry in &entries {
+        let check_violations = (entry.check_fn)(&parsed, &config);
+        stamp_and_collect(entry.name, entry.severity, check_violations, &mut violations);
+    }
+    violations
+}
+
+/// Run v2 zone architecture checks on a Python source file.
+///
+/// Uses the two-axis classification (level + zone) to select checks.
+/// Scripts and tests fall back to v1 rules.
+pub fn run_checks_v2(
+    file_path: &str,
+    source: &[u8],
+) -> Vec<Violation> {
+    let first_line = source
+        .split(|&b| b == b'\n')
+        .next()
+        .and_then(|l| std::str::from_utf8(l).ok())
+        .unwrap_or("");
+
+    // Scripts and tests use v1 rules regardless
+    if first_line.starts_with("#!/usr/bin/env -S uv run") {
+        return run_checks(file_path, source);
+    }
+    let filename = file_path.rsplit('/').next().unwrap_or(file_path);
+    if filename.contains("test") {
+        return run_checks(file_path, source);
+    }
+
+    let classification = classify::classify_file_v2(file_path);
+    let config = CheckConfig::for_v2(classification.level, classification.zone, &STATISTICS);
+    let entries = matrix::checks_for_v2(&classification);
 
     let parsed = match parsing::build_parsed_source(file_path, source) {
         Ok(p) => p,
@@ -115,7 +167,7 @@ pub fn run_checks_rust(file_path: &str, source: &[u8]) -> Vec<Violation> {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
-    let config = CheckConfig::for_kind(structures::FileKind::Outside);
+    let config = CheckConfig::for_rust(&STATISTICS);
 
     type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
     let rust_checks: &[(&str, Severity, CheckFn)] = &[
@@ -184,7 +236,7 @@ fn run_svelte_script_checks(file_path: &str, source_str: &str, violations: &mut 
         Ok(p) => p,
         Err(_) => return,
     };
-    let config = CheckConfig::for_kind(structures::FileKind::Outside);
+    let config = CheckConfig::for_typescript(&STATISTICS);
 
     type CheckFn = fn(&structures::ParsedSource, &CheckConfig) -> Vec<Violation>;
     let ts_checks: &[(&str, Severity, CheckFn)] = &[
@@ -303,5 +355,54 @@ mod tests {
         let violations = run_checks("/project/tests/test_foo.py", source);
         // Test files have a minimal check set — should run without panic
         let _ = violations;
+    }
+
+    // -- statistics loading --
+
+    #[test]
+    fn statistics_load_successfully() {
+        let stats = &*STATISTICS;
+        assert!(stats.defaults.max_function_lines.is_some());
+        assert!(stats.defaults.max_function_params.is_some());
+    }
+
+    #[test]
+    fn for_kind_pure_function_gets_25() {
+        let config = CheckConfig::for_kind(FileKind::PureFunction, &STATISTICS);
+        assert_eq!(config.max_function_lines, 25);
+    }
+
+    #[test]
+    fn for_kind_outside_gets_50() {
+        let config = CheckConfig::for_kind(FileKind::Outside, &STATISTICS);
+        assert_eq!(config.max_function_lines, 50);
+    }
+
+    #[test]
+    fn for_v2_simple_cc_bounds() {
+        let config = CheckConfig::for_v2(Level::Simple, Zone::Pure, &STATISTICS);
+        assert_eq!(config.min_cc, 1);
+        assert_eq!(config.max_cc, 3);
+    }
+
+    #[test]
+    fn for_v2_composed_cc_bounds() {
+        let config = CheckConfig::for_v2(Level::Composed, Zone::Pure, &STATISTICS);
+        assert_eq!(config.min_cc, 4);
+        assert_eq!(config.max_cc, 8);
+    }
+
+    #[test]
+    fn for_rust_gets_defaults() {
+        let config = CheckConfig::for_rust(&STATISTICS);
+        assert_eq!(config.max_function_lines, 50);
+        assert_eq!(config.max_function_params, 5);
+    }
+
+    #[test]
+    fn for_typescript_gets_defaults() {
+        let config = CheckConfig::for_typescript(&STATISTICS);
+        assert_eq!(config.max_function_lines, 50);
+        assert_eq!(config.max_nesting_depth, 4);
     }
 }

@@ -57,11 +57,15 @@ pub fn write_prompt_file(state: &AppState) -> Result<PathBuf, String> {
     fs::write(&output_path, &prompt)
         .map_err(|e| format!("write prompt file: {e}"))?;
 
-    // Persist assembled prompt into workspace for hook-based re-injection on compact
-    if let Some(workspace) = state.workspace_path() {
-        let workspace_copy = workspace.join(".SYSTEM_PROMPT.md");
-        let _ = fs::write(&workspace_copy, &prompt);
-    }
+    // Persist assembled prompt into workspace for hook-based re-injection on compact.
+    // Use profile workspace path if selected, otherwise fall back to actual CWD
+    // (Auto mode — user launched from their current directory without selecting a profile).
+    let prompt_dir = state
+        .workspace_path()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let workspace_copy = prompt_dir.join(".SYSTEM_PROMPT.md");
+    let _ = fs::write(&workspace_copy, &prompt);
 
     Ok(output_path)
 }

@@ -5,10 +5,11 @@
 //! structures_import_boundary, classes_only_in_structures,
 //! max_functions_outside_zones.
 
+use crate::classify;
 use crate::parsing::{
     extract_module_info, find_nodes_by_type, node_field, node_line, node_text,
 };
-use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
+use crate::structures::{CheckConfig, Level, ParsedSource, Severity, Violation, Zone};
 
 fn violation(line: usize, message: String) -> Violation {
     Violation {
@@ -403,7 +404,7 @@ pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> V
 /// Counts import statements separately for functions/, structures/, and other.
 /// High function-import count is the strongest signal of fragmented OOP —
 /// a coordinator importing single-function siblings.
-pub fn check_import_count(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+pub fn check_import_count(source: &ParsedSource, config: &CheckConfig) -> Vec<Violation> {
     let root = source.tree.root_node();
     let mut cursor = root.walk();
     let mut fn_imports = 0;
@@ -426,13 +427,13 @@ pub fn check_import_count(source: &ParsedSource, _config: &CheckConfig) -> Vec<V
 
     let mut violations = Vec::new();
 
-    if fn_imports > MAX_FUNCTION_IMPORTS {
+    if fn_imports > config.max_function_imports {
         violations.push(violation(
             1,
             format!("{fn_imports} imports from functions/ — this module is coordinating, not computing"),
         ));
     }
-    if other_imports > MAX_OTHER_IMPORTS {
+    if other_imports > config.max_other_imports {
         violations.push(violation(
             1,
             format!("{other_imports} external/stdlib imports — module has too many external dependencies"),
@@ -441,9 +442,6 @@ pub fn check_import_count(source: &ParsedSource, _config: &CheckConfig) -> Vec<V
 
     violations
 }
-
-const MAX_FUNCTION_IMPORTS: usize = 3;
-const MAX_OTHER_IMPORTS: usize = 3;
 
 /// Extract the module path from an import statement.
 fn import_module_path<'a>(node: tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
@@ -578,6 +576,72 @@ pub fn check_structures_import_boundary(
 }
 
 // -------------------------------------------------------------------------
+// v2_structure_import_boundary
+// -------------------------------------------------------------------------
+
+fn is_structure_internal(module_path: &str) -> bool {
+    let parts: Vec<&str> = module_path.split('.').collect();
+    if parts.contains(&"structure") {
+        return true;
+    }
+    let last = parts.last().copied().unwrap_or("");
+    STRUCTURES_ALLOWED_MODULES.contains(&last)
+}
+
+pub fn check_v2_structure_import_boundary(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for node in find_nodes_by_type(source.tree.root_node(), "import_from_statement") {
+        let (module, _level) = extract_module_info(node, source.source_bytes);
+        if module.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = module.split('.').collect();
+        let top = parts.first().copied().unwrap_or("");
+
+        if STRUCTURES_ALLOWED_STDLIB.contains(&top) {
+            continue;
+        }
+
+        if !is_structure_internal(&module) {
+            violations.push(violation(
+                node_line(node),
+                format!("structure zone file imports from outside data zone: {module}"),
+            ));
+        }
+    }
+
+    for node in find_nodes_by_type(source.tree.root_node(), "import_statement") {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() != "dotted_name" {
+                continue;
+            }
+            let module = node_text(child, source.source_bytes);
+            let parts: Vec<&str> = module.split('.').collect();
+            let top = parts.first().copied().unwrap_or("");
+
+            if STRUCTURES_ALLOWED_STDLIB.contains(&top) {
+                continue;
+            }
+
+            if !is_structure_internal(module) {
+                violations.push(violation(
+                    node_line(node),
+                    format!("structure zone file imports from outside data zone: {module}"),
+                ));
+            }
+        }
+    }
+
+    violations
+}
+
+// -------------------------------------------------------------------------
 // classes_only_in_structures
 // -------------------------------------------------------------------------
 
@@ -595,6 +659,29 @@ pub fn check_classes_only_in_structures(
         violations.push(violation(
             node_line(class_node),
             format!("class '{class_name}' defined outside structures/"),
+        ));
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// v2_classes_only_in_structure
+// -------------------------------------------------------------------------
+
+pub fn check_v2_classes_only_in_structure(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    // Matrix handles dispatch — only called for logic zone files (pure/impure/transform/orchestrate)
+    let mut violations = Vec::new();
+
+    for class_node in find_nodes_by_type(source.tree.root_node(), "class_definition") {
+        let class_name = node_field(class_node, "name")
+            .map(|n| node_text(n, source.source_bytes))
+            .unwrap_or("<unknown>");
+        violations.push(violation(
+            node_line(class_node),
+            format!("class '{class_name}' defined outside structure zone"),
         ));
     }
     violations
@@ -639,6 +726,332 @@ pub fn check_max_functions_outside_zones(
     )]
 }
 
+// -------------------------------------------------------------------------
+// v2 structure enforcement — no logic in structure/
+// -------------------------------------------------------------------------
+
+/// In v2 structure zone: no function definitions, no bare constants.
+/// Only class definitions (Pydantic models, Enums) and type aliases allowed.
+pub fn check_v2_structure_no_logic(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+    if classification.zone != Zone::Structure {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+    let mut cursor = root.walk();
+
+    for child in root.named_children(&mut cursor) {
+        match child.kind() {
+            "function_definition" | "async_function_definition" => {
+                let name = node_field(child, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or("<unknown>");
+                violations.push(violation(
+                    node_line(child),
+                    format!("function '{name}' in structure zone (no logic allowed)"),
+                ));
+            }
+            "expression_statement" => {
+                if is_module_level_constant(child, source.source_bytes) {
+                    violations.push(violation(
+                        node_line(child),
+                        "module-level constant in structure zone (use enum or model)".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    violations
+}
+
+// -------------------------------------------------------------------------
+// v2 structure enforcement — classes must be pydantic or enum
+// -------------------------------------------------------------------------
+
+/// Allowed base class names for structure/ zone classes.
+const STRUCTURE_ALLOWED_BASES: &[&str] = &[
+    "BaseModel", "RootModel",
+    "Enum", "IntEnum", "StrEnum", "Flag", "IntFlag",
+];
+
+/// In v2 structure zone: every class must inherit from BaseModel or Enum.
+/// Plain classes (no base) and classes inheriting from unknown bases are violations.
+pub fn check_v2_structure_bases(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+    if classification.zone != Zone::Structure {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+
+    for class_node in find_nodes_by_type(source.tree.root_node(), "class_definition") {
+        let class_name = node_field(class_node, "name")
+            .map(|n| node_text(n, source.source_bytes))
+            .unwrap_or("<unknown>");
+
+        let bases = extract_base_classes(class_node, source.source_bytes);
+
+        if bases.is_empty() {
+            violations.push(violation(
+                node_line(class_node),
+                format!("'{class_name}' has no base class (must inherit from BaseModel or Enum)"),
+            ));
+        } else if !bases.iter().any(|b| STRUCTURE_ALLOWED_BASES.contains(&b.as_str())) {
+            violations.push(violation(
+                node_line(class_node),
+                format!("'{class_name}' inherits from unknown base (must be BaseModel or Enum)"),
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Extract base class names from a class definition's argument list.
+///
+/// For `class Foo(BaseModel, SomeMixin):` returns `["BaseModel", "SomeMixin"]`.
+/// For `class Foo:` returns empty vec.
+/// Handles both simple identifiers and dotted names (takes the last part).
+fn extract_base_classes(class_node: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let arg_list = match class_node.child_by_field_name("superclasses") {
+        Some(al) => al,
+        None => return Vec::new(),
+    };
+
+    let mut bases = Vec::new();
+    let mut cursor = arg_list.walk();
+
+    for child in arg_list.named_children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                bases.push(node_text(child, source).to_string());
+            }
+            "attribute" => {
+                // For `pydantic.BaseModel`, take the attribute part
+                if let Some(attr) = child.child_by_field_name("attribute") {
+                    bases.push(node_text(attr, source).to_string());
+                }
+            }
+            "subscript" => {
+                // For `RootModel[str]`, take the base name from the value field
+                if let Some(value) = child.child_by_field_name("value") {
+                    bases.push(node_text(value, source).to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    bases
+}
+
+// -------------------------------------------------------------------------
+// v2 dispatch enforcement — only typed dispatch tables
+// -------------------------------------------------------------------------
+
+/// In v2 dispatch level: only `dict[type[...], Callable]` assignments allowed.
+/// No functions, no classes, no untyped assignments, no other module-level code.
+/// Imports are allowed (for structure types and handler function references).
+pub fn check_v2_dispatch_only_tables(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+    if classification.level != Level::Dispatch {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+    let mut cursor = root.walk();
+
+    for child in root.named_children(&mut cursor) {
+        match child.kind() {
+            // Imports allowed
+            "import_statement" | "import_from_statement" => continue,
+            // Docstrings allowed (expression_statement with string)
+            "expression_statement" => {
+                if is_docstring(child, source.source_bytes) {
+                    continue;
+                }
+                // Typed assignments: check for type annotation
+                if is_typed_dispatch_assignment(child, source.source_bytes) {
+                    continue;
+                }
+                violations.push(violation(
+                    node_line(child),
+                    "dispatch file may only contain typed dispatch tables".to_string(),
+                ));
+            }
+            // Functions and classes forbidden
+            "function_definition" | "async_function_definition" => {
+                let name = node_field(child, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or("<unknown>");
+                violations.push(violation(
+                    node_line(child),
+                    format!("function '{name}' in dispatch file (only dispatch tables allowed)"),
+                ));
+            }
+            "class_definition" => {
+                let name = node_field(child, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or("<unknown>");
+                violations.push(violation(
+                    node_line(child),
+                    format!("class '{name}' in dispatch file (only dispatch tables allowed)"),
+                ));
+            }
+            "decorated_definition" => {
+                violations.push(violation(
+                    node_line(child),
+                    "decorated definition in dispatch file (only dispatch tables allowed)".to_string(),
+                ));
+            }
+            // Type alias statements allowed (type X = ...)
+            "type_alias_statement" => continue,
+            // Everything else is suspicious
+            _ => {}
+        }
+    }
+
+    violations
+}
+
+/// Check if an expression_statement is a module docstring (string literal).
+fn is_docstring(expr_stmt: tree_sitter::Node, _source: &[u8]) -> bool {
+    let mut cursor = expr_stmt.walk();
+    let first = match expr_stmt.named_children(&mut cursor).next() {
+        Some(n) => n,
+        None => return false,
+    };
+    first.kind() == "string"
+}
+
+/// Check if an expression_statement is a typed assignment with `dict[type[...], Callable...]`
+/// annotation.
+///
+/// Looks for: `NAME: dict[type[...], Callable...] = { ... }`
+/// The assignment must have a type annotation containing both "dict" and "type" and "Callable".
+fn is_typed_dispatch_assignment(expr_stmt: tree_sitter::Node, source: &[u8]) -> bool {
+    let mut cursor = expr_stmt.walk();
+    let inner = match expr_stmt.named_children(&mut cursor).next() {
+        Some(n) if n.kind() == "assignment" => n,
+        _ => return false,
+    };
+
+    // Must have a type annotation
+    let type_node = match node_field(inner, "type") {
+        Some(t) => t,
+        None => return false,
+    };
+
+    // Must have a right-hand side (the dict value)
+    if node_field(inner, "right").is_none() {
+        return false;
+    }
+
+    // Check the annotation text contains the dispatch table signature markers
+    let annotation_text = node_text(type_node, source);
+    annotation_text.contains("dict") && annotation_text.contains("type") && annotation_text.contains("Callable")
+}
+
+// -------------------------------------------------------------------------
+// v2 logic enforcement — no constants in logic/
+// -------------------------------------------------------------------------
+
+/// In v2 logic zones: no module-level data bindings.
+/// Only function definitions allowed at module level.
+pub fn check_v2_logic_no_constants(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+    match classification.zone {
+        Zone::Pure | Zone::Impure | Zone::Transform | Zone::Orchestrate => {}
+        Zone::Structure => return Vec::new(),
+    }
+    if classification.level == Level::Structure || classification.level == Level::Outside {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+    let mut cursor = root.walk();
+
+    for child in root.named_children(&mut cursor) {
+        if child.kind() == "expression_statement" && is_module_level_constant(child, source.source_bytes) {
+            violations.push(violation(
+                node_line(child),
+                "module-level constant in logic zone (move to structure zone as enum or model)".to_string(),
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Detect module-level constant assignments.
+///
+/// Matches: `NAME = {...}`, `NAME = frozenset(...)`, `NAME = [...]`, `NAME = (...)`
+/// Skips: `type Name = ...` (type aliases), string literals (module docstrings),
+/// `model_rebuild()` calls, and other non-assignment expressions.
+fn is_module_level_constant(expr_stmt: tree_sitter::Node, source: &[u8]) -> bool {
+    let mut cursor = expr_stmt.walk();
+    for child in expr_stmt.named_children(&mut cursor) {
+        if child.kind() == "assignment" {
+            let left = match child.child_by_field_name("left") {
+                Some(n) => n,
+                None => continue,
+            };
+            // Only flag UPPER_CASE or CamelCase assignments that aren't classes
+            let name = node_text(left, source);
+            if left.kind() != "identifier" {
+                continue;
+            }
+            // Skip type alias style: lowercase or mixed with generic subscripts
+            if name.starts_with("type ") {
+                continue;
+            }
+            // Check if RHS is a data literal or constructor
+            if let Some(right) = child.child_by_field_name("right") {
+                return matches!(
+                    right.kind(),
+                    "dictionary"
+                        | "set"
+                        | "list"
+                        | "tuple"
+                        | "set_comprehension"
+                        | "list_comprehension"
+                        | "dictionary_comprehension"
+                ) || is_frozenset_call(right, source);
+            }
+        }
+    }
+    false
+}
+
+fn is_frozenset_call(node: tree_sitter::Node, source: &[u8]) -> bool {
+    if node.kind() != "call" {
+        return false;
+    }
+    let func = match node.child_by_field_name("function") {
+        Some(n) => n,
+        None => return false,
+    };
+    node_text(func, source) == "frozenset"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,8 +1063,14 @@ mod tests {
         build_parsed_source("/test/file.py", source).unwrap()
     }
 
+    fn parse_with_path(code: &str, path: &str) -> ParsedSource<'static> {
+        let source: &'static [u8] = Box::leak(code.as_bytes().to_vec().into_boxed_slice());
+        let path: &'static str = Box::leak(path.to_string().into_boxed_str());
+        build_parsed_source(path, source).unwrap()
+    }
+
     fn default_config() -> CheckConfig {
-        CheckConfig::for_kind(FileKind::Outside)
+        CheckConfig::for_kind(FileKind::Outside, &crate::STATISTICS)
     }
 
     // -- no_methods_in_classes --
@@ -961,6 +1380,278 @@ mod tests {
     fn test_functions_skipped() {
         let parsed = parse("def test_a(): pass\ndef test_b(): pass\ndef test_c(): pass\ndef test_d(): pass\n");
         let violations = check_max_functions_outside_zones(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_structure_no_logic --
+
+    #[test]
+    fn v2_structure_function_caught() {
+        let parsed = parse_with_path(
+            "def helper():\n    return 1\n",
+            "/project/src/pkg/structure/models.py",
+        );
+        let violations = check_v2_structure_no_logic(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("function"));
+    }
+
+    #[test]
+    fn v2_structure_class_ok() {
+        let parsed = parse_with_path(
+            "from pydantic import BaseModel\nclass Foo(BaseModel):\n    x: int\n",
+            "/project/src/pkg/structure/models.py",
+        );
+        let violations = check_v2_structure_no_logic(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_structure_constant_caught() {
+        let parsed = parse_with_path(
+            "LOOKUP = {\"a\": 1, \"b\": 2}\n",
+            "/project/src/pkg/structure/constants.py",
+        );
+        let violations = check_v2_structure_no_logic(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("constant"));
+    }
+
+    #[test]
+    fn v2_structure_type_alias_ok() {
+        let parsed = parse_with_path(
+            "type FieldRef = int | str\n",
+            "/project/src/pkg/structure/types.py",
+        );
+        let violations = check_v2_structure_no_logic(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_non_structure_skipped() {
+        let parsed = parse_with_path(
+            "def helper():\n    return 1\n",
+            "/project/src/pkg/logic/pure/helpers/primitive.py",
+        );
+        let violations = check_v2_structure_no_logic(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_structure_bases --
+
+    #[test]
+    fn v2_structure_plain_class_caught() {
+        let parsed = parse_with_path(
+            "class Foo:\n    x: int = 0\n",
+            "/project/src/pkg/structure/models.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("no base class"));
+    }
+
+    #[test]
+    fn v2_structure_basemodel_ok() {
+        let parsed = parse_with_path(
+            "from pydantic import BaseModel\nclass Foo(BaseModel):\n    x: int\n",
+            "/project/src/pkg/structure/models.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_structure_enum_ok() {
+        let parsed = parse_with_path(
+            "from enum import Enum\nclass Color(Enum):\n    red = 1\n",
+            "/project/src/pkg/structure/enums.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_structure_unknown_base_caught() {
+        let parsed = parse_with_path(
+            "class Foo(SomeRandomBase):\n    x: int = 0\n",
+            "/project/src/pkg/structure/models.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("unknown base"));
+    }
+
+    #[test]
+    fn v2_structure_non_structure_skipped() {
+        let parsed = parse_with_path(
+            "class Foo:\n    x: int = 0\n",
+            "/project/src/pkg/logic/pure/helpers/primitive.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_logic_no_constants --
+
+    #[test]
+    fn v2_logic_constant_caught() {
+        let parsed = parse_with_path(
+            "DEFAULTS = {\"key\": \"value\"}\n",
+            "/project/src/pkg/logic/pure/helpers/primitive.py",
+        );
+        let violations = check_v2_logic_no_constants(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("constant"));
+    }
+
+    #[test]
+    fn v2_logic_frozenset_caught() {
+        let parsed = parse_with_path(
+            "from enum import Enum\nclass Cap(Enum):\n    read = 1\nREAD_SET = frozenset({Cap.read})\n",
+            "/project/src/pkg/logic/pure/helpers/primitive.py",
+        );
+        let violations = check_v2_logic_no_constants(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn v2_logic_function_ok() {
+        let parsed = parse_with_path(
+            "def helper():\n    return 1\n",
+            "/project/src/pkg/logic/pure/helpers/primitive.py",
+        );
+        let violations = check_v2_logic_no_constants(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_logic_in_structure_skipped() {
+        let parsed = parse_with_path(
+            "DEFAULTS = {\"key\": \"value\"}\n",
+            "/project/src/pkg/structure/config.py",
+        );
+        let violations = check_v2_logic_no_constants(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_dispatch_only_tables --
+
+    #[test]
+    fn v2_dispatch_typed_table_ok() {
+        let code = "from typing import Callable\nfrom structures.models import ModelA, ModelB\nfrom logic.pure.simple.converters import convert_a, convert_b\n\nDISPATCH: dict[type[ModelA], Callable] = {\n    ModelA: convert_a,\n    ModelB: convert_b,\n}\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/pure/converters/dispatch.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_dispatch_function_caught() {
+        let code = "def helper():\n    return 1\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/pure/converters/dispatch.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("function"));
+    }
+
+    #[test]
+    fn v2_dispatch_untyped_dict_caught() {
+        let code = "LOOKUP = {'a': 1, 'b': 2}\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/pure/converters/dispatch.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("dispatch tables"));
+    }
+
+    #[test]
+    fn v2_dispatch_non_dispatch_file_skipped() {
+        let code = "def helper():\n    return 1\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/pure/helpers/simple.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_dispatch_class_caught() {
+        let code = "class Foo:\n    x: int = 0\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/transform/models/dispatch.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("class"));
+    }
+
+    #[test]
+    fn v2_dispatch_docstring_ok() {
+        let code = "\"\"\"Dispatch tables for time converters.\"\"\"\nfrom typing import Callable\n";
+        let parsed = parse_with_path(code, "/project/src/pkg/logic/impure/time/dispatch.py");
+        let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_classes_only_in_structure --
+
+    #[test]
+    fn v2_class_outside_structure_caught() {
+        let parsed = parse_with_path(
+            "class Foo:\n    x: int = 0\n",
+            "/project/src/pkg/logic/pure/helpers/composed.py",
+        );
+        let violations = check_v2_classes_only_in_structure(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("outside structure zone"));
+    }
+
+    #[test]
+    fn v2_no_classes_in_logic_ok() {
+        let parsed = parse_with_path(
+            "def helper(): pass\n",
+            "/project/src/pkg/logic/pure/helpers/composed.py",
+        );
+        let violations = check_v2_classes_only_in_structure(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- v2_structure_import_boundary --
+
+    #[test]
+    fn v2_structure_internal_import_ok() {
+        let parsed = parse_with_path(
+            "from regin.structure.model.gate_types import GateResult\n",
+            "/project/src/pkg/structure/model/foo.py",
+        );
+        let violations = check_v2_structure_import_boundary(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_structure_pydantic_import_ok() {
+        let parsed = parse_with_path(
+            "from pydantic import BaseModel\n",
+            "/project/src/pkg/structure/model/foo.py",
+        );
+        let violations = check_v2_structure_import_boundary(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn v2_structure_logic_import_caught() {
+        let parsed = parse_with_path(
+            "from regin.logic.pure.helpers.composed import something\n",
+            "/project/src/pkg/structure/model/foo.py",
+        );
+        let violations = check_v2_structure_import_boundary(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("outside data zone"));
+    }
+
+    // -- v2_structure_bases with RootModel --
+
+    #[test]
+    fn v2_structure_rootmodel_ok() {
+        let parsed = parse_with_path(
+            "from pydantic import RootModel\nclass AgentName(RootModel[str]):\n    root: str\n",
+            "/project/src/pkg/structure/gen/schema/models.py",
+        );
+        let violations = check_v2_structure_bases(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 }

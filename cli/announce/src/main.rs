@@ -117,6 +117,8 @@ fn run(args: Cli) -> Result<(), String> {
     if control_voice.join("RECORDING.lock").exists() {
         let is_critical = args.severity.as_deref() == Some("critical");
         if !is_critical {
+            // iTerm2 notification so stale locks don't silently eat messages
+            eprint!("\x1b]9;announce: queued (RECORDING.lock)\x07");
             return queue_for_later(&args, &text);
         }
     }

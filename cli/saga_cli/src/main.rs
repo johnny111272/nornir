@@ -29,6 +29,12 @@ enum Kind {
     All,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum TestVersion {
+    V1,
+    V2,
+}
+
 /// Saga — quality truth recorder. Runs quality tools on source files.
 #[derive(Parser)]
 #[command(name = "saga")]
@@ -60,6 +66,10 @@ struct Args {
     /// File types to process in directory mode
     #[arg(long, default_value = "all")]
     kind: Kind,
+
+    /// Override gleipnir version routing (ignore v2_projects.toml)
+    #[arg(long)]
+    test: Option<TestVersion>,
 }
 
 // =============================================================================
@@ -185,6 +195,16 @@ fn run_file(args: &Args) -> Result<(), String> {
 
 fn main() {
     let args = Args::parse();
+
+    // Set version override before any processing
+    if let Some(test_version) = args.test {
+        let override_value = match test_version {
+            TestVersion::V1 => saga_runner::VersionOverride::ForceV1,
+            TestVersion::V2 => saga_runner::VersionOverride::ForceV2,
+        };
+        saga_runner::set_version_override(override_value);
+        eprintln!("[saga] version override: {:?}", override_value);
+    }
 
     let result = if args.strip {
         if !args.path.is_dir() {

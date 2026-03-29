@@ -10,5 +10,6 @@ crate-type = ["rlib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+toml = { workspace = true }
 saga_core = { path = "../../core/saga_core" }
 gleipnir_core = { path = "../../core/gleipnir_core" }
