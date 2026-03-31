@@ -90,13 +90,13 @@ After zones are correct, each module directory gets split into CC levels.
 
 ```
 primitive.py   CC=1, no cross-module deps, no branching
-simple.py      CC=1-3, may import primitive from same module
-composed.py    CC=4+, may import simple+primitive from same module
-                      may import simple from OTHER modules
-assembled.py   CC=1-2, thin wiring of composed functions
+simple.py      CC=1-3, may import primitive/ffi from same module
+dispatch.py    CC=1-2, thin routing between simples
+composed.py    CC=4-8, may import dispatch/simple/primitive
+assembled.py   CC=1-2, thin composition of composed functions
 ```
 
-Not every module needs all 4 levels. Many modules are just `composed.py` or `simple.py` + `composed.py`.
+Not every module needs all 5 levels. Most modules have 2-3 level files (e.g., `simple.py` + `composed.py`, or `primitive.py` + `simple.py` + `composed.py` + `assembled.py`).
 
 ### How to split
 
