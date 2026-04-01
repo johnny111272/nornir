@@ -1,11 +1,13 @@
 //! Type system enforcement checks.
 //!
 //! Checks: no_object, no_json_value, no_any_types, no_any_type_aliases,
-//! no_bare_collections, union_member_count, no_implicit_type_aliases.
+//! no_bare_collections, union_member_count, no_callable_params,
+//! no_implicit_type_aliases.
 
 use crate::parsing::{
-    annotation_contains_name, bare_names_in_annotation, count_union_members,
-    find_nodes_by_type, find_type_annotations, node_field, node_line, node_text, walk_tree,
+    annotation_contains_name, bare_names_in_annotation, collect_union_leaves,
+    count_union_members, find_nodes_by_type, find_type_annotations, node_field, node_line,
+    node_text, walk_tree,
 };
 use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
 
@@ -83,24 +85,102 @@ pub fn check_no_bare_collections(source: &ParsedSource, _config: &CheckConfig) -
     violations
 }
 
-/// Find top-level union binary_operator nodes within an annotation subtree.
-/// Returns (line, member_count) for each union root.
-fn find_union_roots(type_node: tree_sitter::Node) -> Vec<(usize, usize)> {
+/// Python builtin type names treated as "simple" for union member classification.
+/// Parameterized forms (e.g. list[int], dict[str, float]) are also simple.
+const SIMPLE_TYPE_NAMES: &[&str] = &[
+    "int", "str", "float", "bool", "bytes", "complex", "bytearray", "memoryview",
+    "list", "dict", "tuple", "set", "frozenset", "object",
+];
+
+/// Classify whether a union leaf node is a simple (builtin) type.
+///
+/// Returns true for bare builtins (`int`) and parameterized builtins (`list[int]`).
+/// None is handled separately by the caller, not here.
+fn is_simple_type(node: tree_sitter::Node, source: &[u8]) -> bool {
+    match node.kind() {
+        "identifier" => {
+            let text = node_text(node, source);
+            SIMPLE_TYPE_NAMES.contains(&text.as_ref())
+        }
+        // tree-sitter uses "generic_type" for parameterized types in annotations (list[int])
+        // and "subscript" in expression context
+        "generic_type" | "subscript" => {
+            // Check if the base identifier is a simple/builtin name
+            // generic_type: first named child is the identifier
+            // subscript: "value" field is the identifier
+            let base = node.named_child(0)
+                .or_else(|| node.child_by_field_name("value"));
+            if let Some(base_node) = base {
+                if base_node.kind() == "identifier" {
+                    let text = node_text(base_node, source);
+                    return SIMPLE_TYPE_NAMES.contains(&text.as_ref());
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Check if a union leaf node is None.
+fn is_none_type(node: tree_sitter::Node, source: &[u8]) -> bool {
+    node.kind() == "none" || (node.kind() == "identifier" && node_text(node, source) == "None")
+}
+
+/// Check if a node is the root of a union (binary_operator with | OR union_type).
+fn is_union_root(node: tree_sitter::Node) -> bool {
+    match node.kind() {
+        "union_type" => {
+            // Skip nested union_type (shouldn't happen but be safe)
+            if let Some(parent) = node.parent() {
+                if parent.kind() == "union_type" {
+                    return false;
+                }
+            }
+            true
+        }
+        "binary_operator" => {
+            // Skip if parent is also binary_operator (not the outermost)
+            if let Some(parent) = node.parent() {
+                if parent.kind() == "binary_operator" {
+                    return false;
+                }
+            }
+            count_union_members(node) > 1
+        }
+        _ => false,
+    }
+}
+
+/// Find top-level union nodes within an annotation subtree.
+/// Returns (line, simple_count, named_count) for each union root.
+///
+/// Handles both binary_operator chains (simple type unions) and
+/// union_type nodes (tree-sitter uses this for generic/parameterized unions).
+fn find_union_roots(
+    type_node: tree_sitter::Node,
+    source: &[u8],
+) -> Vec<(usize, usize, usize)> {
     let mut results = Vec::new();
 
     for node in walk_tree(type_node) {
-        if node.kind() != "binary_operator" {
+        if !is_union_root(node) {
             continue;
         }
-        // Skip if parent is also binary_operator (not the outermost union)
-        if let Some(parent) = node.parent() {
-            if parent.kind() == "binary_operator" {
-                continue;
+        let leaves = collect_union_leaves(node);
+        let mut simple_count = 0usize;
+        let mut named_count = 0usize;
+        for leaf in &leaves {
+            if is_none_type(*leaf, source) {
+                continue; // None is always free
+            } else if is_simple_type(*leaf, source) {
+                simple_count += 1;
+            } else {
+                named_count += 1;
             }
         }
-        let member_count = count_union_members(node);
-        if member_count > 1 {
-            results.push((node_line(node), member_count));
+        if simple_count + named_count > 1 {
+            results.push((node_line(node), simple_count, named_count));
         }
     }
     results
@@ -110,11 +190,62 @@ pub fn check_union_member_count(source: &ParsedSource, config: &CheckConfig) -> 
     let mut violations = Vec::new();
 
     for type_node in find_type_annotations(source.tree.root_node(), source.source_bytes) {
-        for (line, count) in find_union_roots(type_node) {
-            if count > config.max_union_members {
+        for (line, simple_count, named_count) in find_union_roots(type_node, source.source_bytes) {
+            if simple_count > config.max_simple_union_members {
                 violations.push(violation(
                     line,
-                    "union has too many members".to_string(),
+                    format!(
+                        "union has too many simple types ({simple_count} simple, cap is {})",
+                        config.max_simple_union_members,
+                    ),
+                ));
+            }
+            if named_count > config.max_named_union_members {
+                violations.push(violation(
+                    line,
+                    format!(
+                        "union has too many named types ({named_count} named, cap is {})",
+                        config.max_named_union_members,
+                    ),
+                ));
+            }
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// no_callable_params
+// -------------------------------------------------------------------------
+
+/// Detect Callable in function parameter type annotations.
+///
+/// Callable parameters launder runtime dependencies through function arguments,
+/// bypassing the static import graph that gleipnir enforces. If a function needs
+/// to call another function, it must import it directly.
+pub fn check_no_callable_params(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for func in find_nodes_by_type(source.tree.root_node(), "function_definition") {
+        let params = match node_field(func, "parameters") {
+            Some(p) => p,
+            None => continue,
+        };
+        let mut cursor = params.walk();
+        for param in params.named_children(&mut cursor) {
+            // typed_parameter, typed_default_parameter
+            let type_node = node_field(param, "type");
+            let type_node = match type_node {
+                Some(t) => t,
+                None => continue,
+            };
+            if annotation_contains_name(type_node, "Callable", source.source_bytes) {
+                let param_name = node_field(param, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or_else(|| node_text(param, source.source_bytes));
+                violations.push(violation(
+                    node_line(param),
+                    format!("parameter '{param_name}' has Callable type annotation"),
                 ));
             }
         }
@@ -342,25 +473,123 @@ mod tests {
     // -- union_member_count --
 
     #[test]
-    fn small_union_ok() {
+    fn small_simple_union_ok() {
         let parsed = parse("x: int | str\n");
         let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 2 simple, cap 4
+    }
+
+    #[test]
+    fn simple_at_cap_ok() {
+        let parsed = parse("x: int | str | float | bool\n");
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 4 simple, cap 4
+    }
+
+    #[test]
+    fn simple_over_cap_caught() {
+        let parsed = parse("x: int | str | float | bool | bytes\n");
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1); // 5 simple, cap 4
+        assert!(violations[0].message.contains("simple types"));
+    }
+
+    #[test]
+    fn none_not_counted() {
+        let parsed = parse("x: int | str | float | bool | None\n");
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 4 simple + None free = ok
+    }
+
+    #[test]
+    fn named_at_cap_ok() {
+        let parsed = parse(
+            "x: ModelA | ModelB | ModelC | ModelD | ModelE | ModelF | ModelG | ModelH\n",
+        );
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 8 named, cap 8
+    }
+
+    #[test]
+    fn named_over_cap_caught() {
+        let parsed = parse(
+            "x: ModelA | ModelB | ModelC | ModelD | ModelE | ModelF | ModelG | ModelH | ModelI\n",
+        );
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1); // 9 named, cap 8
+        assert!(violations[0].message.contains("named types"));
+    }
+
+    #[test]
+    fn named_with_none_ok() {
+        let parsed = parse(
+            "x: ModelA | ModelB | ModelC | ModelD | ModelE | ModelF | ModelG | ModelH | None\n",
+        );
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 8 named + None free
+    }
+
+    #[test]
+    fn parameterized_builtin_is_simple() {
+        let parsed = parse("x: list[int] | dict[str, float] | tuple[bool, ...] | set[bytes] | frozenset[int]\n");
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1); // 5 simple (parameterized), cap 4
+        assert!(violations[0].message.contains("simple types"));
+    }
+
+    #[test]
+    fn mixed_both_under_caps_ok() {
+        let parsed = parse("x: int | str | ModelA | ModelB | ModelC | ModelD | ModelE | ModelF\n");
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert!(violations.is_empty()); // 2 simple (cap 4), 6 named (cap 8)
+    }
+
+    #[test]
+    fn mixed_simple_over_cap() {
+        let parsed = parse(
+            "x: int | str | float | bool | bytes | ModelA | ModelB\n",
+        );
+        let violations = check_union_member_count(&parsed, &default_config());
+        assert_eq!(violations.len(), 1); // 5 simple over cap
+        assert!(violations[0].message.contains("simple types"));
+    }
+
+    // -- no_callable_params --
+
+    #[test]
+    fn callable_param_caught() {
+        let parsed = parse("def run(fn: Callable[[int], str]) -> None:\n    pass\n");
+        let violations = check_no_callable_params(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("Callable"));
+    }
+
+    #[test]
+    fn bare_callable_param_caught() {
+        let parsed = parse("def run(fn: Callable) -> None:\n    pass\n");
+        let violations = check_no_callable_params(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn callable_in_union_param_caught() {
+        let parsed = parse("def run(fn: Callable | None) -> None:\n    pass\n");
+        let violations = check_no_callable_params(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn no_callable_param_ok() {
+        let parsed = parse("def run(x: int, y: str) -> None:\n    pass\n");
+        let violations = check_no_callable_params(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 
     #[test]
-    fn large_union_caught() {
-        let parsed = parse("x: int | str | float | bool | bytes | list\n");
-        let violations = check_union_member_count(&parsed, &default_config());
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].message.contains("too many members"));
-    }
-
-    #[test]
-    fn exactly_at_threshold_ok() {
-        let parsed = parse("x: int | str | float | bool | bytes\n");
-        let violations = check_union_member_count(&parsed, &default_config());
-        assert!(violations.is_empty()); // 5 members, max 5
+    fn callable_return_type_ok() {
+        let parsed = parse("def factory() -> Callable[[int], str]:\n    pass\n");
+        let violations = check_no_callable_params(&parsed, &default_config());
+        assert!(violations.is_empty()); // return type, not param
     }
 
     // -- no_implicit_type_aliases --

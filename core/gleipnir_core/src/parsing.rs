@@ -494,6 +494,59 @@ pub fn count_union_members(node: Node) -> usize {
     left_count + right_count
 }
 
+/// Collect leaf type nodes from a union type (A | B | C → [A, B, C]).
+///
+/// Same recursive walk as count_union_members but returns the actual leaf
+/// nodes for classification. A leaf is any node that is not a binary_operator
+/// with "|" pipe.
+pub fn collect_union_leaves<'a>(node: Node<'a>) -> Vec<Node<'a>> {
+    let mut leaves = Vec::new();
+    collect_union_leaves_inner(node, &mut leaves);
+    leaves
+}
+
+fn collect_union_leaves_inner<'a>(node: Node<'a>, leaves: &mut Vec<Node<'a>>) {
+    // Unwrap "type" wrapper node
+    if node.kind() == "type" {
+        if let Some(inner) = node.named_child(0) {
+            collect_union_leaves_inner(inner, leaves);
+        }
+        return;
+    }
+    // tree-sitter union_type node: named children are "type" wrappers around members
+    if node.kind() == "union_type" {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect_union_leaves_inner(child, leaves);
+        }
+        return;
+    }
+    // binary_operator with "|" pipe (simple type unions)
+    if node.kind() == "binary_operator" {
+        let child_count = node.child_count();
+        let mut has_pipe = false;
+        for i in 0..child_count {
+            if let Some(child) = node.child(i) {
+                if !child.is_named() && child.kind() == "|" {
+                    has_pipe = true;
+                    break;
+                }
+            }
+        }
+        if has_pipe {
+            if let Some(left) = node.child_by_field_name("left") {
+                collect_union_leaves_inner(left, leaves);
+            }
+            if let Some(right) = node.child_by_field_name("right") {
+                collect_union_leaves_inner(right, leaves);
+            }
+            return;
+        }
+    }
+    // Leaf node — not a union operator
+    leaves.push(node);
+}
+
 /// Extract module name and relative level from an import_from_statement.
 ///
 /// Returns (module_name, level). Level is the count of leading dots

@@ -88,6 +88,7 @@ After zones are correct, each module directory gets split into CC levels.
 
 ### The level hierarchy
 
+For pure/, impure/, transform/ zones:
 ```
 primitive.py   CC=1, no cross-module deps, no branching
 simple.py      CC=1-3, may import primitive/ffi from same module
@@ -96,7 +97,13 @@ composed.py    CC=4-8, may import dispatch/simple/primitive
 assembled.py   CC=1-2, thin composition of composed functions
 ```
 
-Not every module needs all 5 levels. Most modules have 2-3 level files (e.g., `simple.py` + `composed.py`, or `primitive.py` + `simple.py` + `composed.py` + `assembled.py`).
+For orchestrate/ zone:
+```
+orchestrate.py CC=1-5, pipeline wiring across zones
+dispatch.py    CC=1-2, routing tables for orchestration
+```
+
+Not every module needs all levels. Most modules have 2-3 level files.
 
 ### How to split
 
@@ -121,40 +128,15 @@ CC=1 functions that import from other modules belong at `simple` level. This was
 `composed.py` in module A CANNOT import from `composed.py` in module B. If it needs to, the options are:
 
 1. **Move the needed function down to simple** (if its CC allows)
-2. **Dependency injection** — pass the function as a parameter from the orchestrate layer
-3. **Move the function to the same module** (if it belongs there)
+2. **Move the function to the same module** (if it belongs there)
 
-DI pattern example from regin:
-```python
-# orchestrate/level3_permissions_resolve.py (can see everything)
-from logic.pure.path_operations.composed import intersect_paths_capabilities, collapse_path_containment
-from logic.pure.grant_derive.assembled import derive_explicit_grants
+**Dependency injection is NOT a valid solution.** Passing a callable as a parameter to circumvent the import hierarchy launders the dependency through orchestrate — the static import graph shows no violation, but the runtime dependency still exists. This defeats the entire enforcement mechanism. If the import isn't in an import statement, gleipnir can't see it. DI makes the architecture's guarantees unverifiable.
 
-# Injects path_operations functions into grant_derive
-grants = derive_explicit_grants(
-    security,
-    intersect_fn=intersect_paths_capabilities,  # DI
-    collapse_fn=collapse_path_containment,       # DI
-)
-```
-
-### Type aliases for DI contracts
-
-When a function signature gets unwieldy from DI Callable types, define type aliases at the simple level:
-
-```python
-# path_operations/simple.py
-type PathIntersector = Callable[
-    [list[str], list[str], set[Capabilities], set[Capabilities]],
-    dict[str, set[str]],
-]
-```
-
-Then assembled.py imports the type alias instead of spelling out the full Callable signature.
+If neither option above works, the architecture needs a real answer — a new module, a level adjustment, or a redesign of the function boundary. Never launder dependencies through runtime parameters.
 
 ### Pydantic models for parameter grouping
 
-When a function accumulates 5+ parameters from DI + data, group related params into a frozen Pydantic model in `structure/model/`:
+When a function accumulates 5+ parameters, group related params into a frozen Pydantic model in `structure/model/`:
 
 ```python
 class AnthropicContext(BaseModel):
@@ -176,10 +158,10 @@ After zones and levels are set, run `saga . --force && syn .` and fix what gleip
 
 ### Expected violation categories (in order of frequency)
 
-1. **v2_import_boundaries** — cross-level or cross-zone imports that violate the hierarchy. Fix by moving functions to the right level or using DI.
+1. **v2_import_boundaries** — cross-level or cross-zone imports that violate the hierarchy. Fix by moving functions to the right level or restructuring module boundaries.
 2. **v2_cc_level** — function CC exceeds the level's allowed band. Fix by decomposing the function or moving it to a higher level.
 3. **short_param_names / short_local_names** — abbreviated names from the refactor. Rename.
-4. **param_count** — accumulated parameters. Group into Pydantic models or use DI.
+4. **param_count** — accumulated parameters. Group into frozen Pydantic models in structure/.
 5. **v2_classes_only_in_structure** — class definitions outside structure/. Move them.
 
 ### The fix loop

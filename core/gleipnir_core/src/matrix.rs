@@ -1,6 +1,6 @@
 //! Check matrix — maps FileKind to applicable checks.
 //!
-//! Source of truth: GLEIPNIR_PROCESSING.md check matrix.
+//! This file IS the source of truth for which checks run on which file types.
 //! Individual checks never inspect file paths. The matrix decides dispatch.
 
 use crate::checks_py::{architecture, imports, prohibited, style, suppression, type_safety};
@@ -38,6 +38,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     blocked("no_relative_imports", imports::check_no_relative_imports),
@@ -47,7 +48,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -60,6 +61,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("no_methods_in_classes", architecture::check_no_methods_in_classes),
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     // STYLE
     warning("function_length", style::check_function_length),
     warning("param_count", style::check_param_count),
@@ -100,6 +102,7 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -108,7 +111,7 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -139,7 +142,7 @@ static UNSAFE_IMPURE_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
     error("init_files_empty", prohibited::check_init_files_empty),
@@ -150,6 +153,7 @@ static UNSAFE_IMPURE_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -181,7 +185,7 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
     error("init_files_empty", prohibited::check_init_files_empty),
@@ -192,6 +196,7 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -218,6 +223,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -226,7 +232,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -238,6 +244,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -265,6 +272,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("impure_module_quarantine", imports::check_impure_module_quarantine),
@@ -274,7 +282,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -286,6 +294,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -313,6 +322,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS (lazy — excusable)
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -321,7 +331,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -333,6 +343,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -386,6 +397,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
+    blocked("no_callable_params", type_safety::check_no_callable_params),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -395,7 +407,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
-    error("no_print", prohibited::check_no_print_calls),
+    error("no_print", prohibited::check_no_print),
     error("no_model_dump", prohibited::check_no_model_dump),
     error("no_overload", prohibited::check_no_overload),
     error("no_future_annotations", prohibited::check_no_future_annotations),
@@ -407,6 +419,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
+    blocked("no_callable_protocol", architecture::check_no_callable_protocol),
     error("hardcoded_config", architecture::check_hardcoded_config),
     // STYLE
     warning("function_length", style::check_function_length),
@@ -421,6 +434,8 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     warning("short_local_names", style::check_short_local_names),
     // V2 CC enforcement
     error("v2_cc_level", style::check_v2_cc_level),
+    // V2 file validation
+    blocked("unknown_file_in_zone", architecture::check_unknown_file_in_zone),
 ];
 
 /// V2 structure zone: common + structure-specific.

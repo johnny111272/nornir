@@ -7,15 +7,16 @@
 # inherits from here.
 
 [defaults]
-max_function_lines = 50
-max_function_params = 5
-max_nesting_depth = 4
-min_param_length = 4
-max_union_members = 5
-max_functions_outside_zones = 3
-max_function_imports = 3
-max_other_imports = 3
-min_functions_for_pub_check = 4
+max_function_lines = 50          # function_length check
+max_function_params = 5          # param_count check
+max_nesting_depth = 4            # nesting_depth check
+min_param_length = 4             # short_param_names check — names shorter than this flag
+max_simple_union_members = 4     # union_member_count — builtin types (int, str, list[T], etc.)
+max_named_union_members = 8      # union_member_count — named types (models, custom classes)
+max_functions_outside_zones = 3  # functions not in structure/logic zones before flagging
+max_function_imports = 3         # import_count — imports from functions/ directories
+max_other_imports = 3            # import_count — imports from non-functions, non-structure sources
+min_functions_for_pub_check = 4  # no_pub_overuse (Rust) — minimum functions before pub ratio check
 
 # ─── Rust ──────────────────────────────────────────────────────────
 # Rust files currently use defaults for everything.
@@ -79,9 +80,9 @@ max_function_params = 4
 min_cc = 1
 max_cc = 2
 max_function_lines = 20
-max_nesting_depth = 1
+max_nesting_depth = 1            # dispatch is flat routing — no nesting allowed
 max_function_params = 3
-max_functions_outside_zones = 0
+max_functions_outside_zones = 0  # dispatch files contain ONLY dispatch tables
 
 [v2.composed]
 min_cc = 4
@@ -110,11 +111,14 @@ max_cc = 2
 max_function_lines = 30
 max_nesting_depth = 4
 max_function_params = 5
-max_functions_outside_zones = 1
+max_functions_outside_zones = 1  # entry_point allows 1 top-level function (main/cli)
 
 # ─── V2 transform zone overrides ──────────────────────────────────
 # Transform functions are shape conversion — tighter CC and nesting
-# than pure/impure at the same level. LOC stays inherited.
+# than pure/impure at the same level. LOC stays inherited from the
+# base v2 level section. These override ONLY the specified fields.
+# e.g. [v2.transform.simple] overrides max_cc and max_nesting_depth
+# but inherits max_function_lines from [v2.simple].
 
 [v2.transform.ffi]
 max_cc = 1

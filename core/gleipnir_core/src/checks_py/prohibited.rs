@@ -177,7 +177,7 @@ pub fn check_no_broad_exceptions(source: &ParsedSource, _config: &CheckConfig) -
 // no_print
 // -------------------------------------------------------------------------
 
-pub fn check_no_print_calls(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+pub fn check_no_print(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     // Pattern constructed at runtime to avoid self-triggering
     let pattern = format!("{}(", "print");
     let mut violations = Vec::new();
@@ -619,14 +619,14 @@ mod tests {
     fn print_call_caught() {
         let code = "print(\"hello\")\n";
         let parsed = parse(code);
-        let violations = check_no_print_calls(&parsed, &default_config());
+        let violations = check_no_print(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
     }
 
     #[test]
     fn no_print_clean() {
         let parsed = parse("x = 42\n");
-        let violations = check_no_print_calls(&parsed, &default_config());
+        let violations = check_no_print(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 

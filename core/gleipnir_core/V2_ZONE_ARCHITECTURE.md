@@ -22,7 +22,10 @@ project/
 │   └── *.py                    # Pydantic models and enums ONLY
 │
 └── logic/
-    ├── orchestrate/            # CC=1-5, flat files (level*.py, entry_point.py)
+    ├── orchestrate/
+    │   └── {module}/
+    │       ├── orchestrate.py  # CC=1-5, pipeline wiring
+    │       └── dispatch.py     # CC=1-2, routing tables for orchestration
     │
     ├── transform/
     │   └── {module}/
@@ -65,7 +68,13 @@ Not every module needs all 5 levels. Most modules have 2-3 level files. The modu
 
 Transforms operate on already-validated typed data, NOT raw input. The pattern is: schema validate first (permissive entry, union types), then transform (normalize to strict internal type). Pydantic BeforeValidators are replaced by explicit transform calls in orchestrate/.
 
-**`logic/orchestrate/`** — Pipeline coordination. Knows the sequence — which zones are called in what order, how data moves between them. Contains no business logic, no shape definitions, no IO, no transformation. Every line is a function call, a variable binding, a conditional branch, or a return. CC=1-5 ceiling allows necessary wiring (null checks, conditional paths) without accumulating real logic.
+Transform functions have **stricter CC and nesting limits** than pure/impure at the same level. A transform should be a clean shape-to-shape mapping — if it needs deep nesting or complex branching, the logic belongs in pure/ and the transform should call it via orchestrate. The tighter bounds prevent transforms from accumulating business logic disguised as shape conversion.
+
+**`logic/orchestrate/`** — Pipeline coordination. Knows the sequence — which zones are called in what order, how data moves between them. Contains no business logic, no shape definitions, no IO, no transformation. Every line is a function call, a variable binding, a conditional branch, or a return.
+
+Orchestrate uses the same `{module}/` directory + filename-as-level convention as other zones. Two levels are supported:
+- **`orchestrate.py`** (CC=1-5) — Pipeline wiring. Calls functions from across the entire stack.
+- **`dispatch.py`** (CC=1-2) — Routing tables for orchestration. Same rules as dispatch in other zones (typed dispatch tables only, no functions/classes), but can dispatch more complex callables since it sits at the orchestrate zone level.
 
 Orchestrate can import from any lower level in any reachable zone. This relaxed import rule exists because orchestrate's job is to wire together functions from across the entire stack — restricting it to composed-only forced IO boundary functions (gates, registry) to be artificially inflated to composed level.
 
@@ -93,14 +102,14 @@ Levels from bottom to top:
 | composed/ | dispatch/, simple/, primitive/, ffi/, structure/ |
 | assembled/ | composed/, dispatch/, simple/, primitive/, ffi/, structure/ |
 | orchestrate/ | assembled/, composed/, dispatch/, simple/, primitive/, ffi/, structure/ |
-| entry_point/ | orchestrate/, structure/ |
+| entry_point (cli.py, __main__.py) | orchestrate/, structure/ |
 
 **Rules:**
 - No same-level imports — ever. This is the primary anti-monolith binding. Same-level imports are how the LLM rebuilds OOP clusters without triggering alarms.
 - ffi/ and primitive/ are peers — neither imports the other. If a function needs ffi + native logic, it belongs in simple/.
 - Dispatch and assembled are symmetric thin layers. Dispatch routes between simples (CC=1-2). Assembled composes from composed (CC=1-2). Both exist to give thin wiring functions a proper home at the right level.
 - Orchestrate can reach any lower level. Its job is to wire the entire stack — restricting it to one level down would force functions to be artificially inflated to satisfy consumption requirements.
-- Entry point can only reach orchestrate — it is the thinnest possible wrapper (CC=1-2).
+- Entry point (cli.py, __main__.py at project root) can only reach orchestrate — it is the thinnest possible wrapper (CC=1-2). No `entry_point.py` inside zones — that creates shim files.
 
 ### Axis 2: Zone Matrix (which tracks can see which)
 
@@ -146,7 +155,7 @@ CC measures linearly independent paths. CC=1 is a straight path. Every branch ad
 | composed/ | 4-8 | Multi-branch business logic |
 | assembled/ | 1-2 | Thin composition of composed functions |
 | orchestrate/ | 1-5 | Pipeline wiring across zones |
-| entry_point/ | 1-2 | Thinnest wrapper, calls orchestrate |
+| entry_point (cli.py, __main__.py) | 1-2 | Thinnest wrapper at project root, calls orchestrate |
 
 ### The Gravity Rule
 

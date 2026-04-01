@@ -1,9 +1,12 @@
 //! Architecture enforcement checks.
 //!
-//! Checks: no_methods_in_classes, pydantic_only, god_classes,
-//! no_reexport_shims, hardcoded_config, structures_no_functions,
-//! structures_import_boundary, classes_only_in_structures,
-//! max_functions_outside_zones.
+//! Checks: no_methods_in_classes, no_callable_protocol, pydantic_only,
+//! god_classes, no_reexport_shims, hardcoded_config, import_count,
+//! structures_no_functions, structures_import_boundary,
+//! classes_only_in_structures, max_functions_outside_zones,
+//! v2_structure_no_logic, v2_structure_bases, v2_structure_import_boundary,
+//! v2_logic_no_constants, v2_dispatch_only_tables,
+//! v2_classes_only_in_structure.
 
 use crate::classify;
 use crate::parsing::{
@@ -43,13 +46,85 @@ pub fn check_no_methods_in_classes(source: &ParsedSource, _config: &CheckConfig)
 
         let mut cursor = body.walk();
         for child in body.named_children(&mut cursor) {
-            if child.kind() == "function_definition" {
-                let method_name = node_field(child, "name")
+            // Bare method
+            let func_node = if child.kind() == "function_definition" {
+                Some(child)
+            // Decorated method (@field_validator, @classmethod, etc.)
+            } else if child.kind() == "decorated_definition" {
+                node_field(child, "definition")
+                    .filter(|n| n.kind() == "function_definition")
+            } else {
+                None
+            };
+            if let Some(func) = func_node {
+                let method_name = node_field(func, "name")
                     .map(|n| node_text(n, source.source_bytes))
                     .unwrap_or("<unknown>");
                 violations.push(violation(
                     node_line(child),
                     format!("Method '{method_name}' in class '{class_name}'"),
+                ));
+            }
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// no_callable_protocol
+// -------------------------------------------------------------------------
+
+/// Detect Protocol classes with __call__ method.
+///
+/// A Protocol with __call__ is structurally equivalent to Callable — it creates
+/// a type that accepts any object with a matching call signature. This is the
+/// same dependency laundering as Callable parameters, just with extra steps.
+pub fn check_no_callable_protocol(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for class_node in find_nodes_by_type(source.tree.root_node(), "class_definition") {
+        // Check if class inherits from Protocol
+        let superclasses = match node_field(class_node, "superclasses") {
+            Some(s) => s,
+            None => continue,
+        };
+        let superclass_text = node_text(superclasses, source.source_bytes);
+        if !superclass_text.contains("Protocol") {
+            continue;
+        }
+
+        // Check if class has a __call__ method
+        let body = match node_field(class_node, "body") {
+            Some(b) => b,
+            None => continue,
+        };
+        let mut cursor = body.walk();
+        for child in body.named_children(&mut cursor) {
+            let func = match child.kind() {
+                "function_definition" => child,
+                "decorated_definition" => {
+                    match node_field(child, "definition")
+                        .filter(|n| n.kind() == "function_definition")
+                    {
+                        Some(f) => f,
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+            let name = node_field(func, "name")
+                .map(|n| node_text(n, source.source_bytes))
+                .unwrap_or_default();
+            if name == "__call__" {
+                let class_name = node_field(class_node, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or("<unknown>");
+                violations.push(violation(
+                    node_line(class_node),
+                    format!("Protocol '{class_name}' with __call__ is a Callable alias"),
                 ));
             }
         }
@@ -333,63 +408,59 @@ fn is_collection_constructor(call_node: tree_sitter::Node, source: &[u8]) -> boo
     COLLECTION_CONSTRUCTORS.contains(&node_text(func, source))
 }
 
+/// Extract the assignment node from a top-level statement, if present.
+fn extract_assignment(stmt: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if stmt.kind() == "expression_statement" {
+        stmt.named_child(0).filter(|c| c.kind() == "assignment")
+    } else if stmt.kind() == "assignment" {
+        Some(stmt)
+    } else {
+        None
+    }
+}
+
+/// Classify what kind of hardcoded config violation an assignment represents.
+fn hardcoded_config_message(assign: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let left = node_field(assign, "left").filter(|n| n.kind() == "identifier")?;
+    let right = node_field(assign, "right")?;
+    let name = node_text(left, source);
+
+    if name.starts_with("__") && name.ends_with("__") {
+        return None;
+    }
+
+    if right.kind() == "dictionary" || right.kind() == "list" {
+        Some(format!("hard-coded config {name} found (dict/list at module level)"))
+    } else if right.kind() == "call" && is_collection_constructor(right, source) {
+        Some(format!("hard-coded config {name} found (collection constructor at module level)"))
+    } else if name.len() > 1
+        && name.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+        && CONSTANT_NODE_TYPES.contains(&right.kind())
+    {
+        Some(format!("hard-coded constant {name} found (ALL_CAPS value)"))
+    } else {
+        None
+    }
+}
+
 pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    // Dispatch files ARE typed lookup tables — exempt from hardcoded config check.
+    let classification = classify::classify_file_v2(source.file_path);
+    if classification.level == Level::Dispatch {
+        return Vec::new();
+    }
+
     let mut violations = Vec::new();
     let root = source.tree.root_node();
     let mut cursor = root.walk();
 
     for stmt in root.named_children(&mut cursor) {
-        let assign = if stmt.kind() == "expression_statement" {
-            let mut inner_cursor = stmt.walk();
-            let first = stmt.named_children(&mut inner_cursor)
-                .next()
-                .filter(|c| c.kind() == "assignment");
-            first
-        } else if stmt.kind() == "assignment" {
-            Some(stmt)
-        } else {
-            None
-        };
-
-        let assign = match assign {
+        let assign = match extract_assignment(stmt) {
             Some(a) => a,
             None => continue,
         };
-
-        let left = match node_field(assign, "left") {
-            Some(n) if n.kind() == "identifier" => n,
-            _ => continue,
-        };
-        let right = match node_field(assign, "right") {
-            Some(n) => n,
-            None => continue,
-        };
-
-        let name = node_text(left, source.source_bytes);
-
-        // Skip dunder names
-        if name.starts_with("__") && name.ends_with("__") {
-            continue;
-        }
-
-        if right.kind() == "dictionary" || right.kind() == "list" {
-            violations.push(violation(
-                node_line(assign),
-                format!("hard-coded config {name} found (dict/list at module level)"),
-            ));
-        } else if right.kind() == "call" && is_collection_constructor(right, source.source_bytes) {
-            violations.push(violation(
-                node_line(assign),
-                format!("hard-coded config {name} found (collection constructor at module level)"),
-            ));
-        } else if name.len() > 1
-            && name.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-            && CONSTANT_NODE_TYPES.contains(&right.kind())
-        {
-            violations.push(violation(
-                node_line(assign),
-                format!("hard-coded constant {name} found (ALL_CAPS value)"),
-            ));
+        if let Some(msg) = hardcoded_config_message(assign, source.source_bytes) {
+            violations.push(violation(node_line(assign), msg));
         }
     }
     violations
@@ -981,7 +1052,7 @@ pub fn check_v2_logic_no_constants(
         Zone::Pure | Zone::Impure | Zone::Transform | Zone::Orchestrate => {}
         Zone::Structure => return Vec::new(),
     }
-    if classification.level == Level::Structure || classification.level == Level::Outside {
+    if matches!(classification.level, Level::Structure | Level::Dispatch | Level::Outside) {
         return Vec::new();
     }
 
@@ -1000,6 +1071,75 @@ pub fn check_v2_logic_no_constants(
 
     violations
 }
+
+// -------------------------------------------------------------------------
+// unknown_file_in_zone
+// -------------------------------------------------------------------------
+
+/// Valid level filenames for logic zones (pure, impure, transform).
+const LOGIC_ZONE_FILENAMES: &[&str] = &[
+    "ffi.py", "primitive.py", "simple.py", "dispatch.py",
+    "composed.py", "assembled.py", "__init__.py",
+];
+
+/// Valid level filenames for the orchestrate zone.
+const ORCHESTRATE_ZONE_FILENAMES: &[&str] = &[
+    "orchestrate.py", "dispatch.py", "__init__.py",
+];
+
+/// Detect files with unrecognized names inside v2 zones.
+///
+/// Each zone has a fixed set of valid filenames. A file that doesn't match
+/// any recognized level name is misplaced — the LLM created a file that
+/// the architecture doesn't know how to classify.
+pub fn check_unknown_file_in_zone(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let classification = classify::classify_file_v2(source.file_path);
+
+    // Only applies to logic zones where files got Level::Outside
+    if classification.level != Level::Outside {
+        return Vec::new();
+    }
+
+    let filename = source.file_path.rsplit('/').next().unwrap_or("");
+
+    let valid_names = match classification.zone {
+        Zone::Pure | Zone::Impure | Zone::Transform => LOGIC_ZONE_FILENAMES,
+        Zone::Orchestrate => ORCHESTRATE_ZONE_FILENAMES,
+        Zone::Structure => return Vec::new(), // structure has no filename convention
+    };
+
+    if valid_names.contains(&filename) {
+        return Vec::new(); // __init__.py is valid and gets Outside legitimately
+    }
+
+    let zone_name = match classification.zone {
+        Zone::Pure => "pure",
+        Zone::Impure => "impure",
+        Zone::Transform => "transform",
+        Zone::Orchestrate => "orchestrate",
+        Zone::Structure => unreachable!(),
+    };
+
+    let allowed = valid_names.iter()
+        .filter(|f| **f != "__init__.py")
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    vec![violation(
+        1,
+        format!(
+            "'{filename}' is not a valid filename in the {zone_name} zone (valid: {allowed})",
+        ),
+    )]
+}
+
+// -------------------------------------------------------------------------
+// (internal helpers)
+// -------------------------------------------------------------------------
 
 /// Detect module-level constant assignments.
 ///
@@ -1085,10 +1225,44 @@ mod tests {
     }
 
     #[test]
+    fn decorated_method_in_class_caught() {
+        let parsed = parse("class Foo(BaseModel):\n    name: str\n    @field_validator('name')\n    @classmethod\n    def validate_name(cls, v):\n        return v\n");
+        let violations = check_no_methods_in_classes(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("validate_name"));
+        assert!(violations[0].message.contains("Foo"));
+    }
+
+    #[test]
     fn class_without_methods_ok() {
         let parsed = parse("class Foo:\n    x: int = 0\n");
         let violations = check_no_methods_in_classes(&parsed, &default_config());
         assert!(violations.is_empty());
+    }
+
+    // -- no_callable_protocol --
+
+    #[test]
+    fn callable_protocol_caught() {
+        let parsed = parse("class MyFunc(Protocol):\n    def __call__(self, x: int) -> str:\n        ...\n");
+        let violations = check_no_callable_protocol(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("MyFunc"));
+        assert!(violations[0].message.contains("Callable alias"));
+    }
+
+    #[test]
+    fn protocol_without_call_ok() {
+        let parsed = parse("class Readable(Protocol):\n    def read(self) -> bytes:\n        ...\n");
+        let violations = check_no_callable_protocol(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn non_protocol_class_ok() {
+        let parsed = parse("class Foo:\n    def __call__(self):\n        pass\n");
+        let violations = check_no_callable_protocol(&parsed, &default_config());
+        assert!(violations.is_empty()); // not a Protocol
     }
 
     // -- pydantic_only --
@@ -1584,6 +1758,62 @@ mod tests {
         let code = "\"\"\"Dispatch tables for time converters.\"\"\"\nfrom typing import Callable\n";
         let parsed = parse_with_path(code, "/project/src/pkg/logic/impure/time/dispatch.py");
         let violations = check_v2_dispatch_only_tables(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- unknown_file_in_zone --
+
+    #[test]
+    fn unknown_file_in_pure_caught() {
+        let parsed = parse_with_path(
+            "x: int = 1\n",
+            "/project/src/pkg/logic/pure/helpers/utils.py",
+        );
+        let violations = check_unknown_file_in_zone(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("utils.py"));
+        assert!(violations[0].message.contains("pure"));
+    }
+
+    #[test]
+    fn valid_file_in_pure_ok() {
+        let parsed = parse_with_path(
+            "def add(a: int, b: int) -> int:\n    return a + b\n",
+            "/project/src/pkg/logic/pure/math/simple.py",
+        );
+        let violations = check_unknown_file_in_zone(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn unknown_file_in_orchestrate_caught() {
+        let parsed = parse_with_path(
+            "x: int = 1\n",
+            "/project/src/pkg/logic/orchestrate/pipeline/main.py",
+        );
+        let violations = check_unknown_file_in_zone(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("main.py"));
+        assert!(violations[0].message.contains("orchestrate"));
+    }
+
+    #[test]
+    fn structure_zone_any_filename_ok() {
+        let parsed = parse_with_path(
+            "class Foo:\n    x: int = 0\n",
+            "/project/src/pkg/structure/model/anything.py",
+        );
+        let violations = check_unknown_file_in_zone(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn init_file_in_zone_ok() {
+        let parsed = parse_with_path(
+            "\n",
+            "/project/src/pkg/logic/pure/helpers/__init__.py",
+        );
+        let violations = check_unknown_file_in_zone(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 

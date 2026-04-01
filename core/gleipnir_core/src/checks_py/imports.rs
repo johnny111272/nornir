@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn v2_orchestrate_to_composed_ok() {
         let code = "from mypackage.logic.pure.composed.pipeline import run\n";
-        let parsed = parse_with_path(code, "/project/src/mypackage/logic/orchestrate/main.py");
+        let parsed = parse_with_path(code, "/project/src/mypackage/logic/orchestrate/pipeline/orchestrate.py");
         let violations = check_v2_import_boundaries(&parsed, &default_config());
         assert!(violations.is_empty());
     }
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn v2_orchestrate_to_simple_ok() {
         let code = "from mypackage.logic.pure.simple.helpers import add\n";
-        let parsed = parse_with_path(code, "/project/src/mypackage/logic/orchestrate/main.py");
+        let parsed = parse_with_path(code, "/project/src/mypackage/logic/orchestrate/pipeline/orchestrate.py");
         let violations = check_v2_import_boundaries(&parsed, &default_config());
         assert!(violations.is_empty(), "orchestrate should reach any lower level");
     }

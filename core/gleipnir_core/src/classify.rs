@@ -69,7 +69,6 @@ fn level_from_filename(file_path: &str) -> Level {
         "composed" => Level::Composed,
         "assembled" => Level::Assembled,
         "orchestrate" => Level::Orchestrate,
-        "entry_point" => Level::EntryPoint,
         _ => Level::Outside,
     }
 }
@@ -104,7 +103,7 @@ const V2_IMPORT_PATH_MARKERS: &[(&str, Level, Zone)] = &[
 ];
 
 /// Entry point filenames at project root level.
-const ENTRY_POINT_NAMES: &[&str] = &["cli.py", "__main__.py", "entry_point.py"];
+const ENTRY_POINT_NAMES: &[&str] = &["cli.py", "__main__.py"];
 
 /// Classify a Python source file into the v2 zone architecture.
 ///
@@ -114,9 +113,11 @@ const ENTRY_POINT_NAMES: &[&str] = &["cli.py", "__main__.py", "entry_point.py"];
 ///
 /// Special cases:
 /// - Structure zone: level is always Structure (no per-file level)
-/// - Orchestrate zone: level is always Orchestrate (no per-file level)
+/// - Orchestrate zone: only orchestrate.py and dispatch.py are valid levels
+/// - Pure/Impure/Transform zones: ffi, primitive, simple, dispatch, composed, assembled
 /// - Entry point files (cli.py, __main__.py): EntryPoint + Orchestrate
 /// - __init__.py: inherits zone, level is Outside (no checks needed)
+/// - Invalid level for zone (e.g. orchestrate.py in pure/): forced to Outside
 ///
 /// Files matching no zone get Level::Outside — a sentinel that fails
 /// all import checks. In a v2 project, every file must be in a zone.
@@ -143,11 +144,9 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
         };
     };
 
-    // Structure and orchestrate zones have fixed levels
-    match zone {
-        Zone::Structure => return V2Classification { level: Level::Structure, zone },
-        Zone::Orchestrate => return V2Classification { level: Level::Orchestrate, zone },
-        _ => {}
+    // Structure zone has a fixed level (no per-file hierarchy)
+    if zone == Zone::Structure {
+        return V2Classification { level: Level::Structure, zone };
     }
 
     // __init__.py files inherit zone but have no level checks
@@ -155,8 +154,24 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
         return V2Classification { level: Level::Outside, zone };
     }
 
-    // Level from filename for pure/impure/transform zones
+    // Level from filename
     let level = level_from_filename(file_path);
+
+    // Validate level is legal for this zone
+    let valid = match zone {
+        Zone::Pure | Zone::Impure | Zone::Transform => matches!(
+            level,
+            Level::Ffi | Level::Primitive | Level::Simple | Level::Dispatch
+            | Level::Composed | Level::Assembled | Level::Outside
+        ),
+        Zone::Orchestrate => matches!(
+            level,
+            Level::Orchestrate | Level::Dispatch | Level::Outside
+        ),
+        Zone::Structure => true, // handled above
+    };
+    let level = if valid { level } else { Level::Outside };
+
     V2Classification { level, zone }
 }
 
@@ -177,11 +192,9 @@ pub fn classify_import_path(dotted_path: &str) -> Option<V2Classification> {
         if probe.contains(pattern) { Some(zone) } else { None }
     })?;
 
-    // Structure and orchestrate have fixed levels
-    match zone {
-        Zone::Structure => return Some(V2Classification { level: Level::Structure, zone }),
-        Zone::Orchestrate => return Some(V2Classification { level: Level::Orchestrate, zone }),
-        _ => {}
+    // Structure zone has a fixed level
+    if zone == Zone::Structure {
+        return Some(V2Classification { level: Level::Structure, zone });
     }
 
     // Try level from last segment (filename convention)
@@ -194,7 +207,6 @@ pub fn classify_import_path(dotted_path: &str) -> Option<V2Classification> {
         "composed" => Some(Level::Composed),
         "assembled" => Some(Level::Assembled),
         "orchestrate" => Some(Level::Orchestrate),
-        "entry_point" => Some(Level::EntryPoint),
         _ => None,
     };
     if let Some(level) = level_from_last {
@@ -378,8 +390,43 @@ mod tests {
 
     #[test]
     fn v2_orchestrate() {
-        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/main_pipeline.py");
+        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/main_pipeline/orchestrate.py");
         assert_eq!(c.level, Level::Orchestrate);
+        assert_eq!(c.zone, Zone::Orchestrate);
+    }
+
+    #[test]
+    fn v2_orchestrate_dispatch() {
+        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/main_pipeline/dispatch.py");
+        assert_eq!(c.level, Level::Dispatch);
+        assert_eq!(c.zone, Zone::Orchestrate);
+    }
+
+    #[test]
+    fn v2_orchestrate_py_in_pure_rejected() {
+        let c = classify_file_v2("/project/src/pkg/logic/pure/module/orchestrate.py");
+        assert_eq!(c.level, Level::Outside); // orchestrate.py invalid in pure zone
+        assert_eq!(c.zone, Zone::Pure);
+    }
+
+    #[test]
+    fn v2_primitive_in_orchestrate_rejected() {
+        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/primitive.py");
+        assert_eq!(c.level, Level::Outside); // primitive.py invalid in orchestrate zone
+        assert_eq!(c.zone, Zone::Orchestrate);
+    }
+
+    #[test]
+    fn v2_assembled_in_orchestrate_rejected() {
+        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/assembled.py");
+        assert_eq!(c.level, Level::Outside); // assembled.py invalid in orchestrate zone
+        assert_eq!(c.zone, Zone::Orchestrate);
+    }
+
+    #[test]
+    fn v2_composed_in_orchestrate_rejected() {
+        let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/composed.py");
+        assert_eq!(c.level, Level::Outside); // composed.py invalid in orchestrate zone
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 

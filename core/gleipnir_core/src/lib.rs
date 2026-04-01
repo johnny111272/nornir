@@ -357,6 +357,17 @@ mod tests {
         let _ = violations;
     }
 
+    #[test]
+    fn run_checks_v2_catches_underscore_prefix() {
+        let source = b"def _hidden_helper(x: int) -> int:\n    return x + 1\n";
+        let violations = run_checks_v2(
+            "/project/src/pkg/logic/orchestrate/compile/orchestrate.py",
+            source,
+        );
+        let names: Vec<&str> = violations.iter().map(|v| v.check_name.as_str()).collect();
+        assert!(names.contains(&"no_underscore_prefix"));
+    }
+
     // -- statistics loading --
 
     #[test]

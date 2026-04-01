@@ -44,10 +44,22 @@ direction = "Add type parameters: dict[str, int], list[str], tuple[int, ...], et
 canary = "LLM uses bare collection types out of laziness or unfamiliarity with generic syntax."
 
 [union_member_count]
-detail = "Union has too many members. This is type-erasure through complexity — worse than overt Any because it pretends to be precise."
-signal = "Large unions scatter the 'unknown type' signal across many members instead of clustering it with overt Any."
-direction = "Factor common members into a base type or discriminated union. If the type genuinely varies this much, use Any directly. Any will trigger no_any_types — that is correct."
-canary = "LLM builds sprawling union types to avoid triggering no_any_types, creating camouflaged type erasure."
+detail = "Union has too many members. Simple/builtin types (int, str, list[T], dict[K,V], etc.) have a strict cap — a handful of builtins is type erasure pretending to be precise. Named types (models, custom classes) have a higher but still bounded cap. None is always free and never counted."
+signal = "Large simple-type unions scatter the 'unknown type' signal across many members instead of clustering it with overt Any. Large named-type unions may indicate a missing base class or protocol."
+direction = "For simple types: if you need many builtins in a union, use Any directly — that is honest. For named types: factor common members into a base model or protocol. Keep unions as small as the domain requires. None does not count toward either limit."
+canary = "LLM builds sprawling union types to avoid triggering no_any_types, creating camouflaged type erasure through builtin soup or excessive model enumeration."
+
+[no_callable_params]
+detail = "Callable type in function parameter. Functions must not accept callables as arguments — this launders runtime dependencies through parameters, bypassing the static import graph that enforces zone and level boundaries."
+signal = "Callable parameters create invisible dependency edges. The import graph shows no violation, but the runtime behavior crosses zone or level boundaries that the architecture explicitly forbids. Every dependency must be a static import."
+direction = "Import the function directly instead of accepting it as a parameter. If the import would violate zone or level rules, that is the architecture telling you the dependency should not exist. Restructure: move the function to a reachable location, merge modules, or redesign the boundary."
+canary = "LLM passes callables as parameters to circumvent import boundary enforcement, laundering cross-zone or cross-level dependencies through runtime arguments."
+
+[no_callable_protocol]
+detail = "Protocol class with __call__ method. This is structurally equivalent to Callable — it creates a type that accepts any object with a matching call signature, laundering the same runtime dependency that Callable parameters create."
+signal = "A Protocol with __call__ is Callable with extra steps. It exists to circumvent no_callable_params while achieving the same dependency laundering."
+direction = "Remove the Protocol. Import the function directly instead. If the import would violate boundaries, the architecture is telling you the dependency should not exist."
+canary = "LLM creates Protocol with __call__ to circumvent the Callable parameter ban while preserving the same dependency laundering pattern."
 
 [no_implicit_type_aliases]
 detail = "Use the type keyword for explicit type aliases. Do not alias Any or types containing Any — that is circumvention."
@@ -473,7 +485,7 @@ canary = "LLM imports freely across zones and levels, reconstructing OOP topolog
 
 [v2_cc_level]
 detail = "Function cyclomatic complexity does not match its level."
-signal = "Each level has a CC band: primitive/ffi=1, simple=2-3, composed=4+, orchestrate=1-2. Functions must live at the lowest level their complexity allows. Below the band = gravity violation (too simple for this level). Above the band = ceiling violation (too complex for this level)."
+signal = "Each level has a CC band: primitive/ffi=1, simple=1-3, dispatch=1-2, composed=4-8, assembled=1-2, orchestrate=1-5, entry_point=1-2. Functions must live at the lowest level their complexity allows. Below the band = gravity violation (too simple for this level). Above the band = ceiling violation (too complex for this level)."
 direction = "Gravity violation: your function is simpler than this level requires — move it to a lower level where simpler functions belong. This is good news — your function is clean enough to be a building block. Ceiling violation: your function has too many branches for this level — decompose it. Extract the branching paths into separate functions at this level, then compose them from the level above. Each extracted function should do one thing."
 canary = "LLM places functions at whatever level is convenient, ignoring the CC band that defines each level's purpose."
 
@@ -500,6 +512,12 @@ detail = "Module-level constant in logic zone. Data belongs in the structure zon
 signal = "A module-level constant is data masquerading as code. In OOP, constants live alongside the code that uses them. In this architecture, data shapes and values are declared in the structure zone and logic zones operate on them."
 direction = "Move the constant to the structure zone. A set of known string values becomes an Enum. A dict lookup table becomes a frozen Pydantic model with typed fields. A numeric constant becomes a field default on a config model. All data is typed and lives in the structure zone, all computation is in logic zones."
 canary = "LLM creates module-level constants to satisfy no-magic-string rules without properly typing the data."
+
+[unknown_file_in_zone]
+detail = "This file has a name that doesn't belong in this zone. Each zone has a fixed set of valid filenames that encode the composition level. A file that doesn't match any level name cannot be classified and cannot participate in the import hierarchy."
+signal = "Unrecognized filenames bypass the level system entirely. The file gets no CC bounds, no import rules, no gravity enforcement — it exists outside the architecture while physically sitting inside it."
+direction = "Rename the file to one of the valid level names for this zone. In pure/impure/transform zones: ffi.py, primitive.py, simple.py, dispatch.py, composed.py, assembled.py. In the orchestrate zone: orchestrate.py, dispatch.py. Entry points (cli.py, __main__.py) live at the project root, not inside zones. The filename IS the level declaration — it tells gleipnir what rules to apply."
+canary = "LLM creates arbitrarily named files inside zones, bypassing the level system that enforces decomposition and import boundaries."
 
 [no_before_validators]
 detail = "BeforeValidator injects implicit transformation during model validation. Transforms should be explicit function calls, not hidden in type annotations."

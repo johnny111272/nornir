@@ -59,16 +59,22 @@ But more importantly: the LLM learns WHERE things go. After enough violations, i
 
 ## Level System and Decomposition Pressure
 
-The level system (ffi/primitive/simple/composed/orchestrate) creates decomposition pressure through cyclomatic complexity bands and function length limits:
+The level system creates decomposition pressure through cyclomatic complexity bands and function length limits:
 
-- **primitive** (CC=1, 8 LOC): Does exactly one thing. Any more and it isn't primitive.
-- **simple** (CC=2-3, 16 LOC): Combines a couple of primitives with a branch or two.
-- **composed** (CC=4+, 24 LOC): Coordinates multiple paths.
-- **orchestrate** (CC=1-2, 20 LOC): Sequences zone calls. No logic, just wiring.
+- **ffi** (CC=1, 10 LOC): Black-box FFI bindings. Peers with primitive — neither imports the other.
+- **primitive** (CC=1, 10 LOC): Does exactly one thing. No cross-module deps.
+- **simple** (CC=1-3, 20 LOC): Combines primitives with a branch or two.
+- **dispatch** (CC=1-2, 20 LOC): Thin routing tables. Typed dicts mapping types to callables.
+- **composed** (CC=4-8, 30 LOC): Multi-branch business logic.
+- **assembled** (CC=1-2, 30 LOC): Thin composition of composed functions.
+- **orchestrate** (CC=1-5, 30 LOC): Sequences zone calls. Wiring, not logic.
+- **entry_point** (CC=1-2, 30 LOC): cli.py or __main__.py at project root. Thinnest wrapper. Calls orchestrate only.
 
 The gravity rule ensures functions live at the lowest level their complexity allows. A CC=1 function in simple/ gets a gravity violation — it must move down to primitive/. This prevents the LLM from floating everything to the highest level where constraints are loosest.
 
 Same-level imports are banned. This is the primary anti-monolith binding. The LLM cannot build object-like clusters because functions at the same level cannot import each other. If two functions need each other, they must be composed at the next level up.
+
+**Callable parameters are banned.** Passing functions as arguments launders dependencies through runtime parameters, bypassing the static import graph. If a function needs another function, it must import it directly. If the import would violate zone or level rules, the architecture is saying the dependency should not exist.
 
 ## Type Safety at the Boundary
 
