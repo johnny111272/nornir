@@ -49,6 +49,12 @@ signal = "Large simple-type unions scatter the 'unknown type' signal across many
 direction = "For simple types: if you need many builtins in a union, use Any directly — that is honest. For named types: factor common members into a base model or protocol. Keep unions as small as the domain requires. None does not count toward either limit."
 canary = "LLM builds sprawling union types to avoid triggering no_any_types, creating camouflaged type erasure through builtin soup or excessive model enumeration."
 
+[no_callable_type_aliases]
+detail = "Type alias wraps Callable. Since callables must not be passed as arguments, aliasing Callable serves no legitimate purpose — it only launders the type past no_callable_params detection."
+signal = "A Callable type alias gives the forbidden type a clean name that bypasses AST detection. The parameter annotation shows the alias name, not Callable, so no_callable_params cannot see through it."
+direction = "Delete the type alias. If callers used it in parameter annotations, those parameters are also violations — remove the callable-passing pattern entirely and import functions directly."
+canary = "LLM creates type aliases for Callable to circumvent no_callable_params while preserving the same dependency laundering pattern."
+
 [no_callable_params]
 detail = "Callable type in function parameter. Functions must not accept callables as arguments — this launders runtime dependencies through parameters, bypassing the static import graph that enforces zone and level boundaries."
 signal = "Callable parameters create invisible dependency edges. The import graph shows no violation, but the runtime behavior crosses zone or level boundaries that the architecture explicitly forbids. Every dependency must be a static import."

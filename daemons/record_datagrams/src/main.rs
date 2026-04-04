@@ -93,8 +93,8 @@ extern "C" fn shutdown_handler(_sig: i32) {
 fn install_shutdown_handler(socket_path: PathBuf) {
     let _ = SHUTDOWN_SOCKET_PATH.set(socket_path);
     unsafe {
-        libc::signal(libc::SIGINT, shutdown_handler as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, shutdown_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, shutdown_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, shutdown_handler as *const () as libc::sighandler_t);
     }
 }
 

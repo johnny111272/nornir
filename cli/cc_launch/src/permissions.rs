@@ -5,13 +5,11 @@
 /// The actual mechanism is HOOK_LLM_ALLOW_PATHS (colon-separated paths).
 pub struct Permission {
     pub name: &'static str,
-    pub description: &'static str,
     pub paths: &'static [&'static str],
 }
 
 pub static KNOWN_PERMISSIONS: &[Permission] = &[Permission {
     name: "Security Infrastructure",
-    description: "Bypass probing/gaming alerts for nornir, tools, and claude settings",
     paths: &[
         "/Users/johnny/.ai/smidja/nornir/",
         "/Users/johnny/.ai/tools/",

@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use http_body_util::{BodyExt, Full};
-use hyper::body::{Bytes, Incoming};
+use hyper::body::{Bytes, Frame, Incoming};
 use http_body_util::combinators::BoxBody;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -387,6 +387,49 @@ fn streaming_body(incoming: Incoming) -> ProxyBody {
         .boxed()
 }
 
+/// Body backed by an mpsc channel — used for SSE re-emission.
+struct ChannelBody {
+    rx: tokio::sync::mpsc::Receiver<
+        Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
+}
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
+/// Wrap an mpsc receiver as a ProxyBody (for SSE re-emission).
+fn channel_body(
+    rx: tokio::sync::mpsc::Receiver<
+        Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
+) -> ProxyBody {
+    ChannelBody { rx }.boxed()
+}
+
+/// Context for response-side interception (SSE parsing, thinking block stripping).
+/// None when the request is not a /v1/messages POST or session is unknown.
+struct ResponseIntercept {
+    session_dir: Option<PathBuf>,
+}
+
+/// Check if the upstream response is an SSE stream.
+fn is_sse_response(headers: &hyper::HeaderMap) -> bool {
+    headers
+        .get(hyper::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("text/event-stream"))
+        .unwrap_or(false)
+}
+
 // =============================================================================
 // HTTP handler — gate + dispatch
 // =============================================================================
@@ -401,13 +444,14 @@ async fn handle_request(
     let is_messages =
         parts.uri.path().starts_with("/v1/messages") && parts.method == Method::POST;
 
-    let forward_body = if is_messages && !body_bytes.is_empty() {
-        intercept_messages_request(&body_bytes, &state)
+    let (forward_body, response_intercept) = if is_messages && !body_bytes.is_empty() {
+        let (body, session_dir) = intercept_messages_request(&body_bytes, &state);
+        (body, Some(ResponseIntercept { session_dir }))
     } else {
-        body_bytes
+        (body_bytes, None)
     };
 
-    forward_upstream(&parts, forward_body, &state.upstream, &state.http_client).await
+    forward_upstream(&parts, forward_body, &state, response_intercept).await
 }
 
 // =============================================================================
@@ -415,8 +459,9 @@ async fn handle_request(
 // =============================================================================
 
 /// Run interception pipeline on a /v1/messages request body.
-/// Returns the body to forward (original or rewritten for compactions).
-fn intercept_messages_request(body_bytes: &Bytes, state: &ProxyState) -> Bytes {
+/// Returns (body_to_forward, optional_session_dir).
+/// Session dir is returned for response-side interception (thinking block stripping).
+fn intercept_messages_request(body_bytes: &Bytes, state: &ProxyState) -> (Bytes, Option<PathBuf>) {
     let body_ref = body_bytes.as_ref();
 
     let maybe_value = serde_json::from_slice::<serde_json::Value>(body_ref).ok();
@@ -429,8 +474,14 @@ fn intercept_messages_request(body_bytes: &Bytes, state: &ProxyState) -> Bytes {
         }
         None => {
             save_unparseable_request(body_ref, &state.intercept_dir);
-            return Bytes::copy_from_slice(body_ref);
+            return (Bytes::copy_from_slice(body_ref), None);
         }
+    };
+
+    let session_dir = if session_id != "unknown" {
+        Some(state.intercept_dir.join("sessions").join(&session_id))
+    } else {
+        None
     };
 
     let rewritten = if session_id != "unknown" {
@@ -453,10 +504,12 @@ fn intercept_messages_request(body_bytes: &Bytes, state: &ProxyState) -> Bytes {
         spawn_watcher(&session_id, &workspace, state);
     }
 
-    match rewritten {
+    let forward_bytes = match rewritten {
         Some(bytes) => Bytes::from(bytes),
         None => Bytes::copy_from_slice(body_ref),
-    }
+    };
+
+    (forward_bytes, session_dir)
 }
 
 fn save_unparseable_request(body: &[u8], intercept_dir: &Path) {
@@ -475,6 +528,299 @@ fn save_unparseable_request(body: &[u8], intercept_dir: &Path) {
 }
 
 // =============================================================================
+// SSE stream interception
+// =============================================================================
+
+/// Block handling mode during response streaming.
+enum BlockMode {
+    /// Forward to Claude Code with renumbered index.
+    Forward { forwarded_index: u64 },
+    /// Strip from stream, accumulate content for side-log.
+    Strip,
+}
+
+/// State for per-response SSE interception.
+struct SseInterceptState {
+    /// Anthropic block index → handling mode
+    block_modes: HashMap<u64, BlockMode>,
+    /// Next contiguous index to assign when forwarding a block
+    next_forwarded_index: u64,
+    /// Accumulated thinking content for the current strip-mode block
+    thinking_buffer: String,
+    /// Session directory for writing thinking side-log
+    session_dir: Option<PathBuf>,
+}
+
+impl SseInterceptState {
+    fn new(session_dir: Option<PathBuf>) -> Self {
+        Self {
+            block_modes: HashMap::new(),
+            next_forwarded_index: 0,
+            thinking_buffer: String::new(),
+            session_dir,
+        }
+    }
+}
+
+/// Spawn a task that reads SSE events from upstream, intercepts thinking blocks,
+/// and re-emits the filtered stream through `tx`.
+///
+/// Thinking blocks are stripped from the stream and side-logged.
+/// All other blocks are forwarded with contiguous renumbered indices.
+fn spawn_sse_intercept(
+    mut incoming: Incoming,
+    tx: tokio::sync::mpsc::Sender<
+        Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
+    session_dir: Option<PathBuf>,
+) {
+    tokio::spawn(async move {
+        let mut event_buffer = Vec::new();
+        let mut intercept_state = SseInterceptState::new(session_dir);
+
+        loop {
+            let frame = match incoming.frame().await {
+                Some(Ok(frame)) => frame,
+                Some(Err(e)) => {
+                    let _ = tx
+                        .send(Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
+                        .await;
+                    return;
+                }
+                None => {
+                    // Stream ended — flush any remaining bytes
+                    if !event_buffer.is_empty() {
+                        let _ = tx.send(Ok(Frame::data(Bytes::from(event_buffer)))).await;
+                    }
+                    return;
+                }
+            };
+
+            let data = match frame.data_ref() {
+                Some(data) => data,
+                None => continue,
+            };
+
+            event_buffer.extend_from_slice(data);
+
+            // Process all complete SSE events
+            if route_complete_events(&mut event_buffer, &tx, &mut intercept_state)
+                .await
+                .is_err()
+            {
+                return; // downstream closed
+            }
+        }
+    });
+}
+
+/// Extract and route all complete SSE events from the buffer.
+///
+/// Each event is parsed, routed based on block type, and either forwarded
+/// (with renumbered index) or stripped (thinking blocks → side-log).
+async fn route_complete_events(
+    event_buffer: &mut Vec<u8>,
+    sender: &tokio::sync::mpsc::Sender<
+        Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
+    state: &mut SseInterceptState,
+) -> Result<(), ()> {
+    while let Some(pos) = find_event_boundary(event_buffer) {
+        let event_end = pos + 2; // include the \n\n
+        let raw_event = &event_buffer[..event_end];
+
+        let output = route_sse_event(raw_event, state);
+
+        event_buffer.drain(..event_end);
+
+        if let Some(bytes) = output {
+            if sender.send(Ok(Frame::data(bytes))).await.is_err() {
+                return Err(());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Route a single SSE event. Returns Some(bytes) to forward, None to strip.
+fn route_sse_event(raw_event: &[u8], state: &mut SseInterceptState) -> Option<Bytes> {
+    let raw_str = match std::str::from_utf8(raw_event) {
+        Ok(s) => s,
+        Err(_) => return Some(Bytes::copy_from_slice(raw_event)), // not UTF-8 — forward as-is
+    };
+
+    let (event_type, data_str) = match parse_sse_event(raw_str) {
+        Some(parsed) => parsed,
+        None => return Some(Bytes::copy_from_slice(raw_event)), // unparseable — forward as-is
+    };
+
+    match event_type {
+        "content_block_start" => handle_block_start(data_str, state),
+        "content_block_delta" => handle_block_delta(data_str, event_type, state),
+        "content_block_stop" => handle_block_stop(data_str, event_type, state),
+        _ => Some(Bytes::copy_from_slice(raw_event)), // message_start, message_delta, message_stop, etc.
+    }
+}
+
+/// Parse an SSE event into (event_type, data_json_str).
+fn parse_sse_event(raw_event: &str) -> Option<(&str, &str)> {
+    let mut event_type = None;
+    let mut data_line = None;
+
+    for line in raw_event.lines() {
+        if let Some(rest) = line.strip_prefix("event: ") {
+            event_type = Some(rest.trim());
+        } else if let Some(rest) = line.strip_prefix("data: ") {
+            data_line = Some(rest);
+        }
+    }
+
+    Some((event_type?, data_line?))
+}
+
+/// Handle content_block_start: register block mode, forward or strip.
+fn handle_block_start(data_str: &str, state: &mut SseInterceptState) -> Option<Bytes> {
+    let mut value: serde_json::Value = match serde_json::from_str(data_str) {
+        Ok(v) => v,
+        Err(_) => return Some(reconstruct_sse_event("content_block_start", data_str)),
+    };
+
+    let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let block_type = value
+        .pointer("/content_block/type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text");
+
+    if block_type == "thinking" {
+        state.block_modes.insert(index, BlockMode::Strip);
+        state.thinking_buffer.clear();
+        return None; // strip — don't forward
+    }
+
+    // Forward: assign next contiguous index
+    let forwarded_index = state.next_forwarded_index;
+    state.next_forwarded_index += 1;
+    state
+        .block_modes
+        .insert(index, BlockMode::Forward { forwarded_index });
+
+    // Rewrite index in the JSON
+    if let Some(idx) = value.get_mut("index") {
+        *idx = serde_json::Value::Number(forwarded_index.into());
+    }
+
+    Some(reconstruct_sse_event(
+        "content_block_start",
+        &serde_json::to_string(&value).unwrap_or_else(|_| data_str.to_string()),
+    ))
+}
+
+/// Handle content_block_delta: forward with renumbered index, or accumulate thinking.
+fn handle_block_delta(data_str: &str, event_type: &str, state: &mut SseInterceptState) -> Option<Bytes> {
+    let mut value: serde_json::Value = match serde_json::from_str(data_str) {
+        Ok(v) => v,
+        Err(_) => return Some(reconstruct_sse_event(event_type, data_str)),
+    };
+
+    let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    match state.block_modes.get(&index) {
+        Some(BlockMode::Strip) => {
+            // Accumulate thinking content for side-log
+            if let Some(thinking) = value.pointer("/delta/thinking").and_then(|v| v.as_str()) {
+                state.thinking_buffer.push_str(thinking);
+            }
+            None // strip
+        }
+        Some(BlockMode::Forward { forwarded_index }) => {
+            let new_index = *forwarded_index;
+            if let Some(idx) = value.get_mut("index") {
+                *idx = serde_json::Value::Number(new_index.into());
+            }
+            Some(reconstruct_sse_event(
+                event_type,
+                &serde_json::to_string(&value).unwrap_or_else(|_| data_str.to_string()),
+            ))
+        }
+        None => {
+            // Unknown block — forward unchanged (fail-safe)
+            Some(reconstruct_sse_event(event_type, data_str))
+        }
+    }
+}
+
+/// Handle content_block_stop: forward with renumbered index, or finalize thinking side-log.
+fn handle_block_stop(data_str: &str, event_type: &str, state: &mut SseInterceptState) -> Option<Bytes> {
+    let mut value: serde_json::Value = match serde_json::from_str(data_str) {
+        Ok(v) => v,
+        Err(_) => return Some(reconstruct_sse_event(event_type, data_str)),
+    };
+
+    let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let mode = state.block_modes.remove(&index);
+
+    match mode {
+        Some(BlockMode::Strip) => {
+            // Write thinking block to side-log
+            if let Some(ref session_dir) = state.session_dir {
+                write_thinking_side_log(session_dir, &state.thinking_buffer);
+            }
+            state.thinking_buffer.clear();
+            None // strip
+        }
+        Some(BlockMode::Forward { forwarded_index }) => {
+            if let Some(idx) = value.get_mut("index") {
+                *idx = serde_json::Value::Number(forwarded_index.into());
+            }
+            Some(reconstruct_sse_event(
+                event_type,
+                &serde_json::to_string(&value).unwrap_or_else(|_| data_str.to_string()),
+            ))
+        }
+        None => {
+            Some(reconstruct_sse_event(event_type, data_str))
+        }
+    }
+}
+
+/// Reconstruct an SSE event from its type and data JSON string.
+fn reconstruct_sse_event(event_type: &str, data_json: &str) -> Bytes {
+    Bytes::from(format!("event: {event_type}\ndata: {data_json}\n\n"))
+}
+
+/// Write a completed thinking block to the session thinking side-log.
+fn write_thinking_side_log(session_dir: &Path, thinking_content: &str) {
+    if thinking_content.is_empty() {
+        return;
+    }
+
+    let thinking_path = session_dir.join("thinking_log.jsonl");
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let entry = serde_json::json!({
+        "timestamp": timestamp,
+        "thinking": thinking_content,
+    });
+
+    if let Ok(line) = serde_json::to_string(&entry) {
+        if let Err(e) = write_engine::append_line_fsync(&thinking_path, &line) {
+            eprintln!("bifrost_proxy: thinking side-log write failed: {e}");
+        }
+    }
+}
+
+/// Find the position of the first SSE event boundary (\n\n) in a byte slice.
+fn find_event_boundary(event_buffer: &[u8]) -> Option<usize> {
+    event_buffer.windows(2).position(|w| w == b"\n\n")
+}
+
+// =============================================================================
 // Upstream forwarding
 // =============================================================================
 
@@ -485,14 +831,17 @@ fn bad_gateway(message: String) -> Result<Response<ProxyBody>, hyper::Error> {
         .unwrap_or_else(|_| Response::new(full_body(Bytes::new()))))
 }
 
-/// Forward request upstream and stream the response back without buffering.
+/// Forward request upstream and stream the response back.
+///
+/// For /v1/messages SSE responses: parse event stream and re-emit through a channel.
+/// For everything else: stream raw bytes through without buffering.
 async fn forward_upstream(
     original_parts: &hyper::http::request::Parts,
     body: Bytes,
-    upstream_addr: &str,
-    http_client: &HttpClient,
+    state: &ProxyState,
+    response_intercept: Option<ResponseIntercept>,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
-    let upstream_uri = format!("https://{}{}", upstream_addr, original_parts.uri.path());
+    let upstream_uri = format!("https://{}{}", state.upstream, original_parts.uri.path());
     let uri: hyper::Uri = match upstream_uri.parse() {
         Ok(u) => u,
         Err(e) => return bad_gateway(format!("bad upstream URI: {e}")),
@@ -516,16 +865,27 @@ async fn forward_upstream(
         Err(e) => return bad_gateway(format!("request build error: {e}")),
     };
 
-    match http_client.request(upstream_request).await {
+    match state.http_client.request(upstream_request).await {
         Ok(upstream_response) => {
-            // Stream response through without buffering — critical for SSE
             let (resp_parts, resp_body) = upstream_response.into_parts();
             let mut response_builder = Response::builder().status(resp_parts.status);
             for (key, val) in &resp_parts.headers {
                 response_builder = response_builder.header(key, val);
             }
+
+            // SSE responses to /v1/messages: parse and intercept event stream.
+            // Everything else: stream raw bytes through without buffering.
+            let body = match response_intercept {
+                Some(intercept) if is_sse_response(&resp_parts.headers) => {
+                    let (tx, rx) = tokio::sync::mpsc::channel(32);
+                    spawn_sse_intercept(resp_body, tx, intercept.session_dir);
+                    channel_body(rx)
+                }
+                _ => streaming_body(resp_body),
+            };
+
             Ok(response_builder
-                .body(streaming_body(resp_body))
+                .body(body)
                 .unwrap_or_else(|_| Response::new(full_body(Bytes::new()))))
         }
         Err(e) => {

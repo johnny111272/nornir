@@ -254,6 +254,52 @@ pub fn check_no_callable_params(source: &ParsedSource, _config: &CheckConfig) ->
 }
 
 // -------------------------------------------------------------------------
+// no_callable_type_aliases
+// -------------------------------------------------------------------------
+
+/// Detect type aliases that wrap Callable, laundering callable-passing behind
+/// a clean name that `no_callable_params` cannot see through.
+pub fn check_no_callable_type_aliases(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for node in find_nodes_by_type(source.tree.root_node(), "type_alias_statement") {
+        let mut cursor = node.walk();
+        let type_children: Vec<_> = node
+            .named_children(&mut cursor)
+            .filter(|c| c.kind() == "type")
+            .collect();
+
+        if type_children.len() < 2 {
+            continue;
+        }
+
+        let name_node = type_children[0];
+        let value_node = match type_children.last() {
+            Some(node) => *node,
+            None => continue,
+        };
+
+        let alias_name = name_node
+            .named_child(0)
+            .map(|n| node_text(n, source.source_bytes))
+            .unwrap_or("<unknown>");
+
+        if annotation_contains_name(value_node, "Callable", source.source_bytes) {
+            violations.push(violation(
+                node_line(node),
+                format!(
+                    "type alias '{alias_name}' wraps Callable — callables must not be passed as arguments"
+                ),
+            ));
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
 // no_any_type_aliases
 // -------------------------------------------------------------------------
 

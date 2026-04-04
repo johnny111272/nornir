@@ -105,6 +105,62 @@ pub fn toon_to_toml(content: &str) -> Result<String, FormatError> {
 }
 
 // =============================================================================
+// XML source conversions
+// =============================================================================
+
+/// Convert XML string to pretty-printed JSON.
+pub fn xml_to_json(content: &str) -> Result<String, FormatError> {
+    let value = parse::xml(content)?;
+    serialize::to_json(&value)
+}
+
+/// Convert XML string to YAML.
+pub fn xml_to_yaml(content: &str) -> Result<String, FormatError> {
+    let value = parse::xml(content)?;
+    serialize::to_yaml(&value)
+}
+
+/// Convert XML string to TOML with educational diagnostics on failure.
+pub fn xml_to_toml(content: &str) -> Result<String, FormatError> {
+    let value = parse::xml(content)?;
+    value_to_toml(&value)
+}
+
+/// Convert XML string to TOON.
+pub fn xml_to_toon(content: &str) -> Result<String, FormatError> {
+    let value = parse::xml(content)?;
+    serialize::to_toon(&value)
+}
+
+// =============================================================================
+// *-to-XML conversions
+// =============================================================================
+
+/// Convert JSON string to XML.
+pub fn json_to_xml(content: &str) -> Result<String, FormatError> {
+    let value = parse::json(content)?;
+    serialize::to_xml(&value)
+}
+
+/// Convert YAML string to XML.
+pub fn yaml_to_xml(content: &str) -> Result<String, FormatError> {
+    let value = parse::yaml(content)?;
+    serialize::to_xml(&value)
+}
+
+/// Convert TOML string to XML.
+pub fn toml_to_xml(content: &str) -> Result<String, FormatError> {
+    let value = parse::toml(content)?;
+    serialize::to_xml(&value)
+}
+
+/// Convert TOON string to XML.
+pub fn toon_to_xml(content: &str) -> Result<String, FormatError> {
+    let value = parse::toon(content)?;
+    serialize::to_xml(&value)
+}
+
+// =============================================================================
 // Null stripping
 // =============================================================================
 

@@ -45,7 +45,6 @@ fn parse_profile(name: String, value: toml::Value) -> Option<WorkspaceProfile> {
         .unwrap_or(true); // default: coding enabled
 
     let expertise = extract_string_array(section, "expertise").unwrap_or_default();
-    let permissions = extract_string_array(section, "permissions").unwrap_or_default();
 
     let primary_descriptor = section
         .get("primary_descriptor")
@@ -60,7 +59,6 @@ fn parse_profile(name: String, value: toml::Value) -> Option<WorkspaceProfile> {
         persona,
         coding,
         expertise,
-        permissions,
         primary_descriptor,
         descriptors,
     })

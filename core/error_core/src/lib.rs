@@ -53,6 +53,9 @@ pub enum FormatError {
     #[error("TOMLX parse error: {0}")]
     TomlxParse(String),
 
+    #[error("XML parse error: {0}")]
+    XmlParse(String),
+
     #[error("Conversion error: {0}")]
     Conversion(String),
 

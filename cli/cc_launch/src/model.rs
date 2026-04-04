@@ -37,7 +37,7 @@ pub enum FragmentCategory {
     Safety,
     Anthropic,
     Coding,
-    Expertise { subdomain: String },
+    Expertise,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,11 +49,13 @@ pub enum LoadPolicy {
 
 #[derive(Debug)]
 pub struct Library {
+    pub foundation: Option<Fragment>,
     pub personas: Vec<Fragment>,
     pub always: Vec<Fragment>,
     pub coding: Vec<Fragment>,
     pub expertise: Vec<Fragment>,
     pub descriptors: Vec<Descriptor>,
+    pub languages: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,12 +65,9 @@ pub struct WorkspaceProfile {
     pub persona: String,
     pub coding: bool,
     pub expertise: Vec<String>,
-    pub permissions: Vec<String>,
     pub primary_descriptor: Option<String>,
     pub descriptors: Vec<String>,
 }
-
-pub const LANGUAGES: &[&str] = &["python", "rust", "typescript", "svelte", "go", "shell"];
 
 pub struct AppState {
     pub library: Library,
@@ -83,6 +82,7 @@ pub struct AppState {
     pub active_section: Section,
     pub section_cursor: usize,
     pub passthrough_flags: Vec<String>,
+    pub update_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,28 +102,28 @@ pub enum TuiOutcome {
 
 impl Section {
     /// Next section following column-aware order:
-    /// C1: Workspace → Persona → Coding → Permissions
-    /// C2: Descriptors → Expertise
-    /// Tab wraps: Permissions → Descriptors → Expertise → Workspace
+    /// C1: Workspace → Persona → Expertise
+    /// C2: Descriptors → Coding → Permissions
+    /// Tab wraps: Permissions → Workspace
     pub fn next(self) -> Self {
         match self {
             Section::Workspace => Section::Persona,
-            Section::Persona => Section::Coding,
+            Section::Persona => Section::Expertise,
+            Section::Expertise => Section::Descriptors,
+            Section::Descriptors => Section::Coding,
             Section::Coding => Section::Permissions,
-            Section::Permissions => Section::Descriptors,
-            Section::Descriptors => Section::Expertise,
-            Section::Expertise => Section::Workspace,
+            Section::Permissions => Section::Workspace,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Section::Workspace => Section::Expertise,
+            Section::Workspace => Section::Permissions,
             Section::Persona => Section::Workspace,
-            Section::Coding => Section::Persona,
+            Section::Expertise => Section::Persona,
+            Section::Descriptors => Section::Expertise,
+            Section::Coding => Section::Descriptors,
             Section::Permissions => Section::Coding,
-            Section::Descriptors => Section::Permissions,
-            Section::Expertise => Section::Descriptors,
         }
     }
 }
@@ -160,21 +160,25 @@ impl AppState {
         library: Library,
         profiles: Vec<WorkspaceProfile>,
         passthrough_flags: Vec<String>,
+        update_mode: bool,
     ) -> Self {
         let expertise_count = library.expertise.len();
         let descriptor_count = library.descriptors.len();
         let perm_count = crate::permissions::KNOWN_PERMISSIONS.len();
-        let lang_count = LANGUAGES.len();
 
-        // Coding on by default, python always selected
-        let mut selected_languages = vec![false; lang_count];
-        selected_languages[0] = true;
+        // Coding on by default, python always selected (index 0)
+        let mut selected_languages = vec![false; library.languages.len()];
+        if !selected_languages.is_empty() {
+            selected_languages[0] = true;
+        }
+
+        let initial_persona = if library.personas.is_empty() { None } else { Some(0) };
 
         Self {
             library,
             profiles,
             selected_workspace: None,
-            selected_persona: None,
+            selected_persona: initial_persona,
             coding_enabled: true,
             selected_languages,
             selected_expertise: vec![false; expertise_count],
@@ -183,15 +187,17 @@ impl AppState {
             active_section: Section::Workspace,
             section_cursor: 0,
             passthrough_flags,
+            update_mode,
         }
     }
 
     pub fn selected_language_names(&self) -> Vec<&str> {
-        LANGUAGES
+        self.library
+            .languages
             .iter()
             .enumerate()
             .filter(|(index, _)| self.selected_languages.get(*index).copied().unwrap_or(false))
-            .map(|(_, language)| *language)
+            .map(|(_, language)| language.as_str())
             .collect()
     }
 
@@ -222,7 +228,7 @@ impl AppState {
                 None => continue,
             };
             for lang in &langs {
-                let pos = match LANGUAGES.iter().position(|l| l == lang) {
+                let pos = match self.library.languages.iter().position(|l| l == lang) {
                     Some(p) => p,
                     None => continue,
                 };
@@ -242,12 +248,13 @@ impl AppState {
     }
 
     /// Returns the auto-matched space descriptor index, if any.
+    /// Uses the currently selected persona (not the profile default).
     pub fn auto_space_index(&self) -> Option<usize> {
-        let profile = self
-            .selected_workspace
-            .and_then(|ws| self.profiles.get(ws))?;
-        self.library
-            .matching_space_index(&profile.persona, &profile.path)
+        let persona_id = self.selected_persona
+            .and_then(|i| self.library.personas.get(i))
+            .map(|p| p.id.as_str())?;
+        let workspace_path = self.workspace_path()?;
+        self.library.matching_space_index(persona_id, workspace_path)
     }
 
     /// Returns system descriptor indices ordered for prompt assembly:
@@ -410,9 +417,9 @@ impl AppState {
 
     pub fn clear_workspace_profile(&mut self) {
         self.selected_workspace = None;
-        self.selected_persona = None;
+        self.selected_persona = if self.library.personas.is_empty() { None } else { Some(0) };
         self.coding_enabled = true;
-        for (index, _) in LANGUAGES.iter().enumerate() {
+        for (index, _) in self.library.languages.iter().enumerate() {
             self.selected_languages[index] = index == 0;
         }
         for selected in &mut self.selected_expertise {
@@ -429,10 +436,19 @@ impl AppState {
     pub fn toggle_coding(&mut self) {
         self.coding_enabled = !self.coding_enabled;
         if self.coding_enabled {
+            self.sync_languages_from_descriptors();
             for (index, fragment) in self.library.expertise.iter().enumerate() {
                 if fragment.coding_related {
                     if let Some(selected) = self.selected_expertise.get_mut(index) {
                         *selected = true;
+                    }
+                }
+            }
+        } else {
+            for (index, fragment) in self.library.expertise.iter().enumerate() {
+                if fragment.coding_related {
+                    if let Some(selected) = self.selected_expertise.get_mut(index) {
+                        *selected = false;
                     }
                 }
             }
@@ -442,9 +458,9 @@ impl AppState {
     pub fn section_len(&self, section: Section) -> usize {
         match section {
             Section::Workspace => self.profiles.len() + 1,
-            Section::Persona => self.library.personas.len() + 1,
+            Section::Persona => self.library.personas.len(),
             Section::Descriptors => self.system_count(),
-            Section::Coding => 1 + LANGUAGES.len(),
+            Section::Coding => 1 + self.library.languages.len(),
             Section::Expertise => self.library.expertise.len(),
             Section::Permissions => crate::permissions::KNOWN_PERMISSIONS.len(),
         }

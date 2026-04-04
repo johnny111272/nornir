@@ -27,6 +27,184 @@ pub fn toon(content: &str) -> Result<Value, FormatError> {
     toon_format::decode_default(content).map_err(|e| FormatError::ToonParse(e.to_string()))
 }
 
+/// Parse XML string to Value using @attr/#text convention.
+///
+/// Convention:
+/// - Attributes become `@attr_name` keys
+/// - Text content becomes `#text` (or bare string if no attrs/children)
+/// - Repeated same-name siblings become arrays
+/// - Root element becomes the top-level key: `{"root": {...}}`
+pub fn xml(content: &str) -> Result<Value, FormatError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    // Parse expects a single root element → {"root_name": {...}}
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let attrs = parse_xml_attributes(e)
+                    .map_err(|e| FormatError::XmlParse(e))?;
+                let children = parse_xml_children(&mut reader, &tag)
+                    .map_err(|e| FormatError::XmlParse(e))?;
+                let element = build_xml_element(attrs, children);
+                let mut root = serde_json::Map::new();
+                root.insert(tag, element);
+                return Ok(Value::Object(root));
+            }
+            Ok(Event::Decl(_)) | Ok(Event::Comment(_)) | Ok(Event::PI(_)) => continue,
+            Ok(Event::Eof) => {
+                return Err(FormatError::XmlParse("Empty XML document".to_string()));
+            }
+            Ok(event) => {
+                return Err(FormatError::XmlParse(format!(
+                    "Unexpected event at document root: {:?}", event
+                )));
+            }
+            Err(e) => return Err(FormatError::XmlParse(e.to_string())),
+        }
+    }
+}
+
+/// Parse attributes from an XML start element into a vec of (@key, value) pairs.
+fn parse_xml_attributes(
+    start: &quick_xml::events::BytesStart,
+) -> Result<Vec<(String, String)>, String> {
+    let mut attrs = Vec::new();
+    for attr in start.attributes() {
+        let attr = attr.map_err(|e| format!("Attribute error: {}", e))?;
+        let key = format!("@{}", String::from_utf8_lossy(attr.key.as_ref()));
+        let val = attr
+            .unescape_value()
+            .map_err(|e| format!("Attribute decode error: {}", e))?
+            .to_string();
+        attrs.push((key, val));
+    }
+    Ok(attrs)
+}
+
+/// Parse children of an XML element until its closing tag.
+/// Returns a list of (tag_name, Value) pairs for child elements,
+/// plus any accumulated text content.
+fn parse_xml_children(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    parent_tag: &str,
+) -> Result<(Vec<(String, Value)>, Option<String>), String> {
+    use quick_xml::events::Event;
+
+    let mut children: Vec<(String, Value)> = Vec::new();
+    let mut text_parts: Vec<String> = Vec::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let attrs = parse_xml_attributes(e)?;
+                let (sub_children, sub_text) = parse_xml_children(reader, &tag)?;
+                let element = build_xml_element(attrs, (sub_children, sub_text));
+                children.push((tag, element));
+            }
+            Ok(Event::Empty(ref e)) => {
+                // Self-closing element: <foo bar="baz"/>
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let attrs = parse_xml_attributes(e)?;
+                let element = build_xml_element(attrs, (vec![], None));
+                children.push((tag, element));
+            }
+            Ok(Event::Text(ref e)) => {
+                let text = e.unescape()
+                    .map_err(|e| format!("Text decode error: {}", e))?
+                    .to_string();
+                if !text.is_empty() {
+                    text_parts.push(text);
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                let text = String::from_utf8_lossy(e.as_ref()).to_string();
+                if !text.is_empty() {
+                    text_parts.push(text);
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                if tag == parent_tag {
+                    let text = if text_parts.is_empty() {
+                        None
+                    } else {
+                        Some(text_parts.join(""))
+                    };
+                    return Ok((children, text));
+                }
+                return Err(format!(
+                    "Mismatched closing tag: expected </{}>, got </{}>",
+                    parent_tag, tag
+                ));
+            }
+            Ok(Event::Comment(_)) | Ok(Event::PI(_)) | Ok(Event::Decl(_)) | Ok(Event::DocType(_)) => continue,
+            Ok(Event::Eof) => {
+                return Err(format!("Unexpected EOF inside <{}>", parent_tag));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// Build a serde_json::Value from attributes and parsed children.
+///
+/// Rules:
+/// - Text-only, no attrs, no children → bare string
+/// - Has attrs or children → object with @attr keys, #text for text, child elements as keys
+/// - Repeated same-name children → array
+fn build_xml_element(
+    attrs: Vec<(String, String)>,
+    children: (Vec<(String, Value)>, Option<String>),
+) -> Value {
+    let (child_elements, text) = children;
+
+    // Simple case: text-only leaf with no attributes and no child elements
+    if attrs.is_empty() && child_elements.is_empty() {
+        return match text {
+            Some(t) => Value::String(t),
+            None => Value::Object(serde_json::Map::new()),
+        };
+    }
+
+    let mut map = serde_json::Map::new();
+
+    // Insert attributes first (preserves visual order: attrs, then children)
+    for (key, val) in attrs {
+        map.insert(key, Value::String(val));
+    }
+
+    // Insert text content
+    if let Some(t) = text {
+        map.insert("#text".to_string(), Value::String(t));
+    }
+
+    // Insert child elements — group repeated names into arrays
+    for (name, value) in child_elements {
+        if let Some(existing) = map.remove(&name) {
+            // Already seen this name — convert to array or push to existing array
+            match existing {
+                Value::Array(mut arr) => {
+                    arr.push(value);
+                    map.insert(name, Value::Array(arr));
+                }
+                _ => {
+                    map.insert(name, Value::Array(vec![existing, value]));
+                }
+            }
+        } else {
+            map.insert(name, value);
+        }
+    }
+
+    Value::Object(map)
+}
+
 // =============================================================================
 // TOML → JSON value conversion
 // =============================================================================

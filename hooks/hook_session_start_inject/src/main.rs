@@ -4,7 +4,7 @@
 //! reads it back from the session-specific path where hook_session_start_orient
 //! placed it and emits it as additionalContext.
 //!
-//! Path: ~/.ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.md
+//! Path: ~/.ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.xml
 
 use std::io::{self, Read};
 use std::path::Path;
@@ -68,7 +68,7 @@ fn run() -> Option<(String, String, String)> {
     let workspace = workspace_name(&event.cwd);
     let prompt_path = workspace_registry::workspace_control_dir(&workspace)
         .join(&event.session_id)
-        .join("SYSTEM_PROMPT.md");
+        .join("SYSTEM_PROMPT.xml");
 
     let content = std::fs::read_to_string(&prompt_path).ok()?;
     if content.is_empty() {

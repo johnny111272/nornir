@@ -130,6 +130,24 @@ pub fn workspace_from_session(session_id: &str) -> Result<Option<String>, String
     }
 }
 
+/// Get the most recent session ID for a workspace.
+pub fn latest_session_for_workspace(workspace: &str) -> Result<Option<String>, String> {
+    let conn = open()?;
+    let mut stmt = conn.prepare(
+        "SELECT session_id FROM sessions WHERE workspace = ?1 ORDER BY started_at DESC LIMIT 1"
+    ).map_err(|e| format!("prepare: {e}"))?;
+
+    let result = stmt.query_row(params![workspace], |row| {
+        row.get::<_, String>(0)
+    });
+
+    match result {
+        Ok(sid) => Ok(Some(sid)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("latest_session_for_workspace: {e}")),
+    }
+}
+
 /// Get the control directory for a workspace: `~/.ai/control/workspaces/{name}/`
 pub fn workspace_control_dir(name: &str) -> PathBuf {
     write_engine::ai_home()

@@ -10,7 +10,7 @@
 //! Exit codes: 0=success, 1=stdin/parse error, 2=arg parse error
 
 use clap::Parser;
-use compaction_inject_core::{inject_compaction_system_block, COMPACTION_INSTRUCTIONS};
+use compaction_inject_core::inject_compaction_system_block;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process;
@@ -118,6 +118,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use compaction_inject_core::COMPACTION_INSTRUCTIONS;
 
     // =========================================================================
     // arg parsing (clap)

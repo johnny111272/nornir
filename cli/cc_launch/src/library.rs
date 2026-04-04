@@ -6,11 +6,19 @@ use regex::Regex;
 use crate::model::{Descriptor, DescriptorKind, Fragment, FragmentCategory, Library, LoadPolicy};
 
 pub fn scan_library(base: &Path) -> Result<Library, String> {
+    let mut foundation: Option<Fragment> = None;
     let mut personas = Vec::new();
     let mut always = Vec::new();
     let mut coding = Vec::new();
     let mut expertise = Vec::new();
     let mut descriptors = Vec::new();
+
+    // Scan foundation/*.xml — single slot, the collaboration paradigm
+    let foundation_dir = base.join("foundation");
+    if foundation_dir.is_dir() {
+        let frags = scan_xml_dir(&foundation_dir, FragmentCategory::CognitiveMode)?;
+        foundation = frags.into_iter().next();
+    }
 
     // Scan personas/*.xml
     let persona_dir = base.join("personas");
@@ -46,10 +54,10 @@ pub fn scan_library(base: &Path) -> Result<Library, String> {
         coding = scan_xml_dir(&coding_dir, FragmentCategory::Coding)?;
     }
 
-    // Scan expertise/*/*.md
+    // Scan expertise/*.xml
     let expertise_dir = base.join("expertise");
     if expertise_dir.is_dir() {
-        expertise = scan_expertise_dir(&expertise_dir)?;
+        expertise = scan_expertise_xml(&expertise_dir)?;
     }
 
     // Scan systems/*.xml
@@ -75,12 +83,24 @@ pub fn scan_library(base: &Path) -> Result<Library, String> {
     expertise.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     descriptors.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
+    // Build language universe from all descriptors, python always first
+    let mut languages = vec!["python".to_string()];
+    for desc in &descriptors {
+        for lang in &desc.languages {
+            if !languages.contains(lang) {
+                languages.push(lang.clone());
+            }
+        }
+    }
+
     Ok(Library {
+        foundation,
         personas,
         always,
         coding,
         expertise,
         descriptors,
+        languages,
     })
 }
 
@@ -200,61 +220,46 @@ fn scan_descriptor_dir(
     Ok(descriptors)
 }
 
-fn scan_expertise_dir(directory: &Path) -> Result<Vec<Fragment>, String> {
+fn scan_expertise_xml(directory: &Path) -> Result<Vec<Fragment>, String> {
     let mut fragments = Vec::new();
+    let domain_re = Regex::new(r#"domain="([^"]+)""#).map_err(|e| format!("regex: {e}"))?;
 
-    let entries = fs::read_dir(directory)
-        .map_err(|e| format!("read dir {}: {e}", directory.display()))?;
+    let entries =
+        fs::read_dir(directory).map_err(|e| format!("read dir {}: {e}", directory.display()))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
-        let subdir = entry.path();
+        let path = entry.path();
 
-        if !subdir.is_dir() {
+        if path.extension().and_then(|e| e.to_str()) != Some("xml") {
             continue;
         }
 
-        let subdomain = subdir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
 
-        // Aggregate all .md files in this subdomain into one fragment
-        let sub_entries =
-            fs::read_dir(&subdir).map_err(|e| format!("read dir {}: {e}", subdir.display()))?;
+        let byte_size = content.len();
+        let first_line = content.lines().next().unwrap_or("");
 
-        let mut total_bytes: usize = 0;
-        let mut has_files = false;
+        let (id, _load) = parse_xml_root_attrs(&content, &FragmentCategory::Expertise)?;
+        let display_name = id_to_display(&id);
 
-        for sub_entry in sub_entries {
-            let sub_entry = sub_entry.map_err(|e| format!("dir entry: {e}"))?;
-            let path = sub_entry.path();
+        let domain = domain_re
+            .captures(first_line)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
 
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
+        let coding_related = domain == "coding";
 
-            total_bytes += fs::metadata(&path)
-                .map(|metadata| metadata.len() as usize)
-                .unwrap_or(0);
-            has_files = true;
-        }
-
-        if has_files {
-            let coding_related = is_coding_expertise(&subdomain);
-            fragments.push(Fragment {
-                id: subdomain.clone(),
-                category: FragmentCategory::Expertise {
-                    subdomain: subdomain.clone(),
-                },
-                load: LoadPolicy::Manual,
-                display_name: id_to_display(&subdomain),
-                byte_size: total_bytes,
-                path: subdir,
-                coding_related,
-            });
-        }
+        fragments.push(Fragment {
+            path,
+            id,
+            category: FragmentCategory::Expertise,
+            load: LoadPolicy::Manual,
+            display_name,
+            byte_size,
+            coding_related,
+        });
     }
 
     Ok(fragments)
@@ -303,15 +308,3 @@ fn id_to_display(id: &str) -> String {
         .join(" ")
 }
 
-const CODING_EXPERTISE_DOMAINS: &[&str] = &[
-    "functional-programming",
-    "boundary-architecture",
-    "schema-first",
-    "security-mindset",
-    "data-pipeline",
-    "anti-rigidity",
-];
-
-fn is_coding_expertise(subdomain: &str) -> bool {
-    CODING_EXPERTISE_DOMAINS.contains(&subdomain)
-}

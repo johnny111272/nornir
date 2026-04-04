@@ -350,8 +350,8 @@ extern "C" fn shutdown_handler(_sig: i32) {
 
 fn install_signal_handlers() {
     unsafe {
-        libc::signal(libc::SIGINT, shutdown_handler as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, shutdown_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, shutdown_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, shutdown_handler as *const () as libc::sighandler_t);
     }
 }
 

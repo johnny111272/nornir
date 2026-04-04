@@ -1,10 +1,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
+
 use crate::model::AppState;
 
 pub fn estimate_tokens(state: &AppState) -> usize {
     let mut total_bytes: usize = 0;
+
+    // Foundation
+    if let Some(ref foundation) = state.library.foundation {
+        total_bytes += foundation.byte_size;
+    }
 
     // Always-loaded fragments
     for fragment in &state.library.always {
@@ -52,6 +59,10 @@ pub fn estimate_tokens(state: &AppState) -> usize {
 }
 
 pub fn write_prompt_file(state: &AppState) -> Result<PathBuf, String> {
+    if state.selected_persona.is_none() {
+        return Err("No persona selected. Select a persona before launching.".to_string());
+    }
+
     let prompt = assemble_prompt(state)?;
     let output_path = std::env::temp_dir().join("cc_launch_prompt.xml");
     fs::write(&output_path, &prompt)
@@ -64,7 +75,7 @@ pub fn write_prompt_file(state: &AppState) -> Result<PathBuf, String> {
         .workspace_path()
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let workspace_copy = prompt_dir.join(".SYSTEM_PROMPT.md");
+    let workspace_copy = prompt_dir.join(".SYSTEM_PROMPT.xml");
     let _ = fs::write(&workspace_copy, &prompt);
 
     Ok(output_path)
@@ -75,18 +86,21 @@ fn assemble_prompt(state: &AppState) -> Result<String, String> {
 
     // === IDENTITY LAYER (who you are, how you think) ===
 
-    // 1. Always-loaded: cognitive-mode → behavior → communication → safety → anthropic
-    //    Collaboration paradigm is first (00-prefix in cognitive-mode).
-    //    This is the FOUNDATION — how to think, how to behave, how to collaborate.
-    for fragment in &state.library.always {
-        parts.push(read_fragment(&fragment.path)?);
+    // 1. Foundation — the collaboration paradigm. Position 1, always.
+    if let Some(ref foundation) = state.library.foundation {
+        parts.push(read_fragment(&foundation.path)?);
     }
 
-    // 2. Persona — who you are within the collaboration
+    // 2. Persona — who you are within the collaboration. Position 2.
     if let Some(index) = state.selected_persona {
         if let Some(persona) = state.library.personas.get(index) {
             parts.push(read_fragment(&persona.path)?);
         }
+    }
+
+    // 3. Always-loaded: cognitive-mode → behavior → communication → safety → anthropic
+    for fragment in &state.library.always {
+        parts.push(read_fragment(&fragment.path)?);
     }
 
     // === CONTEXT LAYER (where you are, what you're working on) ===
@@ -114,9 +128,9 @@ fn assemble_prompt(state: &AppState) -> Result<String, String> {
         }
     }
 
-    // 6. Language context
+    // 6. Language context (only when coding enabled)
     let languages = state.selected_language_names();
-    if !languages.is_empty() {
+    if state.coding_enabled && !languages.is_empty() {
         let lang_tags: Vec<String> = languages
             .iter()
             .map(|language| format!("  <language>{language}</language>"))
@@ -131,36 +145,63 @@ fn assemble_prompt(state: &AppState) -> Result<String, String> {
     for (index, selected) in state.selected_expertise.iter().enumerate() {
         if *selected {
             if let Some(fragment) = state.library.expertise.get(index) {
-                parts.push(read_expertise_dir(&fragment.path)?);
+                parts.push(read_fragment(&fragment.path)?);
             }
         }
     }
 
-    Ok(parts.join("\n\n"))
+    let persona_id = state
+        .selected_persona
+        .and_then(|i| state.library.personas.get(i))
+        .map(|p| p.id.as_str())
+        .unwrap_or("none");
+
+    let workspace_name = state
+        .workspace_path()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "auto".to_string());
+
+    let body = parts.join("\n\n");
+
+    // Check for unsubstituted template variables (e.g. {MEMORY_DIR})
+    let template_re = Regex::new(r"\{[A-Z][A-Z_]+\}").map_err(|e| format!("regex: {e}"))?;
+    if let Some(m) = template_re.find(&body) {
+        return Err(format!("Unsubstituted template variable in assembled prompt: {}", m.as_str()));
+    }
+
+    Ok(format!(
+        "<prompt version=\"1\" persona=\"{persona_id}\" workspace=\"{workspace_name}\" coding=\"{}\">\n\n{body}\n\n</prompt>",
+        state.coding_enabled,
+    ))
 }
 
 fn read_fragment(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
 }
 
-fn read_expertise_dir(directory: &Path) -> Result<String, String> {
-    let mut file_contents = Vec::new();
-
-    let entries = fs::read_dir(directory)
-        .map_err(|e| format!("read expertise dir {}: {e}", directory.display()))?;
-
-    let mut paths: Vec<_> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
-        .collect();
-
-    paths.sort();
-
-    for path in paths {
-        file_contents.push(read_fragment(&path)?);
+/// Write assembled prompt directly into a session's control directory.
+/// Used by --update to hot-swap the system prompt for an active session.
+pub fn write_update_file(state: &AppState, session_id: &str, workspace_name: &str) -> Result<PathBuf, String> {
+    if state.selected_persona.is_none() {
+        return Err("No persona selected. Select a persona before updating.".to_string());
     }
 
-    Ok(file_contents.join("\n\n"))
+    let prompt = assemble_prompt(state)?;
+    let session_dir = workspace_registry::workspace_control_dir(workspace_name).join(session_id);
+
+    if !session_dir.exists() {
+        return Err(format!(
+            "Session directory does not exist: {}\nIs the session ID correct?",
+            session_dir.display()
+        ));
+    }
+
+    let target = session_dir.join("SYSTEM_PROMPT.xml");
+    fs::write(&target, &prompt)
+        .map_err(|e| format!("write update file: {e}"))?;
+
+    Ok(target)
 }
 
 pub fn build_allow_paths(state: &AppState) -> Option<String> {

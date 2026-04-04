@@ -46,10 +46,10 @@ members = [
     "gates/gate_include_example_group_input",
     "gates/gate_include_guardrails_constraints_input",
     "gates/gate_include_guardrails_anti_patterns_input",
-    "gates/gate_galdr_style_input",
     "gates/gate_output_structure_input",
     "gates/gate_output_content_input",
     "gates/gate_output_display_input",
+    "gates/gate_verdandi_input",
     "cli/check_raw_definition",
     "cli/check_paths_resolved",
     "cli/check_paths_verified",
@@ -117,6 +117,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = "0.9"
 toml = { version = "0.8", features = ["preserve_order"] }
 toon-format = "0.4"
+quick-xml = "0.37"
 jsonschema = "0.29"
 thiserror = "2.0"
 pyo3 = { version = "0.22", features = ["extension-module"] }

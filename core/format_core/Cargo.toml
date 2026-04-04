@@ -12,4 +12,5 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
 toon-format = { workspace = true }
+quick-xml = { workspace = true }
 error_core = { path = "../error_core" }

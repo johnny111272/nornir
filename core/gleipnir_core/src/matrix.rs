@@ -39,6 +39,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     blocked("no_relative_imports", imports::check_no_relative_imports),
@@ -103,6 +104,7 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -224,6 +226,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -273,6 +276,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("impure_module_quarantine", imports::check_impure_module_quarantine),
@@ -323,6 +327,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS (lazy — excusable)
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
@@ -398,6 +403,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     warning("union_member_count", type_safety::check_union_member_count),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
+    blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),

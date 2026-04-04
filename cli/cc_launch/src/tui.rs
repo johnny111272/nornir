@@ -13,8 +13,27 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 use crate::assembly::estimate_tokens;
-use crate::model::{AppState, Section, TuiOutcome, LANGUAGES};
+use crate::model::{AppState, Section, TuiOutcome};
 use crate::permissions::KNOWN_PERMISSIONS;
+
+// --- Color palette ---
+const ACCENT: Color = Color::Rgb(110, 180, 255);   // soft blue — active borders, keys
+const GOLD: Color = Color::Rgb(255, 200, 80);       // warm gold — cursor row
+const SELECTED: Color = Color::Rgb(120, 230, 160);  // green — selected items
+const UNSELECTED: Color = Color::Rgb(150, 150, 165); // readable grey — unselected items
+const DIM: Color = Color::Rgb(90, 90, 105);         // dim but legible — disabled/annotations
+const TITLE: Color = Color::Rgb(190, 190, 205);     // light grey — section titles
+const SUMMARY_BORDER: Color = Color::Rgb(120, 230, 160); // green — summary panel
+const TOKEN_COLOR: Color = Color::Rgb(255, 160, 80); // orange — token estimate
+const SPACE_COLOR: Color = Color::Rgb(200, 140, 255); // purple — auto-loaded space
+const LABEL: Color = Color::Rgb(160, 160, 175);     // label text
+
+// --- Selection indicators ---
+const RADIO_ON: &str = "◉";
+const RADIO_OFF: &str = "○";
+const CHECK_ON: &str = "◆";
+const CHECK_OFF: &str = "◇";
+const CURSOR_ARROW: &str = "▸";
 
 pub fn run_tui(state: &mut AppState) -> Result<TuiOutcome, String> {
     enable_raw_mode().map_err(|e| format!("enable raw mode: {e}"))?;
@@ -122,13 +141,8 @@ fn handle_space(state: &mut AppState) {
             }
         }
         Section::Persona => {
-            if state.section_cursor == 0 {
-                state.selected_persona = None;
-            } else {
-                let persona_index = state.section_cursor - 1;
-                if persona_index < state.library.personas.len() {
-                    state.selected_persona = Some(persona_index);
-                }
+            if state.section_cursor < state.library.personas.len() {
+                state.selected_persona = Some(state.section_cursor);
             }
         }
         Section::Descriptors => {
@@ -147,6 +161,7 @@ fn handle_space(state: &mut AppState) {
             }
         }
         Section::Permissions => {
+            if state.update_mode { return; } // can't set env flags on running session
             if let Some(selected) = state.selected_permissions.get_mut(state.section_cursor) {
                 *selected = !*selected;
             }
@@ -163,7 +178,7 @@ fn handle_coding_space(state: &mut AppState) {
         return; // languages locked when coding disabled
     }
     let lang_index = state.section_cursor - 1;
-    if lang_index == 0 || lang_index >= LANGUAGES.len() {
+    if lang_index == 0 || lang_index >= state.library.languages.len() {
         return; // python always on, bounds check
     }
     if let Some(selected) = state.selected_languages.get_mut(lang_index) {
@@ -191,88 +206,134 @@ fn draw_ui(frame: &mut ratatui::Frame, state: &AppState) {
     draw_identity_column(frame, columns[0], state);
     draw_content_column(frame, columns[1], state);
     draw_summary_panel(frame, columns[2], state);
-    draw_key_bar(frame, outer[1]);
+    draw_key_bar(frame, outer[1], state.update_mode);
 }
 
 fn draw_identity_column(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let workspace_height = 2 + state.profiles.len() as u16 + 1;
     let persona_height = 2 + state.library.personas.len() as u16 + 1;
-    let coding_height = 2 + 1 + LANGUAGES.len() as u16;
-    let permissions_height = 2 + KNOWN_PERMISSIONS.len() as u16;
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(workspace_height),
             Constraint::Length(persona_height),
-            Constraint::Length(coding_height),
-            Constraint::Length(permissions_height),
-            Constraint::Min(0),
+            Constraint::Min(0), // Expertise fills remaining
         ])
         .split(area);
 
     draw_workspace_section(frame, sections[0], state);
     draw_persona_section(frame, sections[1], state);
-    draw_coding_section(frame, sections[2], state);
-    draw_permissions_section(frame, sections[3], state);
+    draw_expertise_section(frame, sections[2], state);
 }
 
 fn draw_content_column(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
+    let coding_height = 2 + 1 + state.library.languages.len() as u16;
+
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(60), // Systems — scrollable
-            Constraint::Percentage(40), // Expertise — scrollable
+            Constraint::Percentage(55),
+            Constraint::Length(coding_height),
+            Constraint::Min(0), // Permissions fills remaining
         ])
         .split(area);
 
     draw_descriptor_section(frame, sections[0], state);
-    draw_expertise_section(frame, sections[1], state);
+    draw_coding_section(frame, sections[1], state);
+    draw_permissions_section(frame, sections[2], state);
 }
 
-fn active_style(active: bool) -> Style {
-    if active {
-        Style::default().fg(Color::Cyan)
+fn section_block(title: &str, active: bool) -> Block<'_> {
+    Block::default()
+        .title(format!(" {title} "))
+        .title_style(if active {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TITLE)
+        })
+        .borders(Borders::ALL)
+        .border_style(if active {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default().fg(DIM)
+        })
+}
+
+/// Build a styled line for a radio-select item (one-of-many)
+fn radio_line(label: &str, selected: bool, active: bool, is_cursor: bool) -> Line<'static> {
+    let prefix = if active && is_cursor {
+        Span::styled(format!(" {CURSOR_ARROW} "), Style::default().fg(GOLD).add_modifier(Modifier::BOLD))
     } else {
-        Style::default().fg(Color::Gray)
-    }
-}
+        Span::raw("   ")
+    };
 
-fn cursor_style() -> Style {
-    Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
-}
+    let marker = if selected { RADIO_ON } else { RADIO_OFF };
+    let marker_color = if selected { SELECTED } else { UNSELECTED };
+    let marker_span = Span::styled(format!("{marker} "), Style::default().fg(marker_color));
 
-fn item_style(active: bool, is_cursor: bool) -> Style {
-    if active && is_cursor {
-        cursor_style()
+    let label_style = if active && is_cursor {
+        Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
+    } else if selected {
+        Style::default().fg(Color::White)
     } else {
-        Style::default()
+        Style::default().fg(UNSELECTED)
+    };
+
+    Line::from(vec![prefix, marker_span, Span::styled(label.to_string(), label_style)])
+}
+
+/// Build a styled line for a checkbox item (multi-select)
+fn check_line(label: &str, selected: bool, active: bool, is_cursor: bool, suffix: Option<&str>) -> Line<'static> {
+    let prefix = if active && is_cursor {
+        Span::styled(format!(" {CURSOR_ARROW} "), Style::default().fg(GOLD).add_modifier(Modifier::BOLD))
+    } else {
+        Span::raw("   ")
+    };
+
+    let marker = if selected { CHECK_ON } else { CHECK_OFF };
+    let marker_color = if selected { SELECTED } else { UNSELECTED };
+    let marker_span = Span::styled(format!("{marker} "), Style::default().fg(marker_color));
+
+    let label_style = if active && is_cursor {
+        Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
+    } else if selected {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(UNSELECTED)
+    };
+
+    let mut spans = vec![prefix, marker_span, Span::styled(label.to_string(), label_style)];
+
+    if let Some(s) = suffix {
+        spans.push(Span::styled(format!(" {s}"), Style::default().fg(DIM)));
     }
+
+    Line::from(spans)
+}
+
+/// Dimmed checkbox line for disabled state
+fn check_line_dim(label: &str, selected: bool) -> Line<'static> {
+    let marker = if selected { CHECK_ON } else { CHECK_OFF };
+    Line::from(Span::styled(
+        format!("   {marker} {label}"),
+        Style::default().fg(DIM),
+    ))
 }
 
 fn draw_workspace_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Workspace;
-    let block = Block::default()
-        .title(" Workspace ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = section_block("Workspace", active);
 
     let mut lines = Vec::new();
 
-    let marker = if state.selected_workspace.is_none() { "●" } else { "○" };
-    lines.push(Line::from(Span::styled(
-        format!("  {marker} Auto (current dir)"),
-        item_style(active, state.section_cursor == 0),
-    )));
+    let auto_selected = state.selected_workspace.is_none();
+    lines.push(radio_line("Auto (current dir)", auto_selected, active, state.section_cursor == 0));
 
     for (index, profile) in state.profiles.iter().enumerate() {
-        let marker = if state.selected_workspace == Some(index) { "●" } else { "○" };
-        lines.push(Line::from(Span::styled(
-            format!("  {marker} {}", capitalize(&profile.name)),
-            item_style(active, state.section_cursor == index + 1),
-        )));
+        let selected = state.selected_workspace == Some(index);
+        let name = capitalize(&profile.name);
+        lines.push(radio_line(&name, selected, active, state.section_cursor == index + 1));
     }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -280,25 +341,13 @@ fn draw_workspace_section(frame: &mut ratatui::Frame, area: Rect, state: &AppSta
 
 fn draw_persona_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Persona;
-    let block = Block::default()
-        .title(" Persona ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = section_block("Persona", active);
 
     let mut lines = Vec::new();
 
-    let marker = if state.selected_persona.is_none() { "●" } else { "○" };
-    lines.push(Line::from(Span::styled(
-        format!("  {marker} None (general)"),
-        item_style(active, state.section_cursor == 0),
-    )));
-
     for (index, persona) in state.library.personas.iter().enumerate() {
-        let marker = if state.selected_persona == Some(index) { "●" } else { "○" };
-        lines.push(Line::from(Span::styled(
-            format!("  {marker} {}", persona.display_name),
-            item_style(active, state.section_cursor == index + 1),
-        )));
+        let selected = state.selected_persona == Some(index);
+        lines.push(radio_line(&persona.display_name, selected, active, state.section_cursor == index));
     }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -306,10 +355,7 @@ fn draw_persona_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState
 
 fn draw_descriptor_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Descriptors;
-    let block = Block::default()
-        .title(" Systems ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = section_block("Systems", active);
 
     let system_indices = state.library.system_indices();
     let mut lines = Vec::new();
@@ -320,25 +366,38 @@ fn draw_descriptor_section(frame: &mut ratatui::Frame, area: Rect, state: &AppSt
             None => continue,
         };
         let selected = state.selected_descriptors.get(desc_index).copied().unwrap_or(false);
-        let marker = if selected { "[x]" } else { "[ ]" };
+        let is_cursor = active && state.section_cursor == cursor_pos;
 
-        let parent_suffix = match &descriptor.parent {
-            Some(parent) => format!(" ({})", parent),
-            None => String::new(),
-        };
+        let parent_suffix = descriptor.parent.as_ref().map(|p| format!("({})", p));
 
-        let style = if active && state.section_cursor == cursor_pos {
-            cursor_style()
+        let mut spans = Vec::new();
+
+        if is_cursor {
+            spans.push(Span::styled(format!(" {CURSOR_ARROW} "), Style::default().fg(GOLD).add_modifier(Modifier::BOLD)));
+        } else {
+            spans.push(Span::raw("   "));
+        }
+
+        let marker = if selected { CHECK_ON } else { CHECK_OFF };
+        let marker_color = if selected { SELECTED } else { UNSELECTED };
+        spans.push(Span::styled(format!("{marker} "), Style::default().fg(marker_color)));
+
+        // Name part
+        let name_style = if is_cursor {
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
         } else if selected {
             Style::default().fg(Color::White)
         } else {
-            Style::default().fg(Color::Gray)
+            Style::default().fg(UNSELECTED)
         };
+        spans.push(Span::styled(descriptor.display_name.clone(), name_style));
 
-        lines.push(Line::from(Span::styled(
-            format!("  {marker} {}{parent_suffix}", descriptor.display_name),
-            style,
-        )));
+        // Parent annotation dimmed
+        if let Some(ps) = &parent_suffix {
+            spans.push(Span::styled(format!(" {ps}"), Style::default().fg(DIM)));
+        }
+
+        lines.push(Line::from(spans));
     }
 
     // Scroll to keep cursor visible
@@ -357,37 +416,33 @@ fn draw_descriptor_section(frame: &mut ratatui::Frame, area: Rect, state: &AppSt
 
 fn draw_coding_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Coding;
-    let block = Block::default()
-        .title(" Coding ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = section_block("Coding", active);
 
     let mut lines = Vec::new();
 
     // Inverted: checked = coding DISABLED
-    let disable_marker = if state.coding_enabled { "[ ]" } else { "[x]" };
-    lines.push(Line::from(Span::styled(
-        format!("  {disable_marker} Disable coding mode"),
-        item_style(active, state.section_cursor == 0),
-    )));
+    lines.push(check_line(
+        "Disable coding mode",
+        !state.coding_enabled,
+        active,
+        state.section_cursor == 0,
+        None,
+    ));
 
-    for (index, language) in LANGUAGES.iter().enumerate() {
+    for (index, language) in state.library.languages.iter().enumerate() {
         let selected = state.selected_languages.get(index).copied().unwrap_or(false);
 
         if state.coding_enabled {
-            let marker = if selected { "[x]" } else { "[ ]" };
-            let locked = if index == 0 { " (always)" } else { "" };
-            lines.push(Line::from(Span::styled(
-                format!("  {marker} {language}{locked}"),
-                item_style(active, state.section_cursor == index + 1),
-            )));
+            let suffix = if index == 0 { Some("(always)") } else { None };
+            lines.push(check_line(
+                language,
+                selected,
+                active,
+                state.section_cursor == index + 1,
+                suffix,
+            ));
         } else {
-            // Selections stick but greyed when disabled
-            let marker = if selected { "[x]" } else { "[ ]" };
-            lines.push(Line::from(Span::styled(
-                format!("  {marker} {language}"),
-                Style::default().fg(Color::DarkGray),
-            )));
+            lines.push(check_line_dim(language, selected));
         }
     }
 
@@ -396,19 +451,18 @@ fn draw_coding_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState)
 
 fn draw_expertise_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Expertise;
-    let block = Block::default()
-        .title(" Expertise ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = section_block("Expertise", active);
 
     let mut lines = Vec::new();
     for (index, fragment) in state.library.expertise.iter().enumerate() {
         let selected = state.selected_expertise.get(index).copied().unwrap_or(false);
-        let marker = if selected { "[x]" } else { "[ ]" };
-        lines.push(Line::from(Span::styled(
-            format!("  {marker} {}", fragment.display_name),
-            item_style(active, state.section_cursor == index),
-        )));
+        lines.push(check_line(
+            &fragment.display_name,
+            selected,
+            active,
+            state.section_cursor == index,
+            None,
+        ));
     }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -416,19 +470,26 @@ fn draw_expertise_section(frame: &mut ratatui::Frame, area: Rect, state: &AppSta
 
 fn draw_permissions_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let active = state.active_section == Section::Permissions;
-    let block = Block::default()
-        .title(" Permissions ")
-        .borders(Borders::ALL)
-        .border_style(active_style(active));
+    let block = if state.update_mode {
+        section_block("Permissions (read-only)", false)
+    } else {
+        section_block("Permissions", active)
+    };
 
     let mut lines = Vec::new();
     for (index, permission) in KNOWN_PERMISSIONS.iter().enumerate() {
         let selected = state.selected_permissions.get(index).copied().unwrap_or(false);
-        let marker = if selected { "[x]" } else { "[ ]" };
-        lines.push(Line::from(Span::styled(
-            format!("  {marker} {}", permission.name),
-            item_style(active, state.section_cursor == index),
-        )));
+        if state.update_mode {
+            lines.push(check_line_dim(permission.name, selected));
+        } else {
+            lines.push(check_line(
+                permission.name,
+                selected,
+                active,
+                state.section_cursor == index,
+                None,
+            ));
+        }
     }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -437,8 +498,9 @@ fn draw_permissions_section(frame: &mut ratatui::Frame, area: Rect, state: &AppS
 fn draw_summary_panel(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let block = Block::default()
         .title(" Session Summary ")
+        .title_style(Style::default().fg(SUMMARY_BORDER).add_modifier(Modifier::BOLD))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green));
+        .border_style(Style::default().fg(SUMMARY_BORDER));
 
     let mut lines = Vec::new();
     summary_workspace(&mut lines, state);
@@ -462,7 +524,10 @@ fn summary_workspace(lines: &mut Vec<Line<'_>>, state: &AppState) {
             .unwrap_or_else(|| "?".to_string()),
         None => "Auto (current dir)".to_string(),
     };
-    lines.push(Line::from(format!("  Workspace: {workspace_name}")));
+    lines.push(Line::from(vec![
+        Span::styled("  Workspace  ", Style::default().fg(LABEL)),
+        Span::styled(workspace_name, Style::default().fg(Color::White)),
+    ]));
     lines.push(Line::from(""));
 }
 
@@ -474,9 +539,12 @@ fn summary_persona<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
             .get(index)
             .map(|persona| persona.display_name.as_str())
             .unwrap_or("?"),
-        None => "None (general)",
+        None => "None",
     };
-    lines.push(Line::from(format!("  Persona:   {persona_name}")));
+    lines.push(Line::from(vec![
+        Span::styled("  Persona    ", Style::default().fg(LABEL)),
+        Span::styled(persona_name, Style::default().fg(SELECTED).add_modifier(Modifier::BOLD)),
+    ]));
     lines.push(Line::from(""));
 }
 
@@ -487,18 +555,22 @@ fn summary_context<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
     let has_space = space_index.is_some();
 
     if !has_systems && !has_space {
-        lines.push(Line::from("  Context:   none"));
+        lines.push(Line::from(vec![
+            Span::styled("  Context    ", Style::default().fg(LABEL)),
+            Span::styled("none", Style::default().fg(DIM)),
+        ]));
     } else {
-        lines.push(Line::from("  Context:"));
+        lines.push(Line::from(Span::styled("  Context", Style::default().fg(LABEL))));
         let mut position = 1;
 
-        // Space descriptor first (if auto-matched) — it's the most immediate context
+        // Space descriptor first (if auto-matched)
         if let Some(idx) = space_index {
             if let Some(d) = state.library.descriptors.get(idx) {
-                lines.push(Line::from(Span::styled(
-                    format!("    {position}. {} (auto)", d.display_name),
-                    Style::default().fg(Color::Magenta),
-                )));
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {position}. "), Style::default().fg(LABEL)),
+                    Span::styled(d.display_name.as_str(), Style::default().fg(SPACE_COLOR)),
+                    Span::styled(" (auto)", Style::default().fg(DIM)),
+                ]));
                 position += 1;
             }
         }
@@ -506,7 +578,10 @@ fn summary_context<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
         // Then system descriptors in order
         for &index in &system_indices {
             if let Some(d) = state.library.descriptors.get(index) {
-                lines.push(Line::from(format!("    {position}. {}", d.display_name)));
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {position}. "), Style::default().fg(LABEL)),
+                    Span::styled(d.display_name.as_str(), Style::default().fg(Color::White)),
+                ]));
                 position += 1;
             }
         }
@@ -517,12 +592,15 @@ fn summary_context<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
 fn summary_coding(lines: &mut Vec<Line<'_>>, state: &AppState) {
     if state.coding_enabled {
         let langs = state.selected_language_names().join(", ");
-        lines.push(Line::from(format!("  Coding:    {langs}")));
+        lines.push(Line::from(vec![
+            Span::styled("  Coding     ", Style::default().fg(LABEL)),
+            Span::styled(langs, Style::default().fg(ACCENT)),
+        ]));
     } else {
-        lines.push(Line::from(Span::styled(
-            "  Coding:    disabled",
-            Style::default().fg(Color::Gray),
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("  Coding     ", Style::default().fg(LABEL)),
+            Span::styled("disabled", Style::default().fg(DIM)),
+        ]));
     }
     lines.push(Line::from(""));
 }
@@ -538,11 +616,17 @@ fn summary_expertise<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
         .collect();
 
     if selected.is_empty() {
-        lines.push(Line::from("  Expertise: none"));
+        lines.push(Line::from(vec![
+            Span::styled("  Expertise  ", Style::default().fg(LABEL)),
+            Span::styled("none", Style::default().fg(DIM)),
+        ]));
     } else {
-        lines.push(Line::from("  Expertise:"));
+        lines.push(Line::from(Span::styled("  Expertise", Style::default().fg(LABEL))));
         for name in &selected {
-            lines.push(Line::from(format!("    - {name}")));
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(format!("▹ {name}"), Style::default().fg(ACCENT)),
+            ]));
         }
     }
     lines.push(Line::from(""));
@@ -557,75 +641,52 @@ fn summary_permissions(lines: &mut Vec<Line<'_>>, state: &AppState) {
         .collect();
 
     if selected.is_empty() {
-        lines.push(Line::from("  Permissions: none"));
+        lines.push(Line::from(vec![
+            Span::styled("  Permissions ", Style::default().fg(LABEL)),
+            Span::styled("none", Style::default().fg(DIM)),
+        ]));
     } else {
-        lines.push(Line::from("  Permissions:"));
+        lines.push(Line::from(Span::styled("  Permissions", Style::default().fg(LABEL))));
         for name in &selected {
-            lines.push(Line::from(format!("    - {name}")));
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(format!("▹ {name}"), Style::default().fg(Color::Red)),
+            ]));
         }
     }
     lines.push(Line::from(""));
 }
 
 fn summary_always_loaded(lines: &mut Vec<Line<'_>>, state: &AppState) {
-    lines.push(Line::from(Span::styled(
-        "  Always loaded:",
-        Style::default().fg(Color::Gray),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("    {} fragments", state.library.always.len()),
-        Style::default().fg(Color::Gray),
-    )));
+    lines.push(Line::from(vec![
+        Span::styled("  Always     ", Style::default().fg(LABEL)),
+        Span::styled(format!("{} fragments", state.library.always.len()), Style::default().fg(DIM)),
+    ]));
     lines.push(Line::from(""));
 }
 
 fn summary_token_estimate(lines: &mut Vec<Line<'_>>, state: &AppState) {
     let tokens = estimate_tokens(state);
-    lines.push(Line::from(Span::styled(
-        format!("  Est. tokens: ~{tokens}"),
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )));
+    lines.push(Line::from(vec![
+        Span::styled("  Tokens     ", Style::default().fg(LABEL)),
+        Span::styled(format!("~{tokens}"), Style::default().fg(TOKEN_COLOR).add_modifier(Modifier::BOLD)),
+    ]));
 }
 
-fn draw_key_bar(frame: &mut ratatui::Frame, area: Rect) {
+fn draw_key_bar(frame: &mut ratatui::Frame, area: Rect, update_mode: bool) {
+    let action_label = if update_mode { " update  " } else { " launch  " };
     let keys = Line::from(vec![
-        Span::styled(
-            " Tab",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" section  "),
-        Span::styled(
-            "↑↓",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" navigate  "),
-        Span::styled(
-            "Space",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" toggle  "),
-        Span::styled(
-            "Enter",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" launch  "),
-        Span::styled(
-            "q",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" quit"),
+        Span::raw(" "),
+        Span::styled("Tab", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(" section  ", Style::default().fg(LABEL)),
+        Span::styled("↑↓", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(" navigate  ", Style::default().fg(LABEL)),
+        Span::styled("Space", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(" toggle  ", Style::default().fg(LABEL)),
+        Span::styled("Enter", Style::default().fg(SELECTED).add_modifier(Modifier::BOLD)),
+        Span::styled(action_label, Style::default().fg(LABEL)),
+        Span::styled("q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(" quit", Style::default().fg(LABEL)),
     ]);
 
     frame.render_widget(Paragraph::new(keys), area);

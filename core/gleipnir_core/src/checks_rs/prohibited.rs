@@ -427,16 +427,6 @@ fn is_method_call_to(call: tree_sitter::Node, source: &[u8], methods: &[&str]) -
     methods.contains(&node_text(field, source))
 }
 
-/// Check if a node is part of the last expression in a block (implicit return).
-fn is_implicit_return(block: tree_sitter::Node, target: tree_sitter::Node) -> bool {
-    // Counts as implicit return if block belongs to a function, match arm, or closure
-    match block.parent() {
-        Some(p) if matches!(p.kind(), "function_item" | "match_arm" | "closure_expression") => {}
-        _ => return false,
-    }
-    is_last_expression_in_block(block, target)
-}
-
 /// Check if target is within the last expression of a block.
 fn is_last_expression_in_block(block: tree_sitter::Node, target: tree_sitter::Node) -> bool {
     let mut cursor = block.walk();
