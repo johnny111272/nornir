@@ -54,29 +54,33 @@ max_function_lines = 25
 # Per-level parameters. CC bounds define level identity.
 # Style parameters inherit from [defaults] unless overridden.
 # max_cc absent = no ceiling.
+#
+# Level scheme:
+#   L0 = structure (no config — data shapes only)
+#   L1 = primitive + ffi (leaf functions, CC=1)
+#   L2 = simple (building blocks, CC=1-3)
+#   L3 = dispatch in logic zones (thin routing, CC=1-2)
+#   L4 = composed (business logic, CC=4-8)
+#   L5 = assembled (thin composition, CC=1-2)
+#   L6 = dispatch in orchestrate zone (routing for L7, CC=1-2)
+#   L7 = orchestrate (pipeline wiring, CC=1-5)
+#   L8 = entry point (cli.py/__main__.py, CC=1-2)
 
-[v2.ffi]
+[v2.l1]
 min_cc = 1
 max_cc = 1
 max_function_lines = 10
 max_nesting_depth = 2
 max_function_params = 3
 
-[v2.primitive]
-min_cc = 1
-max_cc = 1
-max_function_lines = 10
-max_nesting_depth = 2
-max_function_params = 3
-
-[v2.simple]
+[v2.l2]
 min_cc = 1
 max_cc = 3
 max_function_lines = 20
 max_nesting_depth = 3
 max_function_params = 4
 
-[v2.dispatch]
+[v2.l3]
 min_cc = 1
 max_cc = 2
 max_function_lines = 20
@@ -84,28 +88,36 @@ max_nesting_depth = 1            # dispatch is flat routing — no nesting allow
 max_function_params = 3
 max_functions_outside_zones = 0  # dispatch files contain ONLY dispatch tables
 
-[v2.composed]
+[v2.l4]
 min_cc = 4
 max_cc = 8
 max_function_lines = 30
 max_nesting_depth = 4
 max_function_params = 5
 
-[v2.assembled]
+[v2.l5]
 min_cc = 1
 max_cc = 2
 max_function_lines = 30
 max_nesting_depth = 2
 max_function_params = 5
 
-[v2.orchestrate]
+[v2.l6]
+min_cc = 1
+max_cc = 2
+max_function_lines = 20
+max_nesting_depth = 1            # orchestrate dispatch is flat routing
+max_function_params = 3
+max_functions_outside_zones = 0  # dispatch files contain ONLY dispatch tables
+
+[v2.l7]
 min_cc = 1
 max_cc = 5
 max_function_lines = 30
 max_nesting_depth = 2
 max_function_params = 5
 
-[v2.entry_point]
+[v2.l8]
 min_cc = 1
 max_cc = 2
 max_function_lines = 30
@@ -117,21 +129,17 @@ max_functions_outside_zones = 1  # entry_point allows 1 top-level function (main
 # Transform functions are shape conversion — tighter CC and nesting
 # than pure/impure at the same level. LOC stays inherited from the
 # base v2 level section. These override ONLY the specified fields.
-# e.g. [v2.transform.simple] overrides max_cc and max_nesting_depth
-# but inherits max_function_lines from [v2.simple].
+# e.g. [v2.transform.l2] overrides max_cc and max_nesting_depth
+# but inherits max_function_lines from [v2.l2].
 
-[v2.transform.ffi]
+[v2.transform.l1]
 max_cc = 1
 max_nesting_depth = 1
 
-[v2.transform.primitive]
-max_cc = 1
-max_nesting_depth = 1
-
-[v2.transform.simple]
+[v2.transform.l2]
 max_cc = 2
 max_nesting_depth = 2
 
-[v2.transform.composed]
+[v2.transform.l4]
 max_cc = 4
 max_nesting_depth = 3

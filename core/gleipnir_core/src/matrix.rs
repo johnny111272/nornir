@@ -63,6 +63,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     // STYLE
     warning("function_length", style::check_function_length),
     warning("param_count", style::check_param_count),
@@ -156,6 +157,7 @@ static UNSAFE_IMPURE_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -199,6 +201,7 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -248,6 +251,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -299,6 +303,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -349,6 +354,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("no_reexport_shims", architecture::check_no_reexport_shims),
     error("hardcoded_config", architecture::check_hardcoded_config),
     warning("classes_only_in_structures", architecture::check_classes_only_in_structures),
@@ -426,6 +432,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     error("pydantic_only", architecture::check_pydantic_only),
     error("god_classes", architecture::check_god_classes),
     blocked("no_callable_protocol", architecture::check_no_callable_protocol),
+    blocked("no_inline_dispatch", architecture::check_no_inline_dispatch),
     error("hardcoded_config", architecture::check_hardcoded_config),
     // STYLE
     warning("function_length", style::check_function_length),
@@ -504,7 +511,7 @@ pub fn checks_for_v2(classification: &V2Classification) -> Vec<CheckEntry> {
 
     // Dispatch level adds its own checks on top of zone checks
     let level_entries: &[MatrixEntry] = match classification.level {
-        Level::Dispatch => V2_DISPATCH_CHECKS,
+        Level::L3 | Level::L6 => V2_DISPATCH_CHECKS,
         _ => &[],
     };
 
@@ -525,7 +532,7 @@ pub fn checks_for_v2(classification: &V2Classification) -> Vec<CheckEntry> {
 
     // Entry points: exclude param_count and no_none_returns
     // CLI entry points have many params (typer arguments) and return None (side-effect orchestration)
-    if classification.level == Level::EntryPoint {
+    if classification.level == Level::L8 {
         const ENTRY_POINT_EXCLUDE: &[&str] = &["param_count", "no_none_returns"];
         entries.retain(|e| !ENTRY_POINT_EXCLUDE.contains(&e.name));
     }

@@ -18,53 +18,139 @@ This architecture formalizes two new zones (orchestrate, transform) and enforces
 
 ```
 project/
-├── structure/
-│   └── *.py                    # Pydantic models and enums ONLY
+├── structure/                            # L0 — data shape definitions
+│   ├── model/                            # Pydantic models
+│   ├── config/                           # Enums and static definitions
+│   └── exception/                        # Exception classes
 │
 └── logic/
     ├── orchestrate/
     │   └── {module}/
-    │       ├── orchestrate.py  # CC=1-5, pipeline wiring
-    │       └── dispatch.py     # CC=1-2, routing tables for orchestration
+    │       ├── orchestrate.py            # L7, CC=1-5, pipeline wiring
+    │       └── dispatch.py               # L6, CC=1-2, routing tables
     │
     ├── transform/
     │   └── {module}/
-    │       ├── primitive.py    # CC=1, no cross-module deps
-    │       ├── simple.py       # CC=1-3
-    │       ├── dispatch.py     # CC=1-2, thin routing
-    │       ├── composed.py     # CC=4-8
-    │       └── assembled.py    # CC=1-2, thin composition
+    │       ├── primitive.py              # L1, CC=1
+    │       ├── ffi.py                    # L1, CC=1, FFI bindings
+    │       ├── simple.py                 # L2, CC=1-3
+    │       ├── dispatch.py               # L3, CC=1-2, thin routing
+    │       ├── composed.py               # L4, CC=4-8
+    │       └── assembled.py              # L5, CC=1-2, thin composition
     │
     ├── impure/
     │   └── {module}/
-    │       ├── primitive.py
-    │       ├── simple.py
-    │       ├── dispatch.py
-    │       ├── composed.py
-    │       └── assembled.py
+    │       ├── primitive.py              # L1
+    │       ├── ffi.py                    # L1
+    │       ├── simple.py                 # L2
+    │       ├── dispatch.py               # L3
+    │       ├── composed.py               # L4
+    │       └── assembled.py              # L5
     │
     └── pure/
         └── {module}/
-            ├── primitive.py
-            ├── simple.py
-            ├── dispatch.py
-            ├── composed.py
-            └── assembled.py
+            ├── primitive.py              # L1
+            ├── ffi.py                    # L1
+            ├── simple.py                 # L2
+            ├── dispatch.py               # L3
+            ├── composed.py               # L4
+            └── assembled.py              # L5
 ```
 
-Not every module needs all 5 levels. Most modules have 2-3 level files. The module directory name describes the action (e.g., `grant_expand/`, `section_regroup/`), not the pipeline stage it serves.
+Not every module needs all levels. Most modules have 2-3 level files. The module directory name describes the action (e.g., `grant_expand/`, `section_regroup/`), not the pipeline stage it serves.
+
+---
+
+## Levels — Numbered, Immutable Positions
+
+Levels are numbered positions in the import hierarchy. The number is the level — it never changes. Filenames map to levels, but a filename is not a level. The same filename can map to different levels depending on zone (dispatch.py is L2 in logic zones, L5 in orchestrate zone). Different filenames can map to the same level (primitive.py and ffi.py are both L0).
+
+| Level | Filenames | CC | Role |
+|-------|-----------|-----|------|
+| L0 | *.py in structure/ | N/A | Data shape definitions only |
+| L1 | primitive.py, ffi.py | 1 | Leaf functions, no cross-module deps |
+| L2 | simple.py | 1-3 | Building blocks with deps |
+| L3 | dispatch.py (logic zones) | 1-2 | Thin routing between L2 functions |
+| L4 | composed.py | 4-8 | Multi-branch business logic |
+| L5 | assembled.py | 1-2 | Thin composition of L4 functions |
+| L6 | dispatch.py (orchestrate zone) | 1-2 | Routing tables for L7 |
+| L7 | orchestrate.py | 1-5 | Pipeline wiring across zones |
+| L8 | cli.py, __main__.py | 1-2 | Entry point, thinnest wrapper |
+
+### The Gravity Rule
+
+Code must live at the **lowest level it legally can**, not the highest level it is permitted to be at.
+
+- CC=1 in L2 → gravity violation, must move to L1
+- CC=2-3 in L4 → gravity violation, must move to L2
+- CC=4+ in L1 → ceiling violation
+
+The gravity rule prevents the LLM from floating everything to L4 where constraints are loosest. The question at every function is not "can this go here?" but "must this go lower?"
+
+---
+
+## Import Enforcement — Two Rules
+
+A legal import must satisfy both rules:
+
+### Rule 1: Level — higher imports lower
+
+`source.level > target.level`
+
+A file can only import from files at a strictly lower level number. Same-level imports are forbidden — this is the primary anti-monolith binding.
+
+That's it. No lookup table. No special cases. L6 can import from L5, L4, L3, L2, L1, and L0. L3 can import from L2, L1, and L0. The comparison is the rule.
+
+### Rule 2: Zone visibility
+
+Each zone has a fixed set of zones it can import from:
+
+| Zone | Can import from |
+|------|----------------|
+| pure | pure |
+| transform | transform |
+| impure | impure, pure |
+| orchestrate | anything |
+
+Structure (L0) is accessible from all zones — it's below every logic level.
+
+### That's the whole system
+
+- **Pure** is walled — cannot reach impure, transform, or orchestrate.
+- **Transform** is fully isolated — cannot reach any other zone, and only orchestrate can reach into it.
+- **Impure** can reach into pure (at strictly lower levels, which falls out from the level rule) but cannot reach transform.
+- **Orchestrate** sees everything.
+
+### How the Three Rules Work Together
+
+A legal import must pass both Rule 1 and Rule 2:
+
+- `impure/L2` importing `pure/L1` → Level: 2 > 1 ✓, Zone: impure is free ✓ → **Legal**
+- `impure/L2` importing `pure/L2` → Level: 2 = 2 ✗ → **Illegal** (same-level)
+- `transform/L2` importing `pure/L1` → Level: 2 > 1 ✓, Zone: transform is walled ✗ → **Illegal**
+- `orchestrate/L7` importing `pure/L4` → Level: 7 > 4 ✓, Zone: orchestrate is free ✓ → **Legal**
+- `orchestrate/L6` importing `transform/L5` → Level: 6 > 5 ✓, Zone: orchestrate is free ✓ → **Legal**
+- `orchestrate/L7` importing `orchestrate/L6` → Level: 7 > 6 ✓, Zone: orchestrate is free ✓ → **Legal**
+- `pure/L4` importing `impure/L1` → Level: 4 > 1 ✓, Zone: pure→impure ✗ → **Illegal**
+- `impure/L4` importing `transform/L2` → Level: 4 > 2 ✓, Zone: impure→transform ✗ → **Illegal**
+- `transform/L5` importing `transform/L4` → Level: 5 > 4 ✓, Zone: transform→transform ✓ → **Legal**
 
 ---
 
 ## Zone Definitions
 
-**`structure/`** — Data shape definitions only. Pydantic models (frozen) and enums. No functions, no logic, no calls. No module-level constants (frozen sets, dicts, lookup tables) — all data must be expressed through the type system as enum member values or model field defaults. If gleipnir sees a module-level binding that isn't a class definition, it's a violation.
+**`structure/`** — Data shape definitions only. Three categories:
+- **model/** — Pydantic models (BaseModel, RootModel). Frozen, typed data shapes.
+- **config/** — Enums and static type definitions. Configuration expressed through the type system.
+- **exception/** — Exception classes. Error types that carry typed diagnostic information.
+
+No functions, no logic, no calls. No module-level constants (frozen sets, dicts, lookup tables) — all data must be expressed through the type system as enum member values or model field defaults. If gleipnir sees a module-level binding that isn't a class definition, it's a violation.
 
 **`logic/pure/`** — Pure business logic. Deterministic, no side effects, no IO. Purity is enforced by the import graph: a function that imports from impure/ at any level is by definition impure and doesn't belong here.
 
-**`logic/impure/`** — Logic that touches IO, external calls, system state, or any effect. Impurity is declared at the primitive/ffi level and propagates upward through the DAG naturally.
+**`logic/impure/`** — Logic that touches IO, external calls, system state, or any effect. Impurity is declared at the L1 level and propagates upward through the DAG naturally.
 
-**`logic/transform/`** — Shape conversion. Takes typed structure in, produces typed structure out. No business logic, no IO. Fully isolated from pure/ and impure/ — cannot import from either, and neither can import from transform. Only orchestrate/ can reach transform/. This isolation prevents the LLM from using transforms as building blocks for monolith reconstruction in other zones.
+**`logic/transform/`** — Shape conversion. Takes typed structure in, produces typed structure out. No business logic, no IO. Fully isolated — cannot import from pure/ or impure/, and neither can import from transform/. Only orchestrate/ can reach transform/. This isolation prevents the LLM from using transforms as building blocks for monolith reconstruction in other zones.
 
 Transforms operate on already-validated typed data, NOT raw input. The pattern is: schema validate first (permissive entry, union types), then transform (normalize to strict internal type). Pydantic BeforeValidators are replaced by explicit transform calls in orchestrate/.
 
@@ -72,114 +158,58 @@ Transform functions have **stricter CC and nesting limits** than pure/impure at 
 
 **`logic/orchestrate/`** — Pipeline coordination. Knows the sequence — which zones are called in what order, how data moves between them. Contains no business logic, no shape definitions, no IO, no transformation. Every line is a function call, a variable binding, a conditional branch, or a return.
 
-Orchestrate uses the same `{module}/` directory + filename-as-level convention as other zones. Two levels are supported:
-- **`orchestrate.py`** (CC=1-5) — Pipeline wiring. Calls functions from across the entire stack.
-- **`dispatch.py`** (CC=1-2) — Routing tables for orchestration. Same rules as dispatch in other zones (typed dispatch tables only, no functions/classes), but can dispatch more complex callables since it sits at the orchestrate zone level.
+Two levels:
+- **L7 — orchestrate.py** (CC=1-5) — Pipeline wiring. Calls functions from across the entire stack.
+- **L6 — dispatch.py** (CC=1-2) — Routing tables for orchestration. Typed dispatch dicts mapping keys to callables. No functions, no classes — just imports and typed table assignments. Can reference functions from any level below (L5 and down) because it sits above the logic zone ceiling.
 
-Orchestrate can import from any lower level in any reachable zone. This relaxed import rule exists because orchestrate's job is to wire together functions from across the entire stack — restricting it to composed-only forced IO boundary functions (gates, registry) to be artificially inflated to composed level.
-
-This zone's absence caused the fragmented monolith problem. Without it, orchestration logic had nowhere legal to live and distributed itself invisibly across pure/.
-
-**`logic/*/ffi/`** — PyO3 Rust functions and other FFI bindings. The internals are a black box from Python's perspective — purity cannot be inferred and must be asserted by placement (pure/ffi/ vs impure/ffi/ vs transform/ffi/). FFI bindings are peers of primitives: CC=1, neither imports the other, both feed into simple/.
+**`logic/*/ffi.py`** — PyO3 Rust functions and other FFI bindings. The internals are a black box from Python's perspective — purity cannot be inferred and must be asserted by placement (pure/ffi.py vs impure/ffi.py vs transform/ffi.py). FFI files are at L1, the same level as primitive — CC=1, both feed into L2 (simple).
 
 ---
 
-## Import Enforcement — Two Orthogonal Axes
+## Classification
 
-Imports are governed by two independent rules. Both must pass for an import to be legal. Their intersection generates the complete import map — no special cases, no exceptions.
+### File → Level
 
-### Axis 1: Level Matrix (universal, applies in every zone)
+Classification is deterministic from (filename, zone):
 
-Levels from bottom to top:
+| Filename | Zone | Level |
+|----------|------|-------|
+| *.py | structure/ | L0 |
+| primitive.py | pure, impure, transform | L1 |
+| ffi.py | pure, impure, transform | L1 |
+| simple.py | pure, impure, transform | L2 |
+| dispatch.py | pure, impure, transform | L3 |
+| composed.py | pure, impure, transform | L4 |
+| assembled.py | pure, impure, transform | L5 |
+| dispatch.py | orchestrate | L6 |
+| orchestrate.py | orchestrate | L7 |
+| cli.py | (project root) | L8 |
+| __main__.py | (project root) | L8 |
+| __init__.py | (any zone) | Outside (no checks) |
 
-| Level | Can import from |
-|-------|----------------|
-| structure/ | structure/ (free internal imports) |
-| ffi/ | structure/ |
-| primitive/ | structure/ |
-| simple/ | primitive/, ffi/, structure/ |
-| dispatch/ | simple/, primitive/, ffi/, structure/ |
-| composed/ | dispatch/, simple/, primitive/, ffi/, structure/ |
-| assembled/ | composed/, dispatch/, simple/, primitive/, ffi/, structure/ |
-| orchestrate/ | assembled/, composed/, dispatch/, simple/, primitive/, ffi/, structure/ |
-| entry_point (cli.py, __main__.py) | orchestrate/, structure/ |
+### Zone from Path
 
-**Rules:**
-- No same-level imports — ever. This is the primary anti-monolith binding. Same-level imports are how the LLM rebuilds OOP clusters without triggering alarms.
-- ffi/ and primitive/ are peers — neither imports the other. If a function needs ffi + native logic, it belongs in simple/.
-- Dispatch and assembled are symmetric thin layers. Dispatch routes between simples (CC=1-2). Assembled composes from composed (CC=1-2). Both exist to give thin wiring functions a proper home at the right level.
-- Orchestrate can reach any lower level. Its job is to wire the entire stack — restricting it to one level down would force functions to be artificially inflated to satisfy consumption requirements.
-- Entry point (cli.py, __main__.py at project root) can only reach orchestrate — it is the thinnest possible wrapper (CC=1-2). No `entry_point.py` inside zones — that creates shim files.
-
-### Axis 2: Zone Matrix (which tracks can see which)
-
-| Zone | Can import from zones |
-|------|----------------------|
-| pure/ | pure/ |
-| impure/ | impure/, pure/ |
-| transform/ | transform/ |
-| orchestrate/ | pure/, impure/, transform/ |
-
-**Rules:**
-- Pure is walled — cannot see impure or transform.
-- Impure can reach into pure (at strictly lower levels, which falls out automatically from the same-level ban).
-- Transform is fully isolated — no edges to/from pure or impure.
-- Orchestrate sees all three zone tracks.
-- Structure/ is accessible to everything via the level rules.
-
-### How the Intersection Works
-
-A legal import must pass BOTH tables. Examples:
-
-- `impure/simple/` importing `pure/primitive/` → Level: simple > primitive ✓, Zone: impure→pure ✓ → **Legal**
-- `impure/simple/` importing `pure/simple/` → Level: same-level ✗ → **Illegal** (the cross-track "strictly lower" rule falls out automatically)
-- `transform/simple/` importing `pure/primitive/` → Level: simple > primitive ✓, Zone: transform→pure ✗ → **Illegal** (transform isolation)
-- `orchestrate/` importing `pure/composed/` → Level: orchestrate > composed ✓, Zone: orchestrate→pure ✓ → **Legal**
-- `orchestrate/` importing `impure/simple/` → Level: orchestrate > simple ✓, Zone: orchestrate→impure ✓ → **Legal** (relaxed orchestrate)
-- `transform/assembled/` importing `transform/composed/` → Level: assembled > composed ✓, Zone: transform→transform ✓ → **Legal**
-- `pure/composed/` importing `impure/primitive/` → Level: composed > primitive ✓, Zone: pure→impure ✗ → **Illegal**
-
----
-
-## Cyclomatic Complexity Enforcement
-
-CC measures linearly independent paths. CC=1 is a straight path. Every branch adds 1. This is fundamentally different from LOC — LOC says "be short," the LLM responds by being dense. CC=1 says "have no branching" — much harder to game.
-
-| Location | CC | Role |
-|----------|-----|------|
-| structure/ | N/A | Data shape definitions only |
-| ffi/ | 1 | Black-box FFI bindings |
-| primitive/ | 1 | Single-expression, no cross-module deps |
-| simple/ | 1-3 | Building blocks with deps |
-| dispatch/ | 1-2 | Thin routing between simples |
-| composed/ | 4-8 | Multi-branch business logic |
-| assembled/ | 1-2 | Thin composition of composed functions |
-| orchestrate/ | 1-5 | Pipeline wiring across zones |
-| entry_point (cli.py, __main__.py) | 1-2 | Thinnest wrapper at project root, calls orchestrate |
-
-### The Gravity Rule
-
-Code must live at the **lowest level it legally can**, not the highest level it is permitted to be at.
-
-- CC=1 in simple/ → gravity violation, must move to primitive/
-- CC=2-3 in composed/ → gravity violation, must move to simple/
-- CC=4+ in primitive/ → ceiling violation
-
-The gravity rule prevents the LLM from floating everything to composed/ where constraints are loosest. The question at every function is not "can this go here?" but "must this go lower?"
+| Path contains | Zone |
+|---------------|------|
+| /logic/pure/ | Pure |
+| /logic/impure/ | Impure |
+| /logic/transform/ | Transform |
+| /logic/orchestrate/ | Orchestrate |
+| /structure/ | Structure |
 
 ---
 
 ## How This Defeats the Fragmented Monolith
 
-**Same-level import ban** — The LLM cannot build object-like clusters because functions at the same level cannot import each other. The monolith topology cannot form.
+**Level ordering** — The LLM cannot build object-like clusters because same-level imports are impossible. `source > target` is a total order — the monolith topology cannot form because it requires lateral edges. Structure at L0 is naturally accessible from every logic level (L1+) without special cases.
 
 **Orchestrate/ as formal zone** — Orchestration logic that was previously distributed invisibly across pure/ now has a legal home. Its CC ceiling of 5 allows necessary wiring while preventing logic accumulation.
 
-**Transform isolation** — Shape conversion code is severed from both pure/ and impure/. The LLM cannot use transforms as building blocks for monolith reconstruction because they're behind a one-way wall only orchestrate/ can reach.
+**Transform isolation** — Shape conversion code is severed from both pure/ and impure/. The LLM cannot use transforms as building blocks for monolith reconstruction because they're behind a wall only orchestrate/ can reach.
 
-**Gravity rule** — Functions must live as low as they can. The LLM cannot park composed logic in primitive/ or simple/ to avoid stricter constraints.
+**Gravity rule** — Functions must live as low as they can. The LLM cannot park composed logic in L1 or L2 to avoid stricter constraints.
 
-**Two-axis intersection** — Instead of memorizing a 20-entry import map, the LLM internalizes two small tables. The rules are simple enough to follow, which means compliance improves without enforcement increasing.
+**Two-rule simplicity** — Instead of memorizing a lookup table, the LLM internalizes one numeric comparison and a small zone visibility table. The rules are simple enough to follow without degradation over long contexts.
 
 ---
 
@@ -187,47 +217,27 @@ The gravity rule prevents the LLM from floating everything to composed/ where co
 
 On every file save, gleipnir v2 checks:
 
-1. **Level import violation** — import target is at the same or higher level
-2. **Zone import violation** — import target is in a zone not reachable from the source zone
+1. **Level import violation** — target level >= source level (must be strictly lower)
+2. **Zone import violation** — pure importing outside pure, or transform importing outside transform
 3. **Ceiling violation** — function CC exceeds the level's maximum
 4. **Gravity violation** — function CC is below the level's minimum (function must be pushed down)
 5. **Structure logic violation** — function definition or module-level non-class binding in structure/
-6. **Constant in logic violation** — module-level data binding (not a function def) in any logic/ module
-
-LOC limits remain as secondary enforcement — they carry less of the load but still catch the obvious monolith growth.
-
----
-
-## Relationship to Existing Gleipnir Architecture
-
-This is an extension of the existing classify-then-check pattern. Current gleipnir:
-
-1. `classify_file()` → FileKind (script, project Python, project Rust, etc.)
-2. Matrix selects checks by FileKind
-3. Run selected checks
-
-V2 adds two classification axes:
-
-1. `classify_file()` → FileKind + Level + Zone
-2. Matrix selects checks by FileKind
-3. For each import, classify target → Level + Zone
-4. Level check: target level < source level? (table lookup)
-5. Zone check: target zone reachable from source zone? (table lookup)
-
-Classification from path is deterministic — `logic/pure/tool_resolve/simple.py` → zone=pure, level=simple. The filename encodes the level (primitive, simple, dispatch, composed, assembled). The parent directories encode the zone. No heuristics needed. The checks themselves are trivial comparisons after classification.
+6. **Constant in logic violation** — module-level data binding (not a function def) in any logic/ module (except dispatch files which hold typed tables)
 
 ---
 
 ## Key Design Decisions
 
+**Numbered levels, not named levels** — Level names (Dispatch, Assembled, Orchestrate) created false equivalences between filenames and positions. The same filename (dispatch.py) maps to different levels depending on zone. Different filenames (primitive.py, ffi.py) map to the same level. Numbered levels make the import rule a single comparison and eliminate the mental mapping entirely.
+
 **Transform imports structure/ only** — Validated by examining actual codebases (draupnir converters/, regin render_regroup_*.py). Every transform in both projects imports only from structure/. The isolation is practical, not theoretical.
 
 **No Pydantic BeforeValidators** — Transforms are called explicitly: `model.model_validate_json(data)` then `transform(typed_data)`. This makes every boundary crossing a visible node in the call graph. Schema validates first (permissive entry with union types), transform normalizes second (typed dispatch to strict internal type).
 
-**Dispatch and Assembled as symmetric thin layers** — The regin migration revealed a recurring pattern: thin wiring functions (CC=1-2) that connect functions at the level below. Dispatch routes between simples (e.g., selecting which simple function to call based on a key). Assembled composes from composed (e.g., `check_blocking()` that calls three composed check functions and concatenates results). Without these levels, thin compositors were forced into composed with permanent gravity violations — their CC was too low for composed but their import dependencies prevented moving down.
+**Dispatch and Assembled as symmetric thin layers** — Both are CC=1-2 thin wiring at different positions in the hierarchy. Dispatch (L3) routes between simples (L2). Assembled (L5) composes from composed (L4). Orchestrate-zone dispatch (L6) routes for orchestrate (L7). The pattern repeats at three points in the hierarchy.
 
-**Relaxed orchestrate imports** — Orchestrate originally could only import composed (strict one-step-down). This forced IO boundary functions (gates, registry) to stay at composed level despite being CC=2-3, because orchestrate needed them and couldn't reach simple. The cascade: gates forced to composed → everything importing gates forced to composed → widespread artificial gravity violations. Relaxing orchestrate to reach any lower level lets functions live at their natural CC level regardless of who consumes them.
+**Relaxed orchestrate imports** — Orchestrate originally could only import composed (strict one-step-down). This forced IO boundary functions (gates, registry) to stay at composed level despite being CC=2-3, because orchestrate needed them and couldn't reach simple. The cascade: gates forced to composed → everything importing gates forced to composed → widespread artificial gravity violations. Level numbering eliminates this — L7 can reach any level below it naturally.
 
 **No constants in structure/** — All data expressed through the type system. Frozen sets and lookup tables become enum member values. Module-level bindings that aren't class definitions are violations everywhere.
 
-**V1/V2 coexistence via migration list** — Saga checks project path against a migration list to determine which check version applies. Projects are either fully v1 or fully v2. No mixed signals — the LLM in a v2 project sees only v2 violations.
+**Three rules replace a lookup table** — The old system required memorizing which named levels could import which other named levels. The new system is: higher number imports lower number, pure is walled, transform is walled. Any LLM can hold three rules in context indefinitely, even under context pressure.

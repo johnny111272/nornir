@@ -423,6 +423,13 @@ pub fn check_v2_import_boundaries(
         return violations;
     }
 
+    // Structure files (L0) have their own boundary check (v2_structure_import_boundary).
+    // The level comparison (source > target) doesn't apply — structure files
+    // freely import each other, which the numeric rule would reject (0 > 0 = false).
+    if source_class.level == Level::L0 {
+        return violations;
+    }
+
     // Check import_from_statement nodes
     for node in find_nodes_by_type(source.tree.root_node(), "import_from_statement") {
         let (module, level) = extract_module_info(node, source.source_bytes);

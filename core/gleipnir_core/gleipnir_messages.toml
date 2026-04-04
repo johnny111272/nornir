@@ -61,6 +61,12 @@ signal = "Callable parameters create invisible dependency edges. The import grap
 direction = "Import the function directly instead of accepting it as a parameter. If the import would violate zone or level rules, that is the architecture telling you the dependency should not exist. Restructure: move the function to a reachable location, merge modules, or redesign the boundary."
 canary = "LLM passes callables as parameters to circumvent import boundary enforcement, laundering cross-zone or cross-level dependencies through runtime arguments."
 
+[no_inline_dispatch]
+detail = "Dict literal inside a function where all values are bare function references. This is an inline dispatch table — a callable routing structure that should live in a dedicated dispatch.py file where it is visible, typed, and auditable."
+signal = "Inline dispatch tables hide callable routing inside function bodies. The dispatch table is invisible to static analysis and to anyone scanning the module's imports. It creates the same dependency laundering as callable parameters — the function's signature does not reveal its runtime dependency fan-out."
+direction = "Extract the dispatch table to a dispatch.py file in the appropriate domain directory. The dispatch file should contain a typed module-level dict with explicit Callable annotations. The consuming function imports and indexes the table instead of constructing it."
+canary = "LLM builds dispatch tables inside functions to avoid import boundary checks or to keep callable routing invisible to architectural analysis."
+
 [no_callable_protocol]
 detail = "Protocol class with __call__ method. This is structurally equivalent to Callable — it creates a type that accepts any object with a matching call signature, laundering the same runtime dependency that Callable parameters create."
 signal = "A Protocol with __call__ is Callable with extra steps. It exists to circumvent no_callable_params while achieving the same dependency laundering."
@@ -491,7 +497,7 @@ canary = "LLM imports freely across zones and levels, reconstructing OOP topolog
 
 [v2_cc_level]
 detail = "Function cyclomatic complexity does not match its level."
-signal = "Each level has a CC band: primitive/ffi=1, simple=1-3, dispatch=1-2, composed=4-8, assembled=1-2, orchestrate=1-5, entry_point=1-2. Functions must live at the lowest level their complexity allows. Below the band = gravity violation (too simple for this level). Above the band = ceiling violation (too complex for this level)."
+signal = "Each level has a CC band: L1=1, L2=1-3, L3=1-2, L4=4-8, L5=1-2, L6=1-2, L7=1-5, L8=1-2. Functions must live at the lowest level their complexity allows. Below the band = gravity violation (too simple for this level). Above the band = ceiling violation (too complex for this level)."
 direction = "Gravity violation: your function is simpler than this level requires — move it to a lower level where simpler functions belong. This is good news — your function is clean enough to be a building block. Ceiling violation: your function has too many branches for this level — decompose it. Extract the branching paths into separate functions at this level, then compose them from the level above. Each extracted function should do one thing."
 canary = "LLM places functions at whatever level is convenient, ignoring the CC band that defines each level's purpose."
 

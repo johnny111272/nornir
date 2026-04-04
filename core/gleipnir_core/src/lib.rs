@@ -390,15 +390,15 @@ mod tests {
     }
 
     #[test]
-    fn for_v2_simple_cc_bounds() {
-        let config = CheckConfig::for_v2(Level::Simple, Zone::Pure, &STATISTICS);
+    fn for_v2_l2_cc_bounds() {
+        let config = CheckConfig::for_v2(Level::L2, Zone::Pure, &STATISTICS);
         assert_eq!(config.min_cc, 1);
         assert_eq!(config.max_cc, 3);
     }
 
     #[test]
-    fn for_v2_composed_cc_bounds() {
-        let config = CheckConfig::for_v2(Level::Composed, Zone::Pure, &STATISTICS);
+    fn for_v2_l4_cc_bounds() {
+        let config = CheckConfig::for_v2(Level::L4, Zone::Pure, &STATISTICS);
         assert_eq!(config.min_cc, 4);
         assert_eq!(config.max_cc, 8);
     }

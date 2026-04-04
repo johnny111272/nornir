@@ -53,22 +53,26 @@ const V2_ZONE_MARKERS: &[(&str, Zone)] = &[
     ("/logic/transform/", Zone::Transform),
     ("/logic/orchestrate/", Zone::Orchestrate),
     ("/structure/", Zone::Structure),
-    ("/structures/", Zone::Structure),
 ];
 
-/// Level from filename (stem without .py).
+/// Level from filename and zone context.
 /// Layout: logic/{zone}/{module_name}/{level}.py
-fn level_from_filename(file_path: &str) -> Level {
+///
+/// dispatch.py maps to L3 in logic zones, L6 in orchestrate zone.
+/// ffi.py and primitive.py both map to L1 (same level, different filenames).
+fn level_from_filename(file_path: &str, zone: Zone) -> Level {
     let filename = file_path.rsplit('/').next().unwrap_or("");
     let stem = filename.strip_suffix(".py").unwrap_or(filename);
     match stem {
-        "ffi" => Level::Ffi,
-        "primitive" => Level::Primitive,
-        "simple" => Level::Simple,
-        "dispatch" => Level::Dispatch,
-        "composed" => Level::Composed,
-        "assembled" => Level::Assembled,
-        "orchestrate" => Level::Orchestrate,
+        "ffi" | "primitive" => Level::L1,
+        "simple" => Level::L2,
+        "dispatch" => match zone {
+            Zone::Orchestrate => Level::L6,
+            _ => Level::L3,
+        },
+        "composed" => Level::L4,
+        "assembled" => Level::L5,
+        "orchestrate" => Level::L7,
         _ => Level::Outside,
     }
 }
@@ -78,28 +82,27 @@ fn level_from_filename(file_path: &str) -> Level {
 ///   mypackage.logic.pure.composed.module
 const V2_IMPORT_PATH_MARKERS: &[(&str, Level, Zone)] = &[
     // Pure track
-    ("/logic/pure/ffi/", Level::Ffi, Zone::Pure),
-    ("/logic/pure/primitive/", Level::Primitive, Zone::Pure),
-    ("/logic/pure/simple/", Level::Simple, Zone::Pure),
-    ("/logic/pure/dispatch/", Level::Dispatch, Zone::Pure),
-    ("/logic/pure/composed/", Level::Composed, Zone::Pure),
+    ("/logic/pure/ffi/", Level::L1, Zone::Pure),
+    ("/logic/pure/primitive/", Level::L1, Zone::Pure),
+    ("/logic/pure/simple/", Level::L2, Zone::Pure),
+    ("/logic/pure/dispatch/", Level::L3, Zone::Pure),
+    ("/logic/pure/composed/", Level::L4, Zone::Pure),
     // Impure track
-    ("/logic/impure/ffi/", Level::Ffi, Zone::Impure),
-    ("/logic/impure/primitive/", Level::Primitive, Zone::Impure),
-    ("/logic/impure/simple/", Level::Simple, Zone::Impure),
-    ("/logic/impure/dispatch/", Level::Dispatch, Zone::Impure),
-    ("/logic/impure/composed/", Level::Composed, Zone::Impure),
+    ("/logic/impure/ffi/", Level::L1, Zone::Impure),
+    ("/logic/impure/primitive/", Level::L1, Zone::Impure),
+    ("/logic/impure/simple/", Level::L2, Zone::Impure),
+    ("/logic/impure/dispatch/", Level::L3, Zone::Impure),
+    ("/logic/impure/composed/", Level::L4, Zone::Impure),
     // Transform track
-    ("/logic/transform/ffi/", Level::Ffi, Zone::Transform),
-    ("/logic/transform/primitive/", Level::Primitive, Zone::Transform),
-    ("/logic/transform/simple/", Level::Simple, Zone::Transform),
-    ("/logic/transform/dispatch/", Level::Dispatch, Zone::Transform),
-    ("/logic/transform/composed/", Level::Composed, Zone::Transform),
+    ("/logic/transform/ffi/", Level::L1, Zone::Transform),
+    ("/logic/transform/primitive/", Level::L1, Zone::Transform),
+    ("/logic/transform/simple/", Level::L2, Zone::Transform),
+    ("/logic/transform/dispatch/", Level::L3, Zone::Transform),
+    ("/logic/transform/composed/", Level::L4, Zone::Transform),
     // Orchestrate
-    ("/logic/orchestrate/", Level::Orchestrate, Zone::Orchestrate),
-    // Structure (both singular and plural forms)
-    ("/structure/", Level::Structure, Zone::Structure),
-    ("/structures/", Level::Structure, Zone::Structure),
+    ("/logic/orchestrate/", Level::L7, Zone::Orchestrate),
+    // Structure (singular only)
+    ("/structure/", Level::L0, Zone::Structure),
 ];
 
 /// Entry point filenames at project root level.
@@ -127,7 +130,7 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
     // Entry points detected by filename
     if ENTRY_POINT_NAMES.contains(&filename) {
         return V2Classification {
-            level: Level::EntryPoint,
+            level: Level::L8,
             zone: Zone::Orchestrate,
         };
     }
@@ -144,9 +147,9 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
         };
     };
 
-    // Structure zone has a fixed level (no per-file hierarchy)
+    // Structure zone has a fixed level (L0)
     if zone == Zone::Structure {
-        return V2Classification { level: Level::Structure, zone };
+        return V2Classification { level: Level::L0, zone };
     }
 
     // __init__.py files inherit zone but have no level checks
@@ -154,19 +157,18 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
         return V2Classification { level: Level::Outside, zone };
     }
 
-    // Level from filename
-    let level = level_from_filename(file_path);
+    // Level from filename + zone context
+    let level = level_from_filename(file_path, zone);
 
     // Validate level is legal for this zone
     let valid = match zone {
         Zone::Pure | Zone::Impure | Zone::Transform => matches!(
             level,
-            Level::Ffi | Level::Primitive | Level::Simple | Level::Dispatch
-            | Level::Composed | Level::Assembled | Level::Outside
+            Level::L1 | Level::L2 | Level::L3 | Level::L4 | Level::L5 | Level::Outside
         ),
         Zone::Orchestrate => matches!(
             level,
-            Level::Orchestrate | Level::Dispatch | Level::Outside
+            Level::L6 | Level::L7 | Level::Outside
         ),
         Zone::Structure => true, // handled above
     };
@@ -192,21 +194,23 @@ pub fn classify_import_path(dotted_path: &str) -> Option<V2Classification> {
         if probe.contains(pattern) { Some(zone) } else { None }
     })?;
 
-    // Structure zone has a fixed level
+    // Structure zone has a fixed level (L0)
     if zone == Zone::Structure {
-        return Some(V2Classification { level: Level::Structure, zone });
+        return Some(V2Classification { level: Level::L0, zone });
     }
 
     // Try level from last segment (filename convention)
     let last_segment = dotted_path.rsplit('.').next().unwrap_or("");
     let level_from_last = match last_segment {
-        "ffi" => Some(Level::Ffi),
-        "primitive" => Some(Level::Primitive),
-        "simple" => Some(Level::Simple),
-        "dispatch" => Some(Level::Dispatch),
-        "composed" => Some(Level::Composed),
-        "assembled" => Some(Level::Assembled),
-        "orchestrate" => Some(Level::Orchestrate),
+        "ffi" | "primitive" => Some(Level::L1),
+        "simple" => Some(Level::L2),
+        "dispatch" => {
+            // Zone-aware: orchestrate zone dispatch is L6, logic zone dispatch is L3
+            if zone == Zone::Orchestrate { Some(Level::L6) } else { Some(Level::L3) }
+        },
+        "composed" => Some(Level::L4),
+        "assembled" => Some(Level::L5),
+        "orchestrate" => Some(Level::L7),
         _ => None,
     };
     if let Some(level) = level_from_last {
@@ -227,6 +231,8 @@ pub fn classify_import_path(dotted_path: &str) -> Option<V2Classification> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- V1 classification (unchanged) --
 
     #[test]
     fn script_detected_by_shebang() {
@@ -268,6 +274,7 @@ mod tests {
 
     #[test]
     fn structures_path() {
+        // V1 still recognizes structures/ (plural)
         assert_eq!(
             classify_file("/project/src/pkg/structures/models.py", "from pydantic import BaseModel"),
             FileKind::DataStructure,
@@ -314,155 +321,158 @@ mod tests {
         );
     }
 
-    // -- V2 classification --
-    // Layout: logic/{zone}/{module_name}/{level}.py
-    // Zone from path directory, level from filename.
+    // -- V2 classification: logic zones --
 
     #[test]
     fn v2_pure_primitive() {
         let c = classify_file_v2("/project/src/pkg/logic/pure/helpers/primitive.py");
-        assert_eq!(c.level, Level::Primitive);
-        assert_eq!(c.zone, Zone::Pure);
-    }
-
-    #[test]
-    fn v2_pure_simple() {
-        let c = classify_file_v2("/project/src/pkg/logic/pure/validators/simple.py");
-        assert_eq!(c.level, Level::Simple);
-        assert_eq!(c.zone, Zone::Pure);
-    }
-
-    #[test]
-    fn v2_pure_composed() {
-        let c = classify_file_v2("/project/src/pkg/logic/pure/pipeline/composed.py");
-        assert_eq!(c.level, Level::Composed);
+        assert_eq!(c.level, Level::L1);
         assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn v2_pure_ffi() {
         let c = classify_file_v2("/project/src/pkg/logic/pure/rust_binding/ffi.py");
-        assert_eq!(c.level, Level::Ffi);
+        assert_eq!(c.level, Level::L1); // ffi and primitive are both L1
+        assert_eq!(c.zone, Zone::Pure);
+    }
+
+    #[test]
+    fn v2_pure_simple() {
+        let c = classify_file_v2("/project/src/pkg/logic/pure/validators/simple.py");
+        assert_eq!(c.level, Level::L2);
+        assert_eq!(c.zone, Zone::Pure);
+    }
+
+    #[test]
+    fn v2_pure_dispatch() {
+        let c = classify_file_v2("/project/src/pkg/logic/pure/converters/dispatch.py");
+        assert_eq!(c.level, Level::L3); // L3 in logic zones
+        assert_eq!(c.zone, Zone::Pure);
+    }
+
+    #[test]
+    fn v2_pure_composed() {
+        let c = classify_file_v2("/project/src/pkg/logic/pure/pipeline/composed.py");
+        assert_eq!(c.level, Level::L4);
         assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn v2_impure_primitive() {
         let c = classify_file_v2("/project/src/pkg/logic/impure/io_ops/primitive.py");
-        assert_eq!(c.level, Level::Primitive);
+        assert_eq!(c.level, Level::L1);
         assert_eq!(c.zone, Zone::Impure);
     }
 
     #[test]
     fn v2_impure_composed() {
         let c = classify_file_v2("/project/src/pkg/logic/impure/workflow/composed.py");
-        assert_eq!(c.level, Level::Composed);
+        assert_eq!(c.level, Level::L4);
         assert_eq!(c.zone, Zone::Impure);
     }
 
     #[test]
     fn v2_transform_simple() {
         let c = classify_file_v2("/project/src/pkg/logic/transform/coerce/simple.py");
-        assert_eq!(c.level, Level::Simple);
+        assert_eq!(c.level, Level::L2);
         assert_eq!(c.zone, Zone::Transform);
     }
 
     #[test]
     fn v2_transform_primitive() {
         let c = classify_file_v2("/project/src/pkg/logic/transform/reshape/primitive.py");
-        assert_eq!(c.level, Level::Primitive);
+        assert_eq!(c.level, Level::L1);
         assert_eq!(c.zone, Zone::Transform);
-    }
-
-    #[test]
-    fn v2_pure_dispatch() {
-        let c = classify_file_v2("/project/src/pkg/logic/pure/converters/dispatch.py");
-        assert_eq!(c.level, Level::Dispatch);
-        assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn v2_transform_dispatch() {
         let c = classify_file_v2("/project/src/pkg/logic/transform/field_map/dispatch.py");
-        assert_eq!(c.level, Level::Dispatch);
+        assert_eq!(c.level, Level::L3); // L3 in logic zones
         assert_eq!(c.zone, Zone::Transform);
     }
+
+    // -- V2 classification: orchestrate zone --
 
     #[test]
     fn v2_orchestrate() {
         let c = classify_file_v2("/project/src/pkg/logic/orchestrate/main_pipeline/orchestrate.py");
-        assert_eq!(c.level, Level::Orchestrate);
+        assert_eq!(c.level, Level::L7);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 
     #[test]
     fn v2_orchestrate_dispatch() {
         let c = classify_file_v2("/project/src/pkg/logic/orchestrate/main_pipeline/dispatch.py");
-        assert_eq!(c.level, Level::Dispatch);
+        assert_eq!(c.level, Level::L6); // L6 in orchestrate zone (not L3!)
         assert_eq!(c.zone, Zone::Orchestrate);
     }
+
+    // -- V2 classification: invalid levels for zone --
 
     #[test]
     fn v2_orchestrate_py_in_pure_rejected() {
         let c = classify_file_v2("/project/src/pkg/logic/pure/module/orchestrate.py");
-        assert_eq!(c.level, Level::Outside); // orchestrate.py invalid in pure zone
+        assert_eq!(c.level, Level::Outside);
         assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn v2_primitive_in_orchestrate_rejected() {
         let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/primitive.py");
-        assert_eq!(c.level, Level::Outside); // primitive.py invalid in orchestrate zone
+        assert_eq!(c.level, Level::Outside);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 
     #[test]
     fn v2_assembled_in_orchestrate_rejected() {
         let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/assembled.py");
-        assert_eq!(c.level, Level::Outside); // assembled.py invalid in orchestrate zone
+        assert_eq!(c.level, Level::Outside);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 
     #[test]
     fn v2_composed_in_orchestrate_rejected() {
         let c = classify_file_v2("/project/src/pkg/logic/orchestrate/module/composed.py");
-        assert_eq!(c.level, Level::Outside); // composed.py invalid in orchestrate zone
+        assert_eq!(c.level, Level::Outside);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
+
+    // -- V2 classification: special cases --
 
     #[test]
     fn v2_init_inherits_zone() {
         let c = classify_file_v2("/project/src/pkg/logic/pure/helpers/__init__.py");
         assert_eq!(c.zone, Zone::Pure);
-        // __init__.py gets Outside level — no checks applied
         assert_eq!(c.level, Level::Outside);
     }
 
     #[test]
     fn v2_structure_singular() {
         let c = classify_file_v2("/project/src/pkg/structure/models.py");
-        assert_eq!(c.level, Level::Structure);
+        assert_eq!(c.level, Level::L0);
         assert_eq!(c.zone, Zone::Structure);
     }
 
     #[test]
-    fn v2_structure_plural() {
+    fn v2_structures_plural_not_recognized() {
+        // V2 only recognizes structure/ (singular)
         let c = classify_file_v2("/project/src/pkg/structures/schema.py");
-        assert_eq!(c.level, Level::Structure);
-        assert_eq!(c.zone, Zone::Structure);
+        assert_eq!(c.level, Level::Outside); // no zone match
     }
 
     #[test]
     fn v2_entry_point_cli() {
         let c = classify_file_v2("/project/src/pkg/cli.py");
-        assert_eq!(c.level, Level::EntryPoint);
+        assert_eq!(c.level, Level::L8);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 
     #[test]
     fn v2_entry_point_main() {
         let c = classify_file_v2("/project/src/pkg/__main__.py");
-        assert_eq!(c.level, Level::EntryPoint);
+        assert_eq!(c.level, Level::L8);
         assert_eq!(c.zone, Zone::Orchestrate);
     }
 
@@ -474,61 +484,64 @@ mod tests {
 
     // -- Import path classification --
 
-    // Import path: level from last segment (filename convention)
     #[test]
     fn import_path_pure_composed_from_filename() {
-        // regin.logic.pure.codegen_transforms.composed → Composed + Pure
         let c = classify_import_path("regin.logic.pure.codegen_transforms.composed").unwrap();
-        assert_eq!(c.level, Level::Composed);
+        assert_eq!(c.level, Level::L4);
         assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn import_path_impure_primitive_from_filename() {
         let c = classify_import_path("regin.logic.impure.gates.primitive").unwrap();
-        assert_eq!(c.level, Level::Primitive);
+        assert_eq!(c.level, Level::L1);
         assert_eq!(c.zone, Zone::Impure);
     }
 
     #[test]
     fn import_path_transform_simple_from_filename() {
         let c = classify_import_path("regin.logic.transform.coerce.simple").unwrap();
-        assert_eq!(c.level, Level::Simple);
+        assert_eq!(c.level, Level::L2);
         assert_eq!(c.zone, Zone::Transform);
     }
 
-    // Import path: level from directory position (backward compat)
     #[test]
     fn import_path_pure_simple_from_directory() {
         let c = classify_import_path("mypackage.logic.pure.simple.helpers").unwrap();
-        assert_eq!(c.level, Level::Simple);
+        assert_eq!(c.level, Level::L2);
         assert_eq!(c.zone, Zone::Pure);
     }
 
     #[test]
     fn import_path_impure_primitive_from_directory() {
         let c = classify_import_path("mypackage.logic.impure.primitive.io").unwrap();
-        assert_eq!(c.level, Level::Primitive);
+        assert_eq!(c.level, Level::L1);
         assert_eq!(c.zone, Zone::Impure);
-    }
-
-    #[test]
-    fn import_path_structures() {
-        let c = classify_import_path("mypackage.structures.models").unwrap();
-        assert_eq!(c.level, Level::Structure);
-        assert_eq!(c.zone, Zone::Structure);
     }
 
     #[test]
     fn import_path_structure_singular() {
         let c = classify_import_path("regin.structure.gen.schema.agent_raw_definition").unwrap();
-        assert_eq!(c.level, Level::Structure);
+        assert_eq!(c.level, Level::L0);
         assert_eq!(c.zone, Zone::Structure);
+    }
+
+    #[test]
+    fn import_path_structures_plural_not_recognized() {
+        // V2 import paths only recognize structure/ (singular)
+        assert!(classify_import_path("mypackage.structures.models").is_none());
     }
 
     #[test]
     fn import_path_external_returns_none() {
         assert!(classify_import_path("pydantic.BaseModel").is_none());
         assert!(classify_import_path("os.path").is_none());
+    }
+
+    #[test]
+    fn import_path_orchestrate_dispatch() {
+        let c = classify_import_path("draupnir.logic.orchestrate.compile.dispatch").unwrap();
+        assert_eq!(c.level, Level::L6); // orchestrate zone dispatch
+        assert_eq!(c.zone, Zone::Orchestrate);
     }
 }

@@ -17,51 +17,54 @@ pub enum FileKind {
 // V2 zone architecture types
 // -------------------------------------------------------------------------
 
-/// Composition level in the v2 zone architecture.
+/// Numbered composition level in the v2 zone architecture.
 ///
-/// Determines which other levels a file may import from.
-/// Ffi and Primitive are peers — neither imports the other.
+/// Levels are immutable positions in the import hierarchy. The import rule
+/// is a single numeric comparison: `source > target`. No lookup table.
+///
+/// L0=structure, L1=primitive/ffi, L2=simple, L3=dispatch(logic),
+/// L4=composed, L5=assembled, L6=dispatch(orchestrate), L7=orchestrate,
+/// L8=entry point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
-    Structure,
-    Ffi,
-    Primitive,
-    Simple,
-    Dispatch,
-    Composed,
-    Assembled,
-    Orchestrate,
-    EntryPoint,
-    Outside,
+    L0,      // structure — data shapes
+    L1,      // primitive + ffi — leaf functions
+    L2,      // simple — building blocks
+    L3,      // dispatch (logic zones) — thin routing
+    L4,      // composed — business logic
+    L5,      // assembled — thin composition
+    L6,      // dispatch (orchestrate zone) — routing for L7
+    L7,      // orchestrate — pipeline wiring
+    L8,      // entry point — thinnest wrapper
+    Outside, // sentinel for unclassified files
 }
 
 impl Level {
+    /// Numeric position in the hierarchy. None for Outside (unclassified).
+    pub fn ordinal(self) -> Option<u8> {
+        match self {
+            Level::L0 => Some(0),
+            Level::L1 => Some(1),
+            Level::L2 => Some(2),
+            Level::L3 => Some(3),
+            Level::L4 => Some(4),
+            Level::L5 => Some(5),
+            Level::L6 => Some(6),
+            Level::L7 => Some(7),
+            Level::L8 => Some(8),
+            Level::Outside => None,
+        }
+    }
+
     /// Check whether a file at this level may import from `target` level.
     ///
-    /// Encodes the level matrix from V2_ZONE_ARCHITECTURE.md.
-    /// Structure zone has no level hierarchy — structure files freely import each other.
-    /// Ffi and Primitive are peers — neither imports the other.
-    /// Same-level imports are forbidden in logic zones (not structure).
+    /// The rule is: `source > target` (strictly greater ordinal).
+    /// Outside cannot import anything. Structure (L0) is accessible from
+    /// every logic level because every level number > 0.
     pub fn can_import(self, target: Level) -> bool {
-        use Level::*;
-        // Structure zone: no hierarchy, free to import from each other
-        if self == Structure && target == Structure {
-            return true;
-        }
-        if self == target {
-            return false;
-        }
-        match self {
-            Structure => false,
-            Ffi => matches!(target, Structure),
-            Primitive => matches!(target, Structure),
-            Simple => matches!(target, Primitive | Ffi | Structure),
-            Dispatch => matches!(target, Simple | Primitive | Ffi | Structure),
-            Composed => matches!(target, Dispatch | Simple | Primitive | Ffi | Structure),
-            Assembled => matches!(target, Composed | Dispatch | Simple | Primitive | Ffi | Structure),
-            Orchestrate => matches!(target, Assembled | Composed | Dispatch | Simple | Primitive | Ffi | Structure),
-            EntryPoint => matches!(target, Orchestrate | Structure),
-            Outside => false,
+        match (self.ordinal(), target.ordinal()) {
+            (Some(s), Some(t)) => s > t,
+            _ => false,
         }
     }
 }
@@ -180,15 +183,15 @@ impl CheckConfig {
     /// Zone is used to apply zone-specific overrides (e.g. transform has tighter CC/nesting).
     pub fn for_v2(level: Level, zone: Zone, stats: &StatisticsToml) -> Self {
         let key = match level {
-            Level::Ffi => Some("ffi"),
-            Level::Primitive => Some("primitive"),
-            Level::Simple => Some("simple"),
-            Level::Dispatch => Some("dispatch"),
-            Level::Composed => Some("composed"),
-            Level::Assembled => Some("assembled"),
-            Level::Orchestrate => Some("orchestrate"),
-            Level::EntryPoint | Level::Outside => Some("entry_point"),
-            Level::Structure => None,
+            Level::L0 => None,              // structure — no level-specific config
+            Level::L1 => Some("l1"),
+            Level::L2 => Some("l2"),
+            Level::L3 => Some("l3"),
+            Level::L4 => Some("l4"),
+            Level::L5 => Some("l5"),
+            Level::L6 => Some("l6"),
+            Level::L7 => Some("l7"),
+            Level::L8 | Level::Outside => Some("l8"),
         };
         let v2_entry = key.and_then(|k| {
             stats.v2.as_ref().and_then(|m| m.get(k))
@@ -330,114 +333,86 @@ pub struct CheckEntry {
 mod tests {
     use super::*;
 
-    // -- Level matrix truth table --
+    // -- Level: numeric ordering truth table --
 
     #[test]
-    fn structure_imports_structure_only() {
-        assert!(Level::Structure.can_import(Level::Structure), "Structure should import Structure");
-        for target in [Level::Ffi, Level::Primitive, Level::Simple, Level::Dispatch, Level::Composed, Level::Assembled, Level::Orchestrate, Level::EntryPoint] {
-            assert!(!Level::Structure.can_import(target), "Structure should not import {target:?}");
+    fn higher_imports_lower() {
+        // Every level can import any strictly lower level
+        let levels = [Level::L0, Level::L1, Level::L2, Level::L3, Level::L4, Level::L5, Level::L6, Level::L7, Level::L8];
+        for (i, &source) in levels.iter().enumerate() {
+            for (j, &target) in levels.iter().enumerate() {
+                let expected = i > j;
+                assert_eq!(
+                    source.can_import(target), expected,
+                    "{source:?} importing {target:?}: expected {expected}"
+                );
+            }
         }
     }
 
     #[test]
-    fn ffi_imports_only_structure() {
-        assert!(Level::Ffi.can_import(Level::Structure));
-        assert!(!Level::Ffi.can_import(Level::Ffi));
-        assert!(!Level::Ffi.can_import(Level::Primitive));
-        assert!(!Level::Ffi.can_import(Level::Simple));
+    fn same_level_blocked() {
+        for level in [Level::L1, Level::L2, Level::L3, Level::L4, Level::L5, Level::L6, Level::L7, Level::L8] {
+            assert!(!level.can_import(level), "{level:?} should not import itself");
+        }
     }
 
     #[test]
-    fn primitive_imports_only_structure() {
-        assert!(Level::Primitive.can_import(Level::Structure));
-        assert!(!Level::Primitive.can_import(Level::Primitive));
-        assert!(!Level::Primitive.can_import(Level::Ffi));
-        assert!(!Level::Primitive.can_import(Level::Simple));
-    }
-
-    #[test]
-    fn ffi_and_primitive_are_peers() {
-        assert!(!Level::Ffi.can_import(Level::Primitive));
-        assert!(!Level::Primitive.can_import(Level::Ffi));
-    }
-
-    #[test]
-    fn simple_imports_primitive_ffi_structure() {
-        assert!(Level::Simple.can_import(Level::Primitive));
-        assert!(Level::Simple.can_import(Level::Ffi));
-        assert!(Level::Simple.can_import(Level::Structure));
-        assert!(!Level::Simple.can_import(Level::Simple));
-        assert!(!Level::Simple.can_import(Level::Composed));
-        assert!(!Level::Simple.can_import(Level::Orchestrate));
-    }
-
-    #[test]
-    fn dispatch_imports_simple_primitive_ffi_structure() {
-        assert!(Level::Dispatch.can_import(Level::Simple));
-        assert!(Level::Dispatch.can_import(Level::Primitive));
-        assert!(Level::Dispatch.can_import(Level::Ffi));
-        assert!(Level::Dispatch.can_import(Level::Structure));
-        assert!(!Level::Dispatch.can_import(Level::Dispatch));
-        assert!(!Level::Dispatch.can_import(Level::Composed));
-        assert!(!Level::Dispatch.can_import(Level::Orchestrate));
-    }
-
-    #[test]
-    fn composed_imports_dispatch_simple_primitive_ffi_structure() {
-        assert!(Level::Composed.can_import(Level::Dispatch));
-        assert!(Level::Composed.can_import(Level::Simple));
-        assert!(Level::Composed.can_import(Level::Primitive));
-        assert!(Level::Composed.can_import(Level::Ffi));
-        assert!(Level::Composed.can_import(Level::Structure));
-        assert!(!Level::Composed.can_import(Level::Composed));
-        assert!(!Level::Composed.can_import(Level::Assembled));
-        assert!(!Level::Composed.can_import(Level::Orchestrate));
-    }
-
-    #[test]
-    fn assembled_imports_composed_and_below() {
-        assert!(Level::Assembled.can_import(Level::Composed));
-        assert!(Level::Assembled.can_import(Level::Dispatch));
-        assert!(Level::Assembled.can_import(Level::Simple));
-        assert!(Level::Assembled.can_import(Level::Primitive));
-        assert!(Level::Assembled.can_import(Level::Ffi));
-        assert!(Level::Assembled.can_import(Level::Structure));
-        assert!(!Level::Assembled.can_import(Level::Assembled));
-        assert!(!Level::Assembled.can_import(Level::Orchestrate));
-        assert!(!Level::Assembled.can_import(Level::EntryPoint));
-    }
-
-    #[test]
-    fn orchestrate_imports_any_lower_level() {
-        assert!(Level::Orchestrate.can_import(Level::Assembled));
-        assert!(Level::Orchestrate.can_import(Level::Composed));
-        assert!(Level::Orchestrate.can_import(Level::Dispatch));
-        assert!(Level::Orchestrate.can_import(Level::Simple));
-        assert!(Level::Orchestrate.can_import(Level::Primitive));
-        assert!(Level::Orchestrate.can_import(Level::Ffi));
-        assert!(Level::Orchestrate.can_import(Level::Structure));
-        assert!(!Level::Orchestrate.can_import(Level::Orchestrate));
-        assert!(!Level::Orchestrate.can_import(Level::EntryPoint));
-    }
-
-    #[test]
-    fn entry_point_imports_orchestrate_structure_only() {
-        assert!(Level::EntryPoint.can_import(Level::Orchestrate));
-        assert!(Level::EntryPoint.can_import(Level::Structure));
-        assert!(!Level::EntryPoint.can_import(Level::Composed));
-        assert!(!Level::EntryPoint.can_import(Level::Simple));
-        assert!(!Level::EntryPoint.can_import(Level::EntryPoint));
+    fn l0_cannot_import_l0() {
+        // L0 (structure) same-level is blocked by numeric rule (0 > 0 is false).
+        // Structure internal imports are handled by the structure boundary check, not level check.
+        assert!(!Level::L0.can_import(Level::L0));
     }
 
     #[test]
     fn outside_imports_nothing() {
-        for target in [Level::Structure, Level::Ffi, Level::Primitive, Level::Simple, Level::Dispatch, Level::Composed, Level::Assembled, Level::Orchestrate, Level::EntryPoint, Level::Outside] {
+        for target in [Level::L0, Level::L1, Level::L2, Level::L3, Level::L4, Level::L5, Level::L6, Level::L7, Level::L8, Level::Outside] {
             assert!(!Level::Outside.can_import(target), "Outside should not import {target:?}");
         }
     }
 
-    // -- Zone matrix truth table --
+    #[test]
+    fn nothing_imports_outside() {
+        for source in [Level::L0, Level::L1, Level::L2, Level::L3, Level::L4, Level::L5, Level::L6, Level::L7, Level::L8] {
+            assert!(!source.can_import(Level::Outside), "{source:?} should not import Outside");
+        }
+    }
+
+    #[test]
+    fn l6_dispatch_imports_l5_assembled() {
+        // Key test: orchestrate-zone dispatch (L6) can import assembled (L5)
+        assert!(Level::L6.can_import(Level::L5));
+        assert!(Level::L6.can_import(Level::L4));
+        assert!(Level::L6.can_import(Level::L3));
+        assert!(Level::L6.can_import(Level::L2));
+        assert!(Level::L6.can_import(Level::L1));
+        assert!(Level::L6.can_import(Level::L0));
+    }
+
+    #[test]
+    fn l7_imports_l6() {
+        // orchestrate.py (L7) can import dispatch.py in orchestrate zone (L6)
+        assert!(Level::L7.can_import(Level::L6));
+    }
+
+    #[test]
+    fn l8_imports_everything_below() {
+        // Entry point follows pure numeric rule — no special cases
+        assert!(Level::L8.can_import(Level::L7));
+        assert!(Level::L8.can_import(Level::L6));
+        assert!(Level::L8.can_import(Level::L0));
+        assert!(!Level::L8.can_import(Level::L8));
+    }
+
+    #[test]
+    fn ordinal_values() {
+        assert_eq!(Level::L0.ordinal(), Some(0));
+        assert_eq!(Level::L1.ordinal(), Some(1));
+        assert_eq!(Level::L8.ordinal(), Some(8));
+        assert_eq!(Level::Outside.ordinal(), None);
+    }
+
+    // -- Zone matrix truth table (unchanged) --
 
     #[test]
     fn pure_reaches_pure_only() {
@@ -464,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn orchestrate_reaches_self_pure_impure_transform() {
+    fn orchestrate_reaches_all() {
         assert!(Zone::Orchestrate.can_reach(Zone::Orchestrate));
         assert!(Zone::Orchestrate.can_reach(Zone::Pure));
         assert!(Zone::Orchestrate.can_reach(Zone::Impure));
@@ -483,57 +458,57 @@ mod tests {
 
     #[test]
     fn cross_track_same_level_blocked() {
-        let impure_simple = V2Classification { level: Level::Simple, zone: Zone::Impure };
-        let pure_simple = V2Classification { level: Level::Simple, zone: Zone::Pure };
-        assert!(!impure_simple.can_import(pure_simple), "same-level cross-track blocked");
+        let impure_l2 = V2Classification { level: Level::L2, zone: Zone::Impure };
+        let pure_l2 = V2Classification { level: Level::L2, zone: Zone::Pure };
+        assert!(!impure_l2.can_import(pure_l2), "same-level cross-track blocked");
     }
 
     #[test]
     fn cross_track_lower_level_allowed() {
-        let impure_simple = V2Classification { level: Level::Simple, zone: Zone::Impure };
-        let pure_primitive = V2Classification { level: Level::Primitive, zone: Zone::Pure };
-        assert!(impure_simple.can_import(pure_primitive));
+        let impure_l2 = V2Classification { level: Level::L2, zone: Zone::Impure };
+        let pure_l1 = V2Classification { level: Level::L1, zone: Zone::Pure };
+        assert!(impure_l2.can_import(pure_l1));
     }
 
     #[test]
     fn transform_to_pure_blocked() {
-        let transform_simple = V2Classification { level: Level::Simple, zone: Zone::Transform };
-        let pure_primitive = V2Classification { level: Level::Primitive, zone: Zone::Pure };
-        assert!(!transform_simple.can_import(pure_primitive), "transform isolated from pure");
-    }
-
-    #[test]
-    fn structure_imports_structure_combined() {
-        let source = V2Classification { level: Level::Structure, zone: Zone::Structure };
-        let target = V2Classification { level: Level::Structure, zone: Zone::Structure };
-        assert!(source.can_import(target), "structure files should freely import each other");
+        let transform_l2 = V2Classification { level: Level::L2, zone: Zone::Transform };
+        let pure_l1 = V2Classification { level: Level::L1, zone: Zone::Pure };
+        assert!(!transform_l2.can_import(pure_l1), "transform isolated from pure");
     }
 
     #[test]
     fn all_zones_can_import_structure() {
-        let structure = V2Classification { level: Level::Structure, zone: Zone::Structure };
+        let structure = V2Classification { level: Level::L0, zone: Zone::Structure };
         for zone in [Zone::Pure, Zone::Impure, Zone::Transform, Zone::Orchestrate] {
-            let source = V2Classification { level: Level::Simple, zone };
-            assert!(source.can_import(structure), "{zone:?}/simple should import structure");
+            let source = V2Classification { level: Level::L2, zone };
+            assert!(source.can_import(structure), "{zone:?}/L2 should import structure");
         }
     }
 
     #[test]
     fn orchestrate_reaches_composed_in_all_zones() {
-        let orch = V2Classification { level: Level::Orchestrate, zone: Zone::Orchestrate };
+        let orch = V2Classification { level: Level::L7, zone: Zone::Orchestrate };
         for zone in [Zone::Pure, Zone::Impure, Zone::Transform] {
-            let target = V2Classification { level: Level::Composed, zone };
-            assert!(orch.can_import(target), "orchestrate should reach {zone:?}/composed");
+            let target = V2Classification { level: Level::L4, zone };
+            assert!(orch.can_import(target), "orchestrate should reach {zone:?}/L4");
         }
     }
 
     #[test]
-    fn pure_composed_unreachable_from_impure() {
-        let pure_composed = V2Classification { level: Level::Composed, zone: Zone::Pure };
-        for level in [Level::Ffi, Level::Primitive, Level::Simple, Level::Composed] {
-            let impure = V2Classification { level, zone: Zone::Impure };
-            assert!(!impure.can_import(pure_composed), "impure/{level:?} should not reach pure/composed");
-        }
+    fn orchestrate_dispatch_reaches_assembled_in_transform() {
+        // The test case that motivated the entire refactoring
+        let orch_dispatch = V2Classification { level: Level::L6, zone: Zone::Orchestrate };
+        let transform_assembled = V2Classification { level: Level::L5, zone: Zone::Transform };
+        assert!(orch_dispatch.can_import(transform_assembled),
+            "orchestrate dispatch (L6) should reach transform/assembled (L5)");
+    }
+
+    #[test]
+    fn impure_cannot_reach_transform() {
+        let impure_l4 = V2Classification { level: Level::L4, zone: Zone::Impure };
+        let transform_l2 = V2Classification { level: Level::L2, zone: Zone::Transform };
+        assert!(!impure_l4.can_import(transform_l2), "impure cannot reach transform");
     }
 }
 

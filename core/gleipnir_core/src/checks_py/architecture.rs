@@ -6,7 +6,7 @@
 //! classes_only_in_structures, max_functions_outside_zones,
 //! v2_structure_no_logic, v2_structure_bases, v2_structure_import_boundary,
 //! v2_logic_no_constants, v2_dispatch_only_tables,
-//! v2_classes_only_in_structure.
+//! v2_classes_only_in_structure, no_inline_dispatch.
 
 use crate::classify;
 use crate::parsing::{
@@ -446,7 +446,7 @@ fn hardcoded_config_message(assign: tree_sitter::Node, source: &[u8]) -> Option<
 pub fn check_hardcoded_config(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     // Dispatch files ARE typed lookup tables — exempt from hardcoded config check.
     let classification = classify::classify_file_v2(source.file_path);
-    if classification.level == Level::Dispatch {
+    if matches!(classification.level, Level::L3 | Level::L6) {
         return Vec::new();
     }
 
@@ -846,14 +846,22 @@ pub fn check_v2_structure_no_logic(
 // v2 structure enforcement — classes must be pydantic or enum
 // -------------------------------------------------------------------------
 
-/// Allowed base class names for structure/ zone classes.
+/// Allowed base class names for structure/ zone classes (model/ and config/).
 const STRUCTURE_ALLOWED_BASES: &[&str] = &[
     "BaseModel", "RootModel",
     "Enum", "IntEnum", "StrEnum", "Flag", "IntFlag",
 ];
 
-/// In v2 structure zone: every class must inherit from BaseModel or Enum.
-/// Plain classes (no base) and classes inheriting from unknown bases are violations.
+/// Allowed base class names for structure/exception/ classes.
+const STRUCTURE_EXCEPTION_BASES: &[&str] = &[
+    "Exception", "ValueError", "TypeError", "RuntimeError",
+    "IOError", "OSError", "KeyError", "AttributeError",
+    "NotImplementedError", "PermissionError", "FileNotFoundError",
+];
+
+/// In v2 structure zone: every class must inherit from an allowed base.
+/// model/ and config/: BaseModel, RootModel, or Enum variants.
+/// exception/: Exception or standard exception subclasses.
 pub fn check_v2_structure_bases(
     source: &ParsedSource,
     _config: &CheckConfig,
@@ -863,6 +871,7 @@ pub fn check_v2_structure_bases(
         return Vec::new();
     }
 
+    let in_exception_dir = source.file_path.contains("/structure/exception/");
     let mut violations = Vec::new();
 
     for class_node in find_nodes_by_type(source.tree.root_node(), "class_definition") {
@@ -875,13 +884,23 @@ pub fn check_v2_structure_bases(
         if bases.is_empty() {
             violations.push(violation(
                 node_line(class_node),
-                format!("'{class_name}' has no base class (must inherit from BaseModel or Enum)"),
+                format!("'{class_name}' has no base class"),
             ));
-        } else if !bases.iter().any(|b| STRUCTURE_ALLOWED_BASES.contains(&b.as_str())) {
-            violations.push(violation(
-                node_line(class_node),
-                format!("'{class_name}' inherits from unknown base (must be BaseModel or Enum)"),
-            ));
+        } else {
+            let has_model_base = bases.iter().any(|b| STRUCTURE_ALLOWED_BASES.contains(&b.as_str()));
+            let has_exception_base = in_exception_dir
+                && bases.iter().any(|b| STRUCTURE_EXCEPTION_BASES.contains(&b.as_str()));
+            if !has_model_base && !has_exception_base {
+                let expected = if in_exception_dir {
+                    "BaseModel, Enum, or Exception"
+                } else {
+                    "BaseModel or Enum"
+                };
+                violations.push(violation(
+                    node_line(class_node),
+                    format!("'{class_name}' inherits from unknown base (must be {expected})"),
+                ));
+            }
         }
     }
 
@@ -938,7 +957,7 @@ pub fn check_v2_dispatch_only_tables(
     _config: &CheckConfig,
 ) -> Vec<Violation> {
     let classification = classify::classify_file_v2(source.file_path);
-    if classification.level != Level::Dispatch {
+    if !matches!(classification.level, Level::L3 | Level::L6) {
         return Vec::new();
     }
 
@@ -1009,11 +1028,11 @@ fn is_docstring(expr_stmt: tree_sitter::Node, _source: &[u8]) -> bool {
     first.kind() == "string"
 }
 
-/// Check if an expression_statement is a typed assignment with `dict[type[...], Callable...]`
-/// annotation.
+/// Check if an expression_statement is a typed dispatch assignment.
 ///
-/// Looks for: `NAME: dict[type[...], Callable...] = { ... }`
-/// The assignment must have a type annotation containing both "dict" and "type" and "Callable".
+/// Looks for: `NAME: dict[..., Callable...] = { ... }`
+/// The assignment must have a type annotation containing "dict" and "Callable".
+/// Key types vary (type[Model], str, Enum) — only the Callable value type matters.
 fn is_typed_dispatch_assignment(expr_stmt: tree_sitter::Node, source: &[u8]) -> bool {
     let mut cursor = expr_stmt.walk();
     let inner = match expr_stmt.named_children(&mut cursor).next() {
@@ -1034,7 +1053,7 @@ fn is_typed_dispatch_assignment(expr_stmt: tree_sitter::Node, source: &[u8]) -> 
 
     // Check the annotation text contains the dispatch table signature markers
     let annotation_text = node_text(type_node, source);
-    annotation_text.contains("dict") && annotation_text.contains("type") && annotation_text.contains("Callable")
+    annotation_text.contains("dict") && annotation_text.contains("Callable")
 }
 
 // -------------------------------------------------------------------------
@@ -1052,7 +1071,7 @@ pub fn check_v2_logic_no_constants(
         Zone::Pure | Zone::Impure | Zone::Transform | Zone::Orchestrate => {}
         Zone::Structure => return Vec::new(),
     }
-    if matches!(classification.level, Level::Structure | Level::Dispatch | Level::Outside) {
+    if matches!(classification.level, Level::L0 | Level::L3 | Level::L6 | Level::Outside) {
         return Vec::new();
     }
 
@@ -1135,6 +1154,68 @@ pub fn check_unknown_file_in_zone(
             "'{filename}' is not a valid filename in the {zone_name} zone (valid: {allowed})",
         ),
     )]
+}
+
+// -------------------------------------------------------------------------
+// no_inline_dispatch
+// -------------------------------------------------------------------------
+
+/// Detect dict literals inside functions where all values are bare identifiers
+/// (function references). These are inline dispatch tables that should live in
+/// a dedicated dispatch.py file.
+///
+/// Heuristic: a dictionary with 2+ pairs where every value is a bare identifier
+/// or attribute access (e.g. `module.func`), found inside a function body.
+/// Dicts with string, number, or call-expression values are data, not dispatch.
+pub fn check_no_inline_dispatch(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    for func in find_nodes_by_type(source.tree.root_node(), "function_definition") {
+        let body = match node_field(func, "body") {
+            Some(b) => b,
+            None => continue,
+        };
+
+        for dict_node in find_nodes_by_type(body, "dictionary") {
+            let pairs: Vec<_> = {
+                let mut cursor = dict_node.walk();
+                dict_node
+                    .named_children(&mut cursor)
+                    .filter(|c| c.kind() == "pair")
+                    .collect()
+            };
+
+            if pairs.len() < 2 {
+                continue;
+            }
+
+            let all_callable_values = pairs.iter().all(|pair| {
+                let mut cursor = pair.walk();
+                let children: Vec<_> = pair.named_children(&mut cursor).collect();
+                // pair has key + value as named children; value is the last one
+                match children.last() {
+                    Some(value) => matches!(value.kind(), "identifier" | "attribute"),
+                    None => false,
+                }
+            });
+
+            if all_callable_values {
+                let func_name = node_field(func, "name")
+                    .map(|n| node_text(n, source.source_bytes))
+                    .unwrap_or("<unknown>");
+                violations.push(violation(
+                    node_line(dict_node),
+                    format!(
+                        "inline dispatch table in '{func_name}' — extract to a dispatch.py file"
+                    ),
+                ));
+            }
+        }
+    }
+    violations
 }
 
 // -------------------------------------------------------------------------
@@ -1883,5 +1964,64 @@ mod tests {
         );
         let violations = check_v2_structure_bases(&parsed, &default_config());
         assert!(violations.is_empty());
+    }
+
+    // -- no_inline_dispatch --
+
+    #[test]
+    fn inline_dispatch_caught() {
+        let parsed = parse(
+            "def compile(root, graph):\n    dispatch = {\n        \"pattern\": build_pattern,\n        \"enum\": build_enum,\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("dispatch table"));
+        assert!(violations[0].message.contains("compile"));
+    }
+
+    #[test]
+    fn inline_dispatch_enum_keys_caught() {
+        let parsed = parse(
+            "def run(args):\n    handlers = {\n        Mode.generate: run_generate,\n        Mode.check: run_check,\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("run"));
+    }
+
+    #[test]
+    fn data_dict_ok() {
+        let parsed = parse(
+            "def build():\n    config = {\n        \"key\": \"value\",\n        \"other\": \"data\",\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn mixed_values_ok() {
+        let parsed = parse(
+            "def build():\n    info = {\n        \"name\": some_var,\n        \"count\": 42,\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn single_entry_ok() {
+        let parsed = parse(
+            "def build():\n    lookup = {\n        \"only\": some_func,\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn module_level_dict_not_caught() {
+        let parsed = parse(
+            "DISPATCH = {\n    \"a\": func_a,\n    \"b\": func_b,\n}\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert!(violations.is_empty()); // only catches function-local
     }
 }

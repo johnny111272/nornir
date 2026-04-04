@@ -1165,7 +1165,7 @@ def foo():
             "def foo(x):\n    if x:\n        return 1\n    return 0\n",
             "/project/src/pkg/logic/pure/check/primitive.py",
         );
-        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Primitive));
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::L1));
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("ceiling"));
     }
@@ -1176,7 +1176,7 @@ def foo():
             "def foo():\n    return 1\n",
             "/project/src/pkg/logic/pure/check/simple.py",
         );
-        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Simple));
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::L2));
         assert!(violations.is_empty());
     }
 
@@ -1186,7 +1186,7 @@ def foo():
             "def foo(x):\n    if x:\n        return 1\n    return 0\n",
             "/project/src/pkg/logic/pure/check/composed.py",
         );
-        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Composed));
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::L4));
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("gravity"));
     }
@@ -1197,7 +1197,7 @@ def foo():
             "def foo(x):\n    if x:\n        return 1\n    return 0\n",
             "/project/src/pkg/logic/pure/check/simple.py",
         );
-        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Simple));
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::L2));
         assert!(violations.is_empty());
     }
 
@@ -1207,7 +1207,7 @@ def foo():
             "def foo(a, b, c, d):\n    if a:\n        if b:\n            return 1\n    elif c:\n        return 2\n    return 0\n",
             "/project/src/pkg/logic/pure/check/composed.py",
         );
-        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::Composed));
+        let violations = check_v2_cc_level(&parsed, &v2_config(crate::structures::Level::L4));
         assert!(violations.is_empty());
     }
 }
