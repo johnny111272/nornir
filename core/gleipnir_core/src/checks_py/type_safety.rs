@@ -419,6 +419,68 @@ pub fn check_no_implicit_type_aliases(
     violations
 }
 
+// -------------------------------------------------------------------------
+// no_string_annotations — string forward references in type positions
+// -------------------------------------------------------------------------
+
+/// Check if a type annotation node is a string literal (forward reference).
+///
+/// Tree-sitter wraps return types in a `type` node, so we check both
+/// the node itself and its first named child.
+fn is_string_type_node<'a>(node: tree_sitter::Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() == "string" {
+        return Some(node_text(node, source));
+    }
+    // return_type wraps in a "type" node
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "string" {
+            return Some(node_text(child, source));
+        }
+    }
+    None
+}
+
+/// Detect string annotations used as forward references.
+///
+/// `-> "SomeType"` or `param: "SomeType"` — the type is a string literal
+/// instead of an actual type reference. This hides the real dependency
+/// and exists because the import was deferred or missing.
+pub fn check_no_string_annotations(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    // Return type annotations: def foo() -> "Bar"
+    for func in find_nodes_by_type(source.tree.root_node(), "function_definition") {
+        if let Some(ret) = node_field(func, "return_type") {
+            if let Some(text) = is_string_type_node(ret, source.source_bytes) {
+                violations.push(violation(
+                    node_line(func),
+                    format!("string annotation {text} — use a real type reference"),
+                ));
+            }
+        }
+    }
+
+    // Parameter type annotations: def foo(x: "Bar")
+    for kind in &["typed_parameter", "typed_default_parameter"] {
+        for param in find_nodes_by_type(source.tree.root_node(), kind) {
+            if let Some(type_node) = node_field(param, "type") {
+                if let Some(text) = is_string_type_node(type_node, source.source_bytes) {
+                    violations.push(violation(
+                        node_line(param),
+                        format!("string annotation {text} — use a real type reference"),
+                    ));
+                }
+            }
+        }
+    }
+
+    violations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +763,36 @@ mod tests {
         let parsed = parse("type Config = dict[str, int]\n");
         let violations = check_no_any_type_aliases(&parsed, &default_config());
         assert!(violations.is_empty());
+    }
+
+    // -- no_string_annotations --
+
+    #[test]
+    fn string_return_annotation_caught() {
+        let parsed = parse("def assemble() -> \"SectionBuffer\":\n    pass\n");
+        let violations = check_no_string_annotations(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("string annotation"));
+    }
+
+    #[test]
+    fn string_param_annotation_caught() {
+        let parsed = parse("def process(data: \"InputModel\") -> None:\n    pass\n");
+        let violations = check_no_string_annotations(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn real_type_annotations_ok() {
+        let parsed = parse("def add(a: int, b: int) -> int:\n    return a + b\n");
+        let violations = check_no_string_annotations(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn multiple_string_annotations_all_caught() {
+        let parsed = parse("def transform(data: \"Input\", config: \"Config\") -> \"Output\":\n    pass\n");
+        let violations = check_no_string_annotations(&parsed, &default_config());
+        assert_eq!(violations.len(), 3);
     }
 }

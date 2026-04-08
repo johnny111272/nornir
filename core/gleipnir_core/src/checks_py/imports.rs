@@ -1,7 +1,8 @@
 //! Import boundary checks.
 //!
 //! Checks: no_unsafe_imports, impure_module_quarantine,
-//! no_type_checking_imports, no_parent_imports, no_disallowed_stdlib.
+//! no_type_checking_imports, no_parent_imports, no_disallowed_stdlib,
+//! no_sys_path_mutation.
 
 use crate::classify;
 use crate::parsing::{
@@ -541,6 +542,108 @@ pub fn check_no_before_validators(
     violations
 }
 
+// -------------------------------------------------------------------------
+// no_sys_path_mutation
+// -------------------------------------------------------------------------
+
+/// Detect sys.path manipulation: insert, append, or direct assignment.
+///
+/// sys.path mutation makes imports work from locations the project structure
+/// forbids. The script appears standalone but secretly reaches into the
+/// package. If sys.path needs modification, the project layout is wrong.
+pub fn check_no_sys_path_mutation(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+
+    // Find call expressions: sys.path.insert(...), sys.path.append(...)
+    for node in find_nodes_by_type(source.tree.root_node(), "call") {
+        let func = match node.child_by_field_name("function") {
+            Some(f) => f,
+            None => continue,
+        };
+        let func_text = node_text(func, source.source_bytes);
+        if func_text == "sys.path.insert" || func_text == "sys.path.append" {
+            violations.push(violation(
+                node_line(node),
+                format!(
+                    "{func_text}() manipulates import path — fix the project layout instead"
+                ),
+            ));
+        }
+    }
+
+    // Find assignments: sys.path = ..., sys.path[:] = ...
+    for node in find_nodes_by_type(source.tree.root_node(), "assignment") {
+        let left = match node.child_by_field_name("left") {
+            Some(l) => l,
+            None => continue,
+        };
+        let left_text = node_text(left, source.source_bytes);
+        if left_text == "sys.path" || left_text.starts_with("sys.path[") {
+            violations.push(violation(
+                node_line(node),
+                "sys.path assignment manipulates import path — fix the project layout instead"
+                    .to_string(),
+            ));
+        }
+    }
+
+    violations
+}
+
+// -------------------------------------------------------------------------
+// no_deferred_imports — imports inside function bodies
+// -------------------------------------------------------------------------
+
+/// Detect import statements nested inside function definitions.
+///
+/// An import inside a function body is invisible at module level —
+/// tools and humans scanning the top of the file cannot see what
+/// the function depends on.
+pub fn check_no_deferred_imports(
+    source: &ParsedSource,
+    _config: &CheckConfig,
+) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let root = source.tree.root_node();
+
+    for import_node in find_nodes_by_type(root, "import_from_statement") {
+        if is_inside_function(import_node) {
+            let module_text = extract_module_info(import_node, source.source_bytes).0;
+            violations.push(violation(
+                node_line(import_node),
+                format!("deferred import '{module_text}' inside function body — move to module level"),
+            ));
+        }
+    }
+
+    for import_node in find_nodes_by_type(root, "import_statement") {
+        if is_inside_function(import_node) {
+            let text = node_text(import_node, source.source_bytes);
+            violations.push(violation(
+                node_line(import_node),
+                format!("deferred {text} inside function body — move to module level"),
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Walk ancestors to check if a node is inside a function_definition.
+fn is_inside_function(node: tree_sitter::Node) -> bool {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == "function_definition" {
+            return true;
+        }
+        current = parent.parent();
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,5 +954,81 @@ mod tests {
         let parsed = parse("from pydantic import BaseModel\n");
         let violations = check_no_before_validators(&parsed, &default_config());
         assert!(violations.is_empty());
+    }
+
+    // -- no_sys_path_mutation --
+
+    #[test]
+    fn sys_path_insert_caught() {
+        let parsed = parse("import sys\nsys.path.insert(0, \"/some/path\")\n");
+        let violations = check_no_sys_path_mutation(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("sys.path.insert"));
+    }
+
+    #[test]
+    fn sys_path_append_caught() {
+        let parsed = parse("import sys\nsys.path.append(\"/some/path\")\n");
+        let violations = check_no_sys_path_mutation(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("sys.path.append"));
+    }
+
+    #[test]
+    fn sys_path_assignment_caught() {
+        let parsed = parse("import sys\nsys.path = [\"/new/path\"]\n");
+        let violations = check_no_sys_path_mutation(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("sys.path assignment"));
+    }
+
+    #[test]
+    fn sys_stdout_ok() {
+        let parsed = parse("import sys\nsys.stdout.write(\"hello\")\n");
+        let violations = check_no_sys_path_mutation(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn sys_exit_ok() {
+        let parsed = parse("import sys\nsys.exit(0)\n");
+        let violations = check_no_sys_path_mutation(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- no_deferred_imports --
+
+    #[test]
+    fn deferred_import_in_function_caught() {
+        let code = "def assemble():\n    from galdr.structure.model import SectionBuffer\n    return SectionBuffer()\n";
+        let parsed = parse(code);
+        let violations = check_no_deferred_imports(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("deferred import"));
+    }
+
+    #[test]
+    fn deferred_bare_import_caught() {
+        let code = "def run():\n    import json\n    return json.dumps({})\n";
+        let parsed = parse(code);
+        let violations = check_no_deferred_imports(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("deferred"));
+    }
+
+    #[test]
+    fn top_level_import_ok() {
+        let code = "from pathlib import Path\ndef run() -> Path:\n    return Path('.')\n";
+        let parsed = parse(code);
+        let violations = check_no_deferred_imports(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn multiple_deferred_imports_all_caught() {
+        let code = "def run():\n    from os import path\n    import json\n    return path.join(json.dumps({}))\n";
+        let parsed = parse(code);
+        let violations = check_no_deferred_imports(&parsed, &default_config());
+        assert_eq!(violations.len(), 2);
     }
 }

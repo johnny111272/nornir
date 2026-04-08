@@ -17,6 +17,7 @@ crates = [
     "hook_pre_llm_tool",
     "hook_pre_llm_bash",
     "hook_post_llm_tool",
+    "hook_post_llm_read",
     "hook_stop_llm_tts",
     "hook_notify_llm_tts",
     "hook_compact_session_log",
@@ -54,6 +55,7 @@ crates = [
     "hush",
     "announce",
     "cc_launch",
+    "dep_resolve",
 ]
 verify = "exit_codes"
 valid_exit_codes = [0, 1, 2]

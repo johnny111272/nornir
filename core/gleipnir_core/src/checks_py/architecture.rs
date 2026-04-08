@@ -1165,8 +1165,9 @@ pub fn check_unknown_file_in_zone(
 /// a dedicated dispatch.py file.
 ///
 /// Heuristic: a dictionary with 2+ pairs where every value is a bare identifier
-/// or attribute access (e.g. `module.func`), found inside a function body.
-/// Dicts with string, number, or call-expression values are data, not dispatch.
+/// (function reference), found inside a function body. Attribute access values
+/// (e.g. `model.field`) are data access, not callable dispatch — excluded to
+/// avoid false positives on model_copy update dicts and edge attribute dicts.
 pub fn check_no_inline_dispatch(
     source: &ParsedSource,
     _config: &CheckConfig,
@@ -1197,7 +1198,7 @@ pub fn check_no_inline_dispatch(
                 let children: Vec<_> = pair.named_children(&mut cursor).collect();
                 // pair has key + value as named children; value is the last one
                 match children.last() {
-                    Some(value) => matches!(value.kind(), "identifier" | "attribute"),
+                    Some(value) => value.kind() == "identifier",
                     None => false,
                 }
             });
@@ -2011,6 +2012,16 @@ mod tests {
     fn single_entry_ok() {
         let parsed = parse(
             "def build():\n    lookup = {\n        \"only\": some_func,\n    }\n",
+        );
+        let violations = check_no_inline_dispatch(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn attribute_values_not_caught() {
+        // Data dicts with attribute access values (model.field) are not dispatch tables
+        let parsed = parse(
+            "def build(model, meta):\n    updates = {\n        \"title\": model.title.root,\n        \"description\": meta.description,\n    }\n",
         );
         let violations = check_no_inline_dispatch(&parsed, &default_config());
         assert!(violations.is_empty());

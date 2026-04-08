@@ -435,6 +435,30 @@ fn collect_free_references(func: tree_sitter::Node, source: &[u8]) -> Vec<String
 }
 
 // -------------------------------------------------------------------------
+// no_lambda — lambda expressions are anonymous closures
+// -------------------------------------------------------------------------
+
+/// Detect lambda expressions anywhere in the source.
+///
+/// Every lambda is an anonymous closure — same problem as no_closures
+/// but harder to spot because there is no name to grep for.
+pub fn check_no_lambda(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    find_nodes_by_type(source.tree.root_node(), "lambda")
+        .iter()
+        .map(|node| Violation {
+            line: node_line(*node),
+            check_name: "no_lambda".to_string(),
+            severity: Severity::Error,
+            message: "lambda expression — extract to a named function".to_string(),
+            detail: String::new(),
+            signal: String::new(),
+            direction: String::new(),
+            canary: String::new(),
+        })
+        .collect()
+}
+
+// -------------------------------------------------------------------------
 // no_recursion — function calls itself by name
 // -------------------------------------------------------------------------
 
@@ -718,6 +742,41 @@ mod tests {
         let parsed = parse(code);
         let violations = check_no_nested_functions(&parsed, &default_config());
         assert_eq!(violations.len(), 2); // b and c both flagged
+    }
+
+    // -- no_lambda --
+
+    #[test]
+    fn lambda_in_function_call_caught() {
+        let code = "import re\ndef interpolate(template: str, values: dict) -> str:\n    return re.sub(r'pattern', lambda m: values.get(m.group(1)), template)\n";
+        let parsed = parse(code);
+        let violations = check_no_lambda(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].check_name, "no_lambda");
+    }
+
+    #[test]
+    fn lambda_assigned_to_variable_caught() {
+        let code = "double = lambda x: x * 2\n";
+        let parsed = parse(code);
+        let violations = check_no_lambda(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn no_lambda_clean_code_ok() {
+        let code = "def add(a: int, b: int) -> int:\n    return a + b\n";
+        let parsed = parse(code);
+        let violations = check_no_lambda(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn multiple_lambdas_all_caught() {
+        let code = "items.sort(key=lambda x: x.name)\nresult = map(lambda y: y + 1, numbers)\n";
+        let parsed = parse(code);
+        let violations = check_no_lambda(&parsed, &default_config());
+        assert_eq!(violations.len(), 2);
     }
 
     // -- no_recursion --

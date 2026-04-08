@@ -49,6 +49,10 @@ impl HookInput {
 pub enum HookDecision {
     /// Allow silently — no output except permissionDecision: "allow".
     Allow,
+    /// Allow and inject context for the LLM — no warning, no banner, no watchtower.
+    AllowWithContext {
+        context: String,
+    },
     /// Allow but warn both user (stderr banner) and LLM (context injection).
     Warn {
         category: String,
@@ -185,6 +189,7 @@ where
 fn emit_decision(decision: HookDecision, tool: &str) {
     match decision {
         HookDecision::Allow => print_allow(),
+        HookDecision::AllowWithContext { context } => print_allow_with_context(&context),
         HookDecision::Warn { category, event, user_reason, llm_context } => {
             print_banner_warn(&category, &event, &user_reason);
             print_warn(&user_reason, &llm_context);
@@ -217,6 +222,11 @@ fn emit_decision(decision: HookDecision, tool: &str) {
 fn print_allow() {
     use response::{HookOutput, PreToolUseResponse};
     print!("{}", PreToolUseResponse::allow().to_json());
+}
+
+fn print_allow_with_context(context: &str) {
+    use response::{HookOutput, PreToolUseResponse};
+    print!("{}", PreToolUseResponse::allow().with_context(context).to_json());
 }
 
 fn print_warn(user_reason: &str, llm_context: &str) {

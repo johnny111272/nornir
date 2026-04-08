@@ -999,6 +999,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 
 [[package]]
+name = "dep_resolve"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dep_resolve_core",
+]
+
+[[package]]
+name = "dep_resolve_core"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter",
+ "tree-sitter-python",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1996,6 +2012,16 @@ dependencies = [
  "serde",
  "serde_json",
  "workspace_registry",
+ "write_engine",
+]
+
+[[package]]
+name = "hook_post_llm_read"
+version = "0.1.0"
+dependencies = [
+ "dep_resolve_core",
+ "hook_io",
+ "serde_json",
  "write_engine",
 ]
 

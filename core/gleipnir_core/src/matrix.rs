@@ -37,12 +37,15 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
     // IMPORTS
     blocked("no_unsafe_imports", imports::check_no_unsafe_imports),
     blocked("no_relative_imports", imports::check_no_relative_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_parent_imports", imports::check_no_parent_imports),
     // no_disallowed_stdlib excluded — scripts are standalone, may use stdlib freely
@@ -57,6 +60,7 @@ static SCRIPT_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE (no hardcoded_config — scripts are self-contained)
     error("no_methods_in_classes", architecture::check_no_methods_in_classes),
@@ -85,12 +89,15 @@ static TEST_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     // IMPORTS
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED (subset)
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
     error("no_future_annotations", prohibited::check_no_future_annotations),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
 ];
 
@@ -103,6 +110,7 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
@@ -111,6 +119,8 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -122,6 +132,7 @@ static DATA_STRUCTURE_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("no_methods_in_classes", architecture::check_no_methods_in_classes),
@@ -138,10 +149,13 @@ static UNSAFE_IMPURE_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     // IMPORTS
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -152,6 +166,7 @@ static UNSAFE_IMPURE_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
@@ -181,11 +196,14 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     // IMPORTS
     error("impure_module_quarantine", imports::check_impure_module_quarantine),
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -196,6 +214,7 @@ static UNSAFE_PURE_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
@@ -227,6 +246,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
@@ -235,6 +255,8 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -246,6 +268,7 @@ static IMPURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
@@ -278,6 +301,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
@@ -287,6 +311,8 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -298,6 +324,7 @@ static PURE_FUNCTION_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
@@ -330,6 +357,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
@@ -338,6 +366,8 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     error("no_type_checking_imports", imports::check_no_type_checking_imports),
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("no_parent_imports", imports::check_no_parent_imports),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -349,6 +379,7 @@ static OUTSIDE_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),
@@ -407,6 +438,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     error("no_bare_collections", type_safety::check_no_bare_collections),
     error("no_implicit_type_aliases", type_safety::check_no_implicit_type_aliases),
     warning("union_member_count", type_safety::check_union_member_count),
+    error("no_string_annotations", type_safety::check_no_string_annotations),
     error("no_cast", prohibited::check_no_cast),
     blocked("no_callable_params", type_safety::check_no_callable_params),
     blocked("no_callable_type_aliases", type_safety::check_no_callable_type_aliases),
@@ -416,6 +448,8 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     error("no_disallowed_stdlib", imports::check_no_disallowed_stdlib),
     error("v2_import_boundaries", imports::check_v2_import_boundaries),
     error("no_before_validators", imports::check_no_before_validators),
+    blocked("no_sys_path_mutation", imports::check_no_sys_path_mutation),
+    error("no_deferred_imports", imports::check_no_deferred_imports),
     // PROHIBITED
     error("no_bare_except", prohibited::check_no_bare_except),
     error("no_broad_exceptions", prohibited::check_no_broad_exceptions),
@@ -427,6 +461,7 @@ static V2_COMMON_CHECKS: &[MatrixEntry] = &[
     error("no_dunder_all", prohibited::check_no_dunder_all),
     error("no_suppression_comments", suppression::check_no_suppression_comments),
     error("no_nested_functions", prohibited::check_no_nested_functions),
+    error("no_lambda", prohibited::check_no_lambda),
     error("no_recursion", prohibited::check_no_recursion),
     // ARCHITECTURE
     error("pydantic_only", architecture::check_pydantic_only),

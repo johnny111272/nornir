@@ -37,6 +37,12 @@ signal = "Overt Any clusters visibly to reveal architectural holes. Type aliases
 direction = "Delete the alias. Use Any directly at each usage site. Any will trigger no_any_types — that is correct, do not try to avoid it."
 canary = "LLM creates type aliases like JsonNode = dict[str, Any] to avoid triggering no_any_types at each site, dispersing the signal."
 
+[no_string_annotations]
+detail = "String annotation used instead of a real type reference — types must be consistent and resolve directly."
+signal = "The architecture ensures dependencies resolve in the right order. Simpler things are written at lower levels, imports are fully qualified at the top of the file, and within a module simpler definitions come first. There is never a reason for a forward reference. If you need a string annotation, something is out of order — fix the ordering or the import, not the symptom."
+direction = "Import the type at module level and reference it directly. If the type is defined later in the same file, move it above the function that uses it."
+canary = "LLM uses a string forward reference to avoid resolving import ordering or file structure, hiding a dependency problem behind a string literal."
+
 [no_bare_collections]
 detail = "Bare collections lose element type information."
 signal = "Unparameterized dict/list/set/tuple tell the type checker nothing about contents."
@@ -113,6 +119,18 @@ signal = "Superseded stdlib modules bypass project conventions. argparse produce
 direction = "The violation message tells you exactly what to use instead. For CLI: typer. For logging: loguru. For tests: pytest. For config: toml + pydantic. For serialization: model_dump_json() to serialize, model_validate_json() to deserialize. Never use json.loads() to create untyped dicts from data that has a known shape."
 canary = "LLM imports familiar stdlib modules from training data instead of using the project's standardized alternatives."
 
+[no_sys_path_mutation]
+detail = "sys.path manipulation makes imports work from locations the project structure forbids. If you need sys.path, the project layout is wrong."
+signal = "sys.path.insert and sys.path.append are escape hatches that let code reach into packages it has no structural relationship with. A script with a PEP 723 shebang that modifies sys.path is pretending to be standalone while secretly depending on a package — the shebang is a lie."
+direction = "Fix the project layout. If this script needs to import from a package, it belongs inside that package — either as a CLI subcommand, an entry point in pyproject.toml, or a module in the appropriate zone. Move the script into the package and remove the sys.path hack."
+canary = "LLM hacks sys.path to make imports work rather than restructuring the project layout that makes the import illegal."
+
+[no_deferred_imports]
+detail = "Import inside function body — all imports belong at the top of the file with fully qualified paths."
+signal = "The import block at the top of the file IS the dependency map. Every import uses the full path to the exact function or data structure so that both humans and LLMs know exactly what is here and where it comes from. An import hidden inside a function body breaks that map — you cannot reason about a distributed program unless you can see all dependencies at a glance. The alternative is a monolith, and monoliths are not accepted."
+direction = "Move the import to the top of the file with a fully qualified path: from package.zone.module import name. If that causes an error, the error reveals a real architectural problem — fix it."
+canary = "LLM places an import inside a function body instead of at the top of the file, hiding the dependency from the import block where it belongs."
+
 [no_parent_imports]
 detail = "Imports must target explicit pure/impure submodules."
 signal = "Imports must target explicit pure/impure submodules to maintain zone discipline."
@@ -188,6 +206,12 @@ detail = "Closure captures state from enclosing scope. This hides data flow — 
 signal = "A closure looks like a function but carries invisible state from its parent scope. When you read the closure's signature, you see its declared parameters but not the captured variables. Tracing data flow requires reading the enclosing function to discover what is captured. This is exactly the hidden state that makes programs hard to debug — for humans and LLMs alike."
 direction = "Extract the inner function to module level and add the captured variables as explicit parameters. Every piece of data the function needs should be visible in its signature. The function signature IS the contract — nothing hidden, nothing captured."
 canary = "LLM creates closures to avoid passing parameters explicitly, hiding data flow behind captures that look clean but are opaque."
+
+[no_lambda]
+detail = "Lambda expression — extract to a named function."
+signal = "Code must be simple to follow. You should be able to see exactly what happens by reading top to bottom without pausing to decipher an anonymous inline expression, figure out what it captures, or trace how it interacts with its surrounding context. A lambda forces the reader to stop, mentally inline the closure, and reason about scope — that is time spent on syntax instead of logic."
+direction = "Extract to a named function at module level. Give it a descriptive name that says what it does. Pass any data it needs as explicit parameters. The result is readable, testable, and findable."
+canary = "LLM uses lambda for inline callbacks instead of writing a named function, producing code that requires extra effort to read and reason about."
 
 [no_recursion]
 detail = "Recursive call detected. Use explicit iteration or decompose into a pipeline of smaller functions."
