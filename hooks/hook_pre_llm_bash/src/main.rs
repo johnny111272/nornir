@@ -5,7 +5,7 @@
 //! LLM sessions.
 //!
 //! Usage (in ~/.claude/settings.json):
-//!     hook_pre_llm_bash --subversion block --truncation warn --evasion warn --workflow ask
+//!     hook_pre_llm_bash --subversion block --truncation warn --evasion warn --workflow ask --chaining block
 //!
 //! Env var:
 //!     HOOK_LLM_ALLOW_BASH=pattern_name1:pattern_name2  — exempt specific patterns
@@ -52,6 +52,7 @@ struct Rules {
     destruction: Vec<CompiledRule>,
     revert: Vec<CompiledRule>,
     workflow: Vec<CompiledRule>,
+    chaining: Vec<CompiledRule>,
 }
 
 fn parse_rules(toml_str: &str) -> Result<Rules, String> {
@@ -71,6 +72,7 @@ fn parse_rules(toml_str: &str) -> Result<Rules, String> {
         destruction: compile_array("destruction"),
         revert: compile_array("revert"),
         workflow: compile_array("workflow"),
+        chaining: compile_array("chaining"),
     })
 }
 
@@ -84,6 +86,7 @@ struct Config {
     destruction: Option<Severity>,
     revert: Option<Severity>,
     workflow: Option<Severity>,
+    chaining: Option<Severity>,
     allow_patterns: Vec<String>,
 }
 
@@ -95,6 +98,7 @@ fn parse_config() -> Config {
     let mut destruction = None;
     let mut revert = None;
     let mut workflow = None;
+    let mut chaining = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -123,6 +127,10 @@ fn parse_config() -> Config {
                 workflow = parse_severity(&args[i + 1]);
                 i += 2;
             }
+            "--chaining" if i + 1 < args.len() => {
+                chaining = parse_severity(&args[i + 1]);
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -141,6 +149,7 @@ fn parse_config() -> Config {
         destruction,
         revert,
         workflow,
+        chaining,
         allow_patterns,
     }
 }
@@ -170,6 +179,15 @@ fn decide(input: &HookInput) -> HookDecision {
     if let Some(severity) = config.destruction {
         if let Some(decision) = check_category(
             command, &rules.destruction, severity, "destruction", &config.allow_patterns,
+        ) {
+            return decision;
+        }
+    }
+
+    // Chaining next — catches hang-inducing && before deeper analysis
+    if let Some(severity) = config.chaining {
+        if let Some(decision) = check_category(
+            command, &rules.chaining, severity, "chaining", &config.allow_patterns,
         ) {
             return decision;
         }
@@ -1176,5 +1194,101 @@ mod tests {
         let release_rule = rules.workflow.iter().find(|r| r.description.contains("Direct release"));
         assert!(release_rule.is_some(), "Release build rule must exist");
         assert_eq!(release_rule.unwrap().severity, Some(Severity::Ask));
+    }
+
+    // -- Chaining detections (must catch) --
+
+    #[test]
+    fn chaining_simple_and_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test && nornir_deploy",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_some(), "cargo test && nornir_deploy must be blocked");
+    }
+
+    #[test]
+    fn chaining_with_flags_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test -p foo 2>&1 | grep result && nornir_deploy --build tools",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_some(), "chained command with flags must be blocked");
+    }
+
+    #[test]
+    fn chaining_three_commands_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "echo a && echo b && echo c",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_some(), "three-command chain must be blocked");
+    }
+
+    // -- Chaining: benign must NOT match --
+
+    #[test]
+    fn chaining_single_command_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test --workspace",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_none(), "single command must not match chaining");
+    }
+
+    #[test]
+    fn chaining_pipe_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test 2>&1 | tail -10",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_none(), "pipe (not &&) must not match chaining");
+    }
+
+    #[test]
+    fn chaining_stderr_redirect_ok() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "cargo test 2>&1",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_none(), "2>&1 redirect must not match chaining");
+    }
+
+    #[test]
+    fn chaining_bitwise_and_in_arg_ok() {
+        let rules = make_rules_from_toml();
+        // Bare && without surrounding spaces shouldn't match (defensive — unlikely in real use)
+        let result = check_category(
+            "echo 'hello&&world'",
+            &rules.chaining,
+            Severity::Block,
+            "chaining",
+            &[],
+        );
+        assert!(result.is_none(), "&& inside a quoted string without spaces must not match");
     }
 }

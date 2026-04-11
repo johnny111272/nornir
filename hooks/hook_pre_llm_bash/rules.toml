@@ -14,6 +14,7 @@
 #   --destruction warn|ask|block  — scorched-earth git commands
 #   --revert      warn|ask|block  — file-specific git reverts
 #   --workflow    warn|ask|block  — build process guidance
+#   --chaining    warn|ask|block  — && command chaining
 #
 # Per-rule severity: add severity = "warn|ask|block" to override the category default.
 # HOOK_LLM_ALLOW_BASH env var: colon-separated pattern names to relax.
@@ -158,4 +159,16 @@ severity = "ask"
 pattern = "cargo\\s+build"
 description = "Debug build — consider nornir_deploy for deployment; cargo build alone does not deploy"
 severity = "warn"
+
+# ─── Chaining: && command chaining hangs on long-running commands ────
+#
+# When the LLM chains commands with && and any command is long-running
+# (cargo test, nornir_deploy, etc.), the background task system loses
+# track of process state. The user sees a frozen prompt with no way to
+# tell if a process is still running or has hung — they must guess
+# whether to terminate the LLM session. Run each command separately.
+
+[[chaining]]
+pattern = "\\s&&\\s"
+description = "Chained commands hang on long-running ops, leaving user unable to tell if process is alive or stuck — run each command separately"
 
