@@ -76,10 +76,28 @@ impl Level {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zone {
     Structure,
+    StructureGen,
+    StructureModel,
+    StructureConfig,
+    StructureExample,
     Pure,
     Impure,
     Transform,
     Orchestrate,
+}
+
+impl Zone {
+    /// True if this zone is any structure sub-zone (including the fallback).
+    pub fn is_structure(self) -> bool {
+        matches!(
+            self,
+            Zone::Structure
+                | Zone::StructureGen
+                | Zone::StructureModel
+                | Zone::StructureConfig
+                | Zone::StructureExample
+        )
+    }
 }
 
 impl Zone {
@@ -90,7 +108,7 @@ impl Zone {
     pub fn can_reach(self, target: Zone) -> bool {
         use Zone::*;
         match self {
-            Structure => false,
+            Structure | StructureGen | StructureModel | StructureConfig | StructureExample => false,
             Pure => matches!(target, Pure),
             Impure => matches!(target, Impure | Pure),
             Transform => matches!(target, Transform),
@@ -115,7 +133,7 @@ impl V2Classification {
         if !self.level.can_import(target.level) {
             return false;
         }
-        if target.zone == Zone::Structure {
+        if target.zone.is_structure() {
             return true;
         }
         self.zone.can_reach(target.zone)

@@ -207,11 +207,29 @@ signal = "A closure looks like a function but carries invisible state from its p
 direction = "Extract the inner function to module level and add the captured variables as explicit parameters. Every piece of data the function needs should be visible in its signature. The function signature IS the contract — nothing hidden, nothing captured."
 canary = "LLM creates closures to avoid passing parameters explicitly, hiding data flow behind captures that look clean but are opaque."
 
-[no_lambda]
+[no_general_lambda]
 detail = "Lambda expression — extract to a named function."
 signal = "Code must be simple to follow. You should be able to see exactly what happens by reading top to bottom without pausing to decipher an anonymous inline expression, figure out what it captures, or trace how it interacts with its surrounding context. A lambda forces the reader to stop, mentally inline the closure, and reason about scope — that is time spent on syntax instead of logic."
 direction = "Extract to a named function at module level. Give it a descriptive name that says what it does. Pass any data it needs as explicit parameters. The result is readable, testable, and findable."
 canary = "LLM uses lambda for inline callbacks instead of writing a named function, producing code that requires extra effort to read and reason about."
+
+[no_default_factory]
+detail = "default_factory=lambda in Pydantic field. Use a named function or class-level default instead."
+signal = "default_factory=lambda hides initialization logic inside an anonymous expression. Even when the body is trivial (lambda: []), it sets a precedent that allows arbitrarily complex logic to hide in field definitions. Named functions make the initialization visible, testable, and greppable."
+direction = "For empty collections: use a named factory function (def empty_list() -> list: return []) or consider whether the field can use a non-mutable default. For complex defaults: extract to a named function that describes what it builds."
+canary = "LLM uses default_factory=lambda as a shortcut for mutable defaults instead of writing explicit factory functions."
+
+[no_partial]
+detail = "functools.partial() creates an anonymous callable — same problem as lambda with extra indirection."
+signal = "partial() is a lambda factory. It produces a callable you cannot grep for, cannot test independently, and cannot trace without reading the binding site. If the lambda ban exists to keep code greppable and traceable, partial must be banned too — it achieves the same opacity through a different API."
+direction = "Write a named function that does what the partial would do. If you need to bind arguments, make them explicit parameters of a new function. The function is testable, findable, and its signature tells you what it needs."
+canary = "LLM uses functools.partial to circumvent the lambda ban while preserving the same anonymous callable pattern."
+
+[no_re_sub]
+detail = "re.sub() with callbacks encourages lambda and partial patterns. Use re.finditer() with a loop."
+signal = "re.sub's callback API requires passing a callable — which pushes you toward lambda or partial. re.finditer() with a loop achieves the same result with explicit, readable iteration. No callbacks, no anonymous functions, no argument binding tricks."
+direction = "Replace re.sub(pattern, callback, text) with a loop: iterate re.finditer(pattern, text), build the result string with explicit replacements. For simple string replacements (no callback), re.sub is acceptable but str.replace or re.finditer is still preferred."
+canary = "LLM uses re.sub with a lambda or partial callback instead of writing an explicit finditer loop."
 
 [no_recursion]
 detail = "Recursive call detected. Use explicit iteration or decompose into a pipeline of smaller functions."

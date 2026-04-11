@@ -808,7 +808,7 @@ pub fn check_v2_structure_no_logic(
     _config: &CheckConfig,
 ) -> Vec<Violation> {
     let classification = classify::classify_file_v2(source.file_path);
-    if classification.zone != Zone::Structure {
+    if !classification.zone.is_structure() {
         return Vec::new();
     }
 
@@ -867,7 +867,7 @@ pub fn check_v2_structure_bases(
     _config: &CheckConfig,
 ) -> Vec<Violation> {
     let classification = classify::classify_file_v2(source.file_path);
-    if classification.zone != Zone::Structure {
+    if !classification.zone.is_structure() {
         return Vec::new();
     }
 
@@ -1067,9 +1067,8 @@ pub fn check_v2_logic_no_constants(
     _config: &CheckConfig,
 ) -> Vec<Violation> {
     let classification = classify::classify_file_v2(source.file_path);
-    match classification.zone {
-        Zone::Pure | Zone::Impure | Zone::Transform | Zone::Orchestrate => {}
-        Zone::Structure => return Vec::new(),
+    if classification.zone.is_structure() {
+        return Vec::new();
     }
     if matches!(classification.level, Level::L0 | Level::L3 | Level::L6 | Level::Outside) {
         return Vec::new();
@@ -1124,10 +1123,13 @@ pub fn check_unknown_file_in_zone(
 
     let filename = source.file_path.rsplit('/').next().unwrap_or("");
 
+    if classification.zone.is_structure() {
+        return Vec::new(); // structure has no filename convention
+    }
     let valid_names = match classification.zone {
         Zone::Pure | Zone::Impure | Zone::Transform => LOGIC_ZONE_FILENAMES,
         Zone::Orchestrate => ORCHESTRATE_ZONE_FILENAMES,
-        Zone::Structure => return Vec::new(), // structure has no filename convention
+        _ => unreachable!(), // structure handled above
     };
 
     if valid_names.contains(&filename) {
@@ -1139,7 +1141,7 @@ pub fn check_unknown_file_in_zone(
         Zone::Impure => "impure",
         Zone::Transform => "transform",
         Zone::Orchestrate => "orchestrate",
-        Zone::Structure => unreachable!(),
+        _ => unreachable!(), // structure handled above
     };
 
     let allowed = valid_names.iter()

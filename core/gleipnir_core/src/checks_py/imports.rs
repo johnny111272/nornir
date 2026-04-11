@@ -490,7 +490,7 @@ fn check_import_legality(
     }
 
     let level_ok = source.level.can_import(target.level);
-    let zone_ok = if target.zone == crate::structures::Zone::Structure {
+    let zone_ok = if target.zone.is_structure() {
         true
     } else {
         source.zone.can_reach(target.zone)

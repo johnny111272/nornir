@@ -52,6 +52,11 @@ const V2_ZONE_MARKERS: &[(&str, Zone)] = &[
     ("/logic/impure/", Zone::Impure),
     ("/logic/transform/", Zone::Transform),
     ("/logic/orchestrate/", Zone::Orchestrate),
+    // Structure sub-zones (specific before fallback)
+    ("/structure/gen/", Zone::StructureGen),
+    ("/structure/model/", Zone::StructureModel),
+    ("/structure/config/", Zone::StructureConfig),
+    ("/structure/example/", Zone::StructureExample),
     ("/structure/", Zone::Structure),
 ];
 
@@ -147,8 +152,8 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
         };
     };
 
-    // Structure zone has a fixed level (L0)
-    if zone == Zone::Structure {
+    // Structure zones have a fixed level (L0)
+    if zone.is_structure() {
         return V2Classification { level: Level::L0, zone };
     }
 
@@ -170,7 +175,7 @@ pub fn classify_file_v2(file_path: &str) -> V2Classification {
             level,
             Level::L6 | Level::L7 | Level::Outside
         ),
-        Zone::Structure => true, // handled above
+        _ => true, // structure zones handled by early return above
     };
     let level = if valid { level } else { Level::Outside };
 
@@ -194,8 +199,8 @@ pub fn classify_import_path(dotted_path: &str) -> Option<V2Classification> {
         if probe.contains(pattern) { Some(zone) } else { None }
     })?;
 
-    // Structure zone has a fixed level (L0)
-    if zone == Zone::Structure {
+    // Structure zones have a fixed level (L0)
+    if zone.is_structure() {
         return Some(V2Classification { level: Level::L0, zone });
     }
 
@@ -456,6 +461,42 @@ mod tests {
     }
 
     #[test]
+    fn v2_structure_gen() {
+        let c = classify_file_v2("/project/src/pkg/structure/gen/output_structure.py");
+        assert_eq!(c.level, Level::L0);
+        assert_eq!(c.zone, Zone::StructureGen);
+    }
+
+    #[test]
+    fn v2_structure_model() {
+        let c = classify_file_v2("/project/src/pkg/structure/model/section_buffer.py");
+        assert_eq!(c.level, Level::L0);
+        assert_eq!(c.zone, Zone::StructureModel);
+    }
+
+    #[test]
+    fn v2_structure_config() {
+        let c = classify_file_v2("/project/src/pkg/structure/config/capability_tiers.py");
+        assert_eq!(c.level, Level::L0);
+        assert_eq!(c.zone, Zone::StructureConfig);
+    }
+
+    #[test]
+    fn v2_structure_example() {
+        let c = classify_file_v2("/project/src/pkg/structure/example/fixtures.py");
+        assert_eq!(c.level, Level::L0);
+        assert_eq!(c.zone, Zone::StructureExample);
+    }
+
+    #[test]
+    fn v2_structure_fallback() {
+        // Unknown structure sub-dir falls back to Structure
+        let c = classify_file_v2("/project/src/pkg/structure/exception/custom.py");
+        assert_eq!(c.level, Level::L0);
+        assert_eq!(c.zone, Zone::Structure);
+    }
+
+    #[test]
     fn v2_structures_plural_not_recognized() {
         // V2 only recognizes structure/ (singular)
         let c = classify_file_v2("/project/src/pkg/structures/schema.py");
@@ -523,7 +564,7 @@ mod tests {
     fn import_path_structure_singular() {
         let c = classify_import_path("regin.structure.gen.schema.agent_raw_definition").unwrap();
         assert_eq!(c.level, Level::L0);
-        assert_eq!(c.zone, Zone::Structure);
+        assert_eq!(c.zone, Zone::StructureGen);
     }
 
     #[test]

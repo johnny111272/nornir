@@ -2,7 +2,8 @@
 //!
 //! Checks: no_cast, no_overload, no_bare_except, no_broad_exceptions,
 //! no_print, no_model_dump, no_future_annotations, init_files_empty,
-//! no_dunder_all, no_nested_functions (+ no_closures), no_recursion.
+//! no_dunder_all, no_nested_functions (+ no_closures),
+//! no_general_lambda, no_default_factory, no_recursion.
 
 use crate::parsing::{find_nodes_by_type, node_field, node_line, node_text};
 use crate::structures::{CheckConfig, ParsedSource, Severity, Violation};
@@ -435,19 +436,35 @@ fn collect_free_references(func: tree_sitter::Node, source: &[u8]) -> Vec<String
 }
 
 // -------------------------------------------------------------------------
-// no_lambda — lambda expressions are anonymous closures
+// no_general_lambda — lambda expressions outside default_factory=
 // -------------------------------------------------------------------------
 
-/// Detect lambda expressions anywhere in the source.
+/// Check if a lambda node is the value of a `default_factory=` keyword argument.
+fn is_default_factory_lambda(node: tree_sitter::Node, source: &[u8]) -> bool {
+    let parent = match node.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    if parent.kind() != "keyword_argument" {
+        return false;
+    }
+    match node_field(parent, "name") {
+        Some(name_node) => node_text(name_node, source) == "default_factory",
+        None => false,
+    }
+}
+
+/// Detect lambda expressions that are NOT in `default_factory=` position.
 ///
-/// Every lambda is an anonymous closure — same problem as no_closures
-/// but harder to spot because there is no name to grep for.
-pub fn check_no_lambda(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+/// General-purpose lambdas are anonymous closures — same problem as
+/// no_closures but harder to spot because there is no name to grep for.
+pub fn check_no_general_lambda(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
     find_nodes_by_type(source.tree.root_node(), "lambda")
         .iter()
+        .filter(|node| !is_default_factory_lambda(**node, source.source_bytes))
         .map(|node| Violation {
             line: node_line(*node),
-            check_name: "no_lambda".to_string(),
+            check_name: "no_general_lambda".to_string(),
             severity: Severity::Error,
             message: "lambda expression — extract to a named function".to_string(),
             detail: String::new(),
@@ -456,6 +473,97 @@ pub fn check_no_lambda(source: &ParsedSource, _config: &CheckConfig) -> Vec<Viol
             canary: String::new(),
         })
         .collect()
+}
+
+// -------------------------------------------------------------------------
+// no_default_factory — default_factory=lambda in Pydantic fields
+// -------------------------------------------------------------------------
+
+/// Detect `default_factory=lambda` in Pydantic field definitions.
+///
+/// Generated structure files (structure/gen/) are exempt via the matrix —
+/// this check is not wired into V2_GEN_CHECKS.
+pub fn check_no_default_factory(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    find_nodes_by_type(source.tree.root_node(), "lambda")
+        .iter()
+        .filter(|node| is_default_factory_lambda(**node, source.source_bytes))
+        .map(|node| Violation {
+            line: node_line(*node),
+            check_name: "no_default_factory".to_string(),
+            severity: Severity::Error,
+            message: "default_factory=lambda — use a named function or class default".to_string(),
+            detail: String::new(),
+            signal: String::new(),
+            direction: String::new(),
+            canary: String::new(),
+        })
+        .collect()
+}
+
+// -------------------------------------------------------------------------
+// no_partial — functools.partial creates anonymous callables
+// -------------------------------------------------------------------------
+
+/// Detect calls to functools.partial or bare partial().
+///
+/// partial() is a lambda factory — it creates anonymous callables that
+/// bypass the lambda ban while producing the same ungreppable, untestable
+/// closures. If you need to bind arguments, write a named function.
+pub fn check_no_partial(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    for node in find_nodes_by_type(source.tree.root_node(), "call") {
+        let func = match node.child_by_field_name("function") {
+            Some(f) => f,
+            None => continue,
+        };
+        let is_partial = match func.kind() {
+            "identifier" => node_text(func, source.source_bytes) == "partial",
+            "attribute" => func
+                .child_by_field_name("attribute")
+                .is_some_and(|a| node_text(a, source.source_bytes) == "partial"),
+            _ => false,
+        };
+        if is_partial {
+            violations.push(violation(
+                node_line(node),
+                "functools.partial() — write a named function instead".to_string(),
+            ));
+        }
+    }
+    violations
+}
+
+// -------------------------------------------------------------------------
+// no_re_sub — re.sub with callbacks encourages lambda/partial
+// -------------------------------------------------------------------------
+
+/// Detect calls to re.sub().
+///
+/// re.sub with a callable replacement encourages lambda and partial patterns.
+/// Use re.finditer() with a loop instead — explicit, readable, no callbacks.
+pub fn check_no_re_sub(source: &ParsedSource, _config: &CheckConfig) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    for node in find_nodes_by_type(source.tree.root_node(), "call") {
+        let func = match node.child_by_field_name("function") {
+            Some(f) => f,
+            None => continue,
+        };
+        if func.kind() == "attribute" {
+            let object = func.child_by_field_name("object");
+            let attr = func.child_by_field_name("attribute");
+            if let (Some(obj), Some(attr)) = (object, attr) {
+                if node_text(obj, source.source_bytes) == "re"
+                    && node_text(attr, source.source_bytes) == "sub"
+                {
+                    violations.push(violation(
+                        node_line(node),
+                        "re.sub() — use re.finditer() with a loop instead".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    violations
 }
 
 // -------------------------------------------------------------------------
@@ -744,39 +852,74 @@ mod tests {
         assert_eq!(violations.len(), 2); // b and c both flagged
     }
 
-    // -- no_lambda --
+    // -- no_general_lambda --
 
     #[test]
-    fn lambda_in_function_call_caught() {
+    fn general_lambda_in_function_call_caught() {
         let code = "import re\ndef interpolate(template: str, values: dict) -> str:\n    return re.sub(r'pattern', lambda m: values.get(m.group(1)), template)\n";
         let parsed = parse(code);
-        let violations = check_no_lambda(&parsed, &default_config());
+        let violations = check_no_general_lambda(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].check_name, "no_lambda");
+        assert_eq!(violations[0].check_name, "no_general_lambda");
     }
 
     #[test]
-    fn lambda_assigned_to_variable_caught() {
+    fn general_lambda_assigned_to_variable_caught() {
         let code = "double = lambda x: x * 2\n";
         let parsed = parse(code);
-        let violations = check_no_lambda(&parsed, &default_config());
+        let violations = check_no_general_lambda(&parsed, &default_config());
         assert_eq!(violations.len(), 1);
     }
 
     #[test]
-    fn no_lambda_clean_code_ok() {
+    fn no_general_lambda_clean_code_ok() {
         let code = "def add(a: int, b: int) -> int:\n    return a + b\n";
         let parsed = parse(code);
-        let violations = check_no_lambda(&parsed, &default_config());
+        let violations = check_no_general_lambda(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 
     #[test]
-    fn multiple_lambdas_all_caught() {
+    fn multiple_general_lambdas_all_caught() {
         let code = "items.sort(key=lambda x: x.name)\nresult = map(lambda y: y + 1, numbers)\n";
         let parsed = parse(code);
-        let violations = check_no_lambda(&parsed, &default_config());
+        let violations = check_no_general_lambda(&parsed, &default_config());
         assert_eq!(violations.len(), 2);
+    }
+
+    #[test]
+    fn default_factory_lambda_not_caught_by_general() {
+        let code = "from pydantic import Field\nclass Model:\n    items: list[str] = Field(default_factory=lambda: [])\n";
+        let parsed = parse(code);
+        let violations = check_no_general_lambda(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- no_default_factory --
+
+    #[test]
+    fn default_factory_lambda_caught() {
+        let code = "from pydantic import Field\nclass Model:\n    items: list[str] = Field(default_factory=lambda: [])\n";
+        let parsed = parse(code);
+        let violations = check_no_default_factory(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].check_name, "no_default_factory");
+    }
+
+    #[test]
+    fn non_default_factory_lambda_not_caught_by_default_factory() {
+        let code = "items.sort(key=lambda x: x.name)\n";
+        let parsed = parse(code);
+        let violations = check_no_default_factory(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn default_factory_with_complex_body_caught() {
+        let code = "from pydantic import Field\nclass Model:\n    data: dict[str, int] = Field(default_factory=lambda: build_defaults())\n";
+        let parsed = parse(code);
+        let violations = check_no_default_factory(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
     }
 
     // -- no_recursion --
@@ -804,6 +947,58 @@ mod tests {
         let code = "def process(data):\n    return data.process()\n";
         let parsed = parse(code);
         let violations = check_no_recursion(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- no_partial --
+
+    #[test]
+    fn partial_call_caught() {
+        let code = "from functools import partial\ndef resolve(values, match):\n    return values[match]\ncallback = partial(resolve, my_values)\n";
+        let parsed = parse(code);
+        let violations = check_no_partial(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn functools_partial_attribute_caught() {
+        let code = "import functools\ncallback = functools.partial(resolve, my_values)\n";
+        let parsed = parse(code);
+        let violations = check_no_partial(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn no_partial_clean_code_ok() {
+        let code = "def resolve(values: dict, match: str) -> str:\n    return values[match]\n";
+        let parsed = parse(code);
+        let violations = check_no_partial(&parsed, &default_config());
+        assert!(violations.is_empty());
+    }
+
+    // -- no_re_sub --
+
+    #[test]
+    fn re_sub_caught() {
+        let code = "import re\nresult = re.sub(r'pattern', 'replacement', text)\n";
+        let parsed = parse(code);
+        let violations = check_no_re_sub(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn re_sub_with_callback_caught() {
+        let code = "import re\nresult = re.sub(r'pattern', callback_fn, text)\n";
+        let parsed = parse(code);
+        let violations = check_no_re_sub(&parsed, &default_config());
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn re_finditer_ok() {
+        let code = "import re\nfor match in re.finditer(r'pattern', text):\n    pass\n";
+        let parsed = parse(code);
+        let violations = check_no_re_sub(&parsed, &default_config());
         assert!(violations.is_empty());
     }
 
