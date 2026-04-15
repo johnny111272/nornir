@@ -14,96 +14,114 @@ Everything that needs to be compiled, fast, or trusted lives here. Python projec
 
 Nornir is currently a monorepo because these tools were built together and share core infrastructure. As the system matures, subsystems with independent lifecycles will be split into their own repositories.
 
+## The Problem This Solves
+
+LLMs generate mediocre code by default. Not broken code — mediocre code, at volume. Training data gravity pulls every output toward the statistical centre of mass: classes with methods, scattered state, `dict[str, Any]` at every boundary, configuration hardcoded as constants, circular imports, god classes, `utils.py` files that grow without limit. Instructions to "write functional code" or "follow clean architecture" fade within turns as context fills and training instincts reassert themselves.
+
+The conventional response — better prompts, stricter instructions, more code review — does not work at scale. Instructions compete with the weight of the entire training corpus, and they lose. The only thing that durably shapes LLM coding behaviour is **experienced consequences**: an environment where quality-compliant patterns pass freely and violations block progress.
+
+Nornir provides that environment. Its tools enforce a zone-based functional architecture through AST analysis, compile-time schema validation, and real-time feedback on every file write. The result is LLM-generated code that follows architectural principles not because the LLM was told to, but because the working environment makes principled code the path of least resistance.
+
+**The proof is visible.** The Python projects built under this system — [Draupnir](https://github.com/johnny111272/draupnir) and [Regin](https://github.com/johnny111272/regin) — are entirely LLM-generated. Compare their file trees to any typical LLM-generated Python project. The typical project is flat, vaguely named, and unnavigable. Draupnir and Regin are spatial maps you can read like blueprints — every file in a zone, every function at a complexity level, every import path encoding its safety contract. Same model wrote both kinds of code. The difference is the infrastructure.
+
 ## The Code Quality Triad: Gleipnir, Saga, Syn
 
-The guardrail system is built on a philosophy: **you cannot make LLMs generate good code through instructions alone.** Instructions fade as context fills. Training data gravity pulls output toward the statistical centre of mass — defensive, class-heavy, mediocre patterns. The only thing that durably shapes LLM coding behaviour is experienced consequences: an environment where quality-compliant patterns pass freely and violations block progress.
+The guardrail system enforces a **zone-based functional architecture** where the file path IS the safety contract. LLM-generated Python projects are organised into two worlds that can never mix:
 
-This requires strict separation of concerns. Detection, recording, and enforcement are three different responsibilities. Combining them creates systems that are hard to extend, impossible to audit, and fragile when any component changes. The triad keeps them independent, connected only by the `.qa` sidecar file format.
+**Structure zone** (`structure/`) — data only. Frozen Pydantic models, enums, type definitions. No functions, no logic, no constants. Classes must inherit from BaseModel, RootModel, or Enum. Cannot import from logic zones. This kills OOP at the root: classes are data containers, period.
+
+**Logic zones** (`logic/`) — functions only. No classes allowed. Organised by purity (pure, impure, transform) and by complexity level. Each level has a fixed filename:
+
+| File | Level | What belongs here |
+|------|-------|-------------------|
+| `ffi.py` | L1 | FFI wrappers — thin calls to compiled Rust gates |
+| `primitive.py` | L1 | Smallest useful operations — one thing, one function |
+| `simple.py` | L2 | Compositions of primitives |
+| `dispatch.py` | L3/L6 | Typed dispatch tables only — `dict[type, Callable]` |
+| `composed.py` | L4 | Complex compositions |
+| `assembled.py` | L5 | Highest-level compositions |
+| `orchestrate.py` | L7 | Pipeline orchestration |
+
+Lower levels cannot import higher levels. The dependency graph is a strict DAG enforced by Gleipnir's AST analysis. When you read `from pkg.logic.pure.graph_build.primitive import ref_prefix`, you know before reading the code: it's pure (no I/O, no side effects), it's a primitive (smallest useful operation), it's in the graph_build domain. The import path never lies.
 
 ### Gleipnir — Detection
 
-Tree-sitter-based AST analysis engine. Pure computation — receives source bytes, returns typed Violation structs. No I/O, no disk access, no policy decisions. Supports Python, Rust, TypeScript, and Svelte.
+Tree-sitter-based AST analysis engine. Pure computation — receives source bytes, returns typed Violation structs. Supports Python, Rust, TypeScript, and Svelte.
 
-Gleipnir is not a linter. Every check produces educational messages with three fields: **signal** (what was detected), **direction** (how to address it), and **canary** (how to detect if the LLM gamed the fix rather than solving the problem). Direction is deliberately vague — it tells the LLM which way to go without giving it enough information to satisfy the check through superficial manipulation. The canary field is unique to this system: it encodes what a fake fix looks like, so downstream consumers can detect when a metric was silenced rather than a problem solved.
+Every check exists because a specific LLM failure mode was observed repeatedly across independent projects. Each produces educational messages with three fields:
 
-Violations are not style complaints. They are structural indicators. Function length signals accumulated responsibilities that should be decomposed. Short variable names signal that the author did not think about the reader. Print statements in library code signal misunderstanding of orchestration boundaries. Each check exists because a specific category of LLM-generated code defect was observed repeatedly across independent projects.
+- **Signal** — what was detected and why it matters structurally (not "line too long" but "accumulated responsibilities that should be decomposed")
+- **Direction** — deliberately vague guidance pointing toward the solution without giving enough information to game it
+- **Canary** — what a superficial fix looks like, so downstream consumers can detect when a metric was silenced rather than a problem solved
+
+Key architectural checks: no methods on classes (kills OOP at the root), no classes outside structure zone, no functions inside structure zone, no constants in logic zones, no inline dispatch tables, no re-export shims, import count limits (high fan-in = coordination smell), zone boundary enforcement (structure can't import logic), unknown filename detection (files outside the level naming convention), and dispatch-file-only-tables enforcement.
 
 ### Saga — Truth Recording
 
-Runs analysis tools (Gleipnir for AST checks, Ruff for Python linting, Basedpyright for type checking) on source files and writes unfiltered `.qa` sidecar reports adjacent to each source file. Records every issue found — no filtering, no policy. Raw truth only. Saga is the only component that generates `.qa` files.
-
-During normal operation, post-execution hooks run Saga automatically on every file write, keeping sidecars current without manual intervention. The quality data is always fresh as a side effect of working — not as a separate step someone has to remember.
+Runs Gleipnir, Ruff, and Basedpyright on source files and writes unfiltered `.qa` sidecar reports adjacent to each source file. Records everything, filters nothing. Raw truth only. Post-execution hooks run Saga automatically on every file write, so quality data is always current as a side effect of working — not a separate step.
 
 ### Syn — Policy Enforcement
 
-Reads `.qa` sidecars and applies configurable three-tier filtering and enforcement. Report mode provides an informational view with ad-hoc filter overrides for exploration. Gate mode provides deterministic per-file enforcement locked to configuration only — no CLI overrides — ensuring reproducible accept/reject decisions in automated pipelines.
+Reads `.qa` sidecars and applies configurable three-tier filtering. Gate mode provides deterministic pass/fail locked to configuration — no overrides. This is what hooks use for automated enforcement. Report mode allows ad-hoc exploration with filter overrides.
 
-The three tiers: a warn filter selects what is visible, CLI overrides further narrow scope (report mode only), and a deny filter identifies what blocks progress. An issue invisible to the warn filter is never evaluated for denial. This means enforcement can be tightened progressively — permitting messiness during exploration and systematically tightening as code matures.
+The separation is strict: detection, recording, and policy are independent. Multiple consumers (Syn CLI, Svalinn dashboard, hooks, future tools) read the same truth data at zero analysis cost.
 
-Multiple consumers (Syn, Svalinn dashboard, hooks, future tools) read the same `.qa` truth data independently at zero analysis cost. Adding a new consumer requires no changes to the detection or recording layers.
+### The Economic Model
+
+Gleipnir is not a quality certification system. It is **economic pressure**. Passing checks does not mean the code is good — it means the code hasn't triggered any failure detectors. Violating checks blocks progress. Over time, LLMs learn which patterns are cheap (functional, typed, bounded) and which are expensive (OOP, scattered, untyped). The only winning move is to write genuinely good code — the constraints are too tight to game with superficial fixes.
+
+The pressure gradient is deliberate: low-pressure violations require trivial fixes (use a logger instead of print), medium-pressure violations require genuine thought (decompose an overlength function), high-pressure violations signal architectural problems (widespread `Any` types = broken boundary discipline). The gradient ensures the most consequential violations demand the deepest engagement.
 
 ## Enforcement Today: The Hook System
 
-Nornir includes a suite of compiled Rust hook binaries that enforce security and quality in real time during LLM coding sessions. These are production tools, running daily, with proper test coverage.
+Nornir includes compiled Rust hook binaries that enforce security and quality in real time during LLM coding sessions. These are production tools, running daily, with proper test coverage.
 
 ### Pre-Execution Security Gating
 
-Every tool invocation passes through a layered security check before execution:
+Every tool invocation passes through layered security:
 
-- **Floor rules** — permanently block access to credentials (`.ssh/`, `.aws/`, `.gnupg/`, `.kube/`, `.docker/`, `.netrc`). Cannot be overridden by any configuration. The LLM cannot read your SSH keys regardless of what it is told.
-- **Probing detection** — flags attempts to inspect the security infrastructure itself (hook scripts, guardrail configurations, Claude settings). Configurable severity: warn, ask, or block.
+- **Floor rules** — permanently block access to credentials (`.ssh/`, `.aws/`, `.gnupg/`, `.kube/`, `.docker/`, `.netrc`). Cannot be overridden. The LLM cannot read your SSH keys regardless of what it is told.
+- **Probing detection** — flags attempts to inspect the security infrastructure itself. Configurable severity.
 - **Gaming detection** — flags attempts to circumvent constraints. Configurable severity.
-- **Allow-path exemptions** — for sessions that need to work *on* the security system itself, specific paths can be exempted. Manual only, never auto-selected.
-
-Decisions are allow, warn, ask, or deny. Each carries structured context explaining *what* was detected and *why* it was flagged — the LLM receives a reason, not just a rejection.
+- **Allow-path exemptions** — for sessions that work *on* the security system. Manual only, never auto-selected.
 
 ### Post-Execution Quality Assessment
 
-Every file write triggers the full quality pipeline: Gleipnir analysis through Saga recording through Syn policy evaluation. If violations are found, the assessment is injected as context into the LLM's next turn — the LLM receives immediate feedback on what it just wrote. If the code is clean, nothing is injected. Quality feedback is automatic, real-time, and zero-effort.
+Every file write triggers the full quality pipeline: Gleipnir → Saga → Syn. Violations are injected as context into the LLM's next turn — immediate, automatic, zero-effort feedback.
 
 ### Context Re-Injection
 
-When the LLM's context compacts (a routine event where the provider rewrites the context window), the assembled behavioural configuration — persona, cognitive frameworks, safety guardrails — is re-injected from the stored session record. The LLM's identity survives context resets because a hook rebuilds it every time.
+When the LLM's context compacts, the assembled behavioural configuration is re-injected from the stored session record. Identity survives context resets.
 
 ## The Road to Bifrost
 
-The hook system works, but it depends on vendor-specific injection points. Hooks fire when the vendor's framework decides they should fire. If the vendor changes how hooks work — or silently drops them, or summarises their input — the enforcement degrades without warning.
+The hook system works, but depends on vendor-specific injection points that can change without notice.
 
 ### Bifrost Proxy (Current State)
 
-Bifrost is an async Rust reverse proxy (hyper/tokio) that sits in the traffic path between the LLM client and the API. It currently handles:
-
-- **Request interception** — every request is captured, validated against an embedded wire-format schema, classified by type, and routed
-- **Compaction rewriting** — compaction requests are intercepted and rewritten with injected instructions before they reach the provider, ensuring context resets do not silently destroy alignment
-- **Response stream interception** — SSE event streams are parsed in real time; thinking blocks are identified, stripped from the stream, and side-logged with renumbered block indices to maintain stream integrity
-
-This is operational and handling live traffic, but it is an MVP focused on monitoring and compaction control.
+An async Rust reverse proxy (hyper/tokio) in the traffic path between the LLM client and the API. Currently handles request interception with wire-format schema validation, compaction rewriting with injected instructions, and SSE response stream interception with thinking block stripping and side-logging. Operational and handling live traffic.
 
 ### Projected Direction
 
-The enforcement logic currently running in hooks — security gating, quality assessment, context re-injection — will migrate into Bifrost's traffic layer. The proxy sees every request and response regardless of what the vendor changes upstream. It cannot be silently dropped, summarised, or circumvented.
-
-When this migration is complete, all enforcement operates at the one point in the stack that the operator fully controls. The hook system's proven logic — floor rules, probing detection, quality pipeline triggering, context re-injection — moves from vendor-dependent injection points to a vendor-independent position. The same Rust code, the same decision logic, the same test coverage — in a location that cannot be pulled out from under it.
+The enforcement logic currently in hooks — security gating, quality assessment, context management — will migrate into Bifrost's traffic layer. The proxy sees every request and response regardless of what the vendor changes. Same Rust code, same decision logic, same test coverage — in a position that cannot be pulled out from under it.
 
 ## Other Key Tools
 
 ### cc_launch — Session Initialisation TUI
 
-A ratatui terminal interface that assembles composable system prompts from a library of atomic XML fragments. The operator selects a workspace, persona, cognitive frameworks, system descriptors, and expertise modules through a TUI. The launcher assembles them in a strict priority order (identity → context → mode), estimates token cost, and launches the session.
+A ratatui terminal interface that assembles composable system prompts from a library of atomic XML fragments. Personas invoke mythological archetypes that activate complex behavioural frameworks from training data — configuring how the LLM thinks rather than specifying what it should do. Assembled prompts are stored per-session by UUID for audit and re-injection at compaction.
 
-Assembled prompts are stored per-session by UUID for audit and re-injection at compaction. Workspace profiles define smart defaults that cascade on selection. Personas invoke mythological archetypes that activate complex behavioural frameworks from the LLM's training data — configuring how it thinks rather than specifying what it should do.
+### Pipeline Gates
 
-### Pipeline Check Utilities
-
-Eight CLI tools that validate agent definition files at specific pipeline stages, enabling quick verification without running the full pipeline.
+35 compiled Rust/PyO3 gate modules that enforce JSON Schema validation at every stage boundary of the agent definition pipeline. Each gate embeds its schema at compile time. Python code between gates never touches the filesystem.
 
 ## The Agent Definition Pipeline
 
-Nornir's gates are one stage of a five-stage pipeline that transforms authored agent definitions into deployable, auditable agent artifacts:
+Nornir's gates are one stage of a five-stage pipeline:
 
-**[Verdandi](https://github.com/johnny111272/verdandi)** (type system) → **[Draupnir](https://github.com/johnny111272/draupnir)** (schema generation) → **Nornir Gates** (compiled validation) → **[Regin](https://github.com/johnny111272/regin)** (pipeline resolution) → **Galdr** (composition and render)
+**[Verdandi](https://github.com/johnny111272/verdandi)** (type system) → **[Draupnir](https://github.com/johnny111272/draupnir)** (schema generation) → **Nornir Gates** (compiled validation) → **[Regin](https://github.com/johnny111272/regin)** (pipeline resolution) → **[Galdr](https://github.com/johnny111272/galdr)** (composition and render)
 
-Each stage produces typed artifacts consumed by the next. One declarative TOML definition produces many benchmarkable, auditable, reproducible agent configurations.
+One declarative TOML definition produces many benchmarkable, auditable, reproducible agent configurations.
 
 ## Architecture
 
@@ -123,7 +141,7 @@ daemons/        Long-running services (bifrost_proxy).
 
 ## Building
 
-All crates are built and deployed through `nornir_deploy`, which wraps Cargo and Maturin to handle the mixed binary/PyO3 workspace. Direct `cargo build --release` produces binaries that miss PyO3 module extraction and deployment steps.
+All crates are built and deployed through `nornir_deploy`, which wraps Cargo and Maturin to handle the mixed binary/PyO3 workspace.
 
 ```bash
 nornir_deploy --build all        # Build everything
