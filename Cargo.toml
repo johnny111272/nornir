@@ -109,6 +109,7 @@ members = [
     "daemons/relay_mic_to_voice",
     "daemons/bifrost_proxy",
     "capability/saga_runner",
+    "capability/keystroke_io",
     "cli/announce",
     "cli/cc_launch",
 ]

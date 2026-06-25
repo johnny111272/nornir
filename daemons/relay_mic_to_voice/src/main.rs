@@ -1,19 +1,21 @@
 //! Relay mic mute state to CC /voice keybinding.
 //!
 //! Listens for CoreAudio input-device mute changes (e.g. from a MuteMe button)
-//! and simulates a keybinding press/release to trigger CC's push-to-talk voice
-//! dictation.
+//! and drives CC's push-to-talk in HOLD mode via a `keystroke_io::SyntheticHold`:
+//! holds the keybind while the mic is unmuted, releases on mute. The synthetic-
+//! hold mechanics live in `keystroke_io`; this daemon is just the mute→hold policy
+//! (plus the recording lock / hush / queue-drain coordination).
 //!
 //! Usage:
-//!     relay_mic_to_voice                     # default: space
-//!     relay_mic_to_voice --key meta+k        # explicit key combo
-//!     relay_mic_to_voice --verbose            # print state transitions
+//!     relay_mic_to_voice --key ctrl+shift+k --repeat-ms 10 --verbose
 //!
 //! On unmute (recording starts), calls `hush` to stop any in-progress speech.
 
 use clap::Parser;
+use keystroke_io::{KeyCombo, SyntheticHold};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Duration;
 
 // =============================================================================
 // CLI
@@ -22,81 +24,19 @@ use std::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(about = "Relay mic mute state to CC /voice keybinding")]
 struct Args {
-    /// Key combo to simulate (e.g. space, meta+k, ctrl+shift+f19)
+    /// Key combo to hold (e.g. space, meta+k, ctrl+shift+k)
     #[arg(long, default_value = "space")]
     key: String,
 
     /// Print state transitions to stderr
     #[arg(long)]
     verbose: bool,
-}
 
-// =============================================================================
-// Key combo parsing
-// =============================================================================
-
-struct KeyCombo {
-    modifiers: Vec<enigo::Key>,
-    key: enigo::Key,
-}
-
-fn parse_key_combo(input: &str) -> Result<KeyCombo, String> {
-    let parts: Vec<&str> = input.split('+').collect();
-    if parts.is_empty() {
-        return Err("empty key combo".into());
-    }
-
-    let mut modifiers = Vec::new();
-    for part in &parts[..parts.len() - 1] {
-        let modifier = match part.to_lowercase().as_str() {
-            "meta" | "cmd" | "command" | "super" => enigo::Key::Meta,
-            "ctrl" | "control" => enigo::Key::Control,
-            "shift" => enigo::Key::Shift,
-            "alt" | "option" => enigo::Key::Alt,
-            other => return Err(format!("unknown modifier: {other}")),
-        };
-        modifiers.push(modifier);
-    }
-
-    let key_str = parts.last().ok_or("empty key combo")?;
-    let key = parse_key(key_str)?;
-
-    Ok(KeyCombo { modifiers, key })
-}
-
-fn parse_key(input: &str) -> Result<enigo::Key, String> {
-    if let Some(ch) = input.chars().next() {
-        if input.len() == 1 {
-            return Ok(enigo::Key::Unicode(ch));
-        }
-    }
-    match input.to_lowercase().as_str() {
-        "space" => Ok(enigo::Key::Space),
-        "return" | "enter" => Ok(enigo::Key::Return),
-        "escape" | "esc" => Ok(enigo::Key::Escape),
-        "tab" => Ok(enigo::Key::Tab),
-        "f1" => Ok(enigo::Key::F1),
-        "f2" => Ok(enigo::Key::F2),
-        "f3" => Ok(enigo::Key::F3),
-        "f4" => Ok(enigo::Key::F4),
-        "f5" => Ok(enigo::Key::F5),
-        "f6" => Ok(enigo::Key::F6),
-        "f7" => Ok(enigo::Key::F7),
-        "f8" => Ok(enigo::Key::F8),
-        "f9" => Ok(enigo::Key::F9),
-        "f10" => Ok(enigo::Key::F10),
-        "f11" => Ok(enigo::Key::F11),
-        "f12" => Ok(enigo::Key::F12),
-        "f13" => Ok(enigo::Key::F13),
-        "f14" => Ok(enigo::Key::F14),
-        "f15" => Ok(enigo::Key::F15),
-        "f16" => Ok(enigo::Key::F16),
-        "f17" => Ok(enigo::Key::F17),
-        "f18" => Ok(enigo::Key::F18),
-        "f19" => Ok(enigo::Key::F19),
-        "f20" => Ok(enigo::Key::F20),
-        other => Err(format!("unknown key: {other}")),
-    }
+    /// Milliseconds between key re-presses while holding, simulating key-repeat
+    /// for CC's hold detection. Lower = tighter hold; raise if it floods, lower
+    /// if CC drops to "processing" mid-hold (the listening/processing cycle).
+    #[arg(long, default_value = "8")]
+    repeat_ms: u64,
 }
 
 // =============================================================================
@@ -319,26 +259,6 @@ fn drain_queue(verbose: bool) {
 }
 
 // =============================================================================
-// Keystroke simulation
-// =============================================================================
-
-fn press_combo(enigo: &mut enigo::Enigo, combo: &KeyCombo) {
-    use enigo::{Direction::Press, Keyboard};
-    for modifier in &combo.modifiers {
-        let _ = enigo.key(*modifier, Press);
-    }
-    let _ = enigo.key(combo.key, Press);
-}
-
-fn release_combo(enigo: &mut enigo::Enigo, combo: &KeyCombo) {
-    use enigo::{Direction::Release, Keyboard};
-    let _ = enigo.key(combo.key, Release);
-    for modifier in combo.modifiers.iter().rev() {
-        let _ = enigo.key(*modifier, Release);
-    }
-}
-
-// =============================================================================
 // Signal handling
 // =============================================================================
 
@@ -361,33 +281,33 @@ fn install_signal_handlers() {
 
 struct RecordingState {
     recording: bool,
-    sending_keys: bool,
+    holding: bool,
 }
 
 impl RecordingState {
     fn new() -> Self {
-        Self { recording: false, sending_keys: false }
+        Self { recording: false, holding: false }
     }
 
-    /// Mic unmuted — start recording, optionally send keystrokes.
-    fn start(&mut self, enigo: &mut enigo::Enigo, combo: &KeyCombo, verbose: bool) {
+    /// Mic unmuted — start recording; hold the keybind if a terminal is focused.
+    fn start(&mut self, hold: &SyntheticHold, verbose: bool) {
         create_recording_lock();
         hush();
         self.recording = true;
 
         if terminal_is_focused() {
-            press_combo(enigo, combo);
-            self.sending_keys = true;
+            hold.start();
+            self.holding = true;
         } else if verbose {
             eprintln!("relay_mic_to_voice: no terminal focused, skipping keystrokes");
         }
     }
 
-    /// Mic muted — stop recording, drain queue.
-    fn stop(&mut self, enigo: &mut enigo::Enigo, combo: &KeyCombo, verbose: bool) {
-        if self.sending_keys {
-            release_combo(enigo, combo);
-            self.sending_keys = false;
+    /// Mic muted — release the hold, stop recording, drain the queue.
+    fn stop(&mut self, hold: &SyntheticHold, verbose: bool) {
+        if self.holding {
+            hold.stop();
+            self.holding = false;
         }
         remove_recording_lock();
         self.recording = false;
@@ -400,7 +320,7 @@ impl RecordingState {
 // =============================================================================
 
 fn run(args: Args) -> Result<(), String> {
-    let combo = parse_key_combo(&args.key)?;
+    let combo = KeyCombo::parse(&args.key)?;
     let verbose = args.verbose;
 
     eprintln!("relay_mic_to_voice: listening for mic mute changes, key={}", args.key);
@@ -416,44 +336,38 @@ fn run(args: Args) -> Result<(), String> {
 
     install_signal_handlers();
 
-    let mut enigo = enigo::Enigo::new(&enigo::Settings::default())
-        .map_err(|e| format!("enigo init failed: {e}"))?;
+    let hold = SyntheticHold::new(combo, Duration::from_millis(args.repeat_ms))?;
     let mut state = RecordingState::new();
 
-    event_loop(&rx, &mut enigo, &combo, &mut state, verbose);
+    event_loop(&rx, &hold, &mut state, verbose);
 
-    state.stop(&mut enigo, &combo, verbose);
+    state.stop(&hold, verbose);
     eprintln!("relay_mic_to_voice: shutdown");
     Ok(())
 }
 
 fn event_loop(
     rx: &mpsc::Receiver<bool>,
-    enigo: &mut enigo::Enigo,
-    combo: &KeyCombo,
+    hold: &SyntheticHold,
     state: &mut RecordingState,
     verbose: bool,
 ) {
-    let repeat_interval = std::time::Duration::from_millis(30);
-    let poll_interval = std::time::Duration::from_millis(200);
+    // Poll interval only bounds how quickly we notice SHUTDOWN; mute changes
+    // arrive as events. The hold's own worker thread handles key-repeat.
+    let poll_interval = Duration::from_millis(200);
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
-        let timeout = if state.sending_keys { repeat_interval } else { poll_interval };
-
-        match rx.recv_timeout(timeout) {
+        match rx.recv_timeout(poll_interval) {
             Ok(muted) => {
                 if verbose {
                     let label = if muted { "muted" } else { "unmuted" };
                     eprintln!("relay_mic_to_voice: mic {label}");
                 }
                 if muted && state.recording {
-                    state.stop(enigo, combo, verbose);
+                    state.stop(hold, verbose);
                 } else if !muted && !state.recording {
-                    state.start(enigo, combo, verbose);
+                    state.start(hold, verbose);
                 }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) if state.sending_keys => {
-                press_combo(enigo, combo);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             _ => {}
@@ -470,62 +384,5 @@ fn main() {
     if let Err(e) = run(args) {
         eprintln!("error: {e}");
         std::process::exit(1);
-    }
-}
-
-// =============================================================================
-// Tests
-// =============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_meta_k() {
-        let combo = parse_key_combo("meta+k").unwrap();
-        assert_eq!(combo.modifiers.len(), 1);
-        assert_eq!(combo.key, enigo::Key::Unicode('k'));
-    }
-
-    #[test]
-    fn parse_ctrl_shift_f19() {
-        let combo = parse_key_combo("ctrl+shift+f19").unwrap();
-        assert_eq!(combo.modifiers.len(), 2);
-        assert_eq!(combo.key, enigo::Key::F19);
-    }
-
-    #[test]
-    fn parse_single_key() {
-        let combo = parse_key_combo("space").unwrap();
-        assert!(combo.modifiers.is_empty());
-        assert_eq!(combo.key, enigo::Key::Space);
-    }
-
-    #[test]
-    fn parse_empty_fails() {
-        assert!(parse_key_combo("").is_err());
-    }
-
-    #[test]
-    fn parse_unknown_modifier_fails() {
-        assert!(parse_key_combo("banana+k").is_err());
-    }
-
-    #[test]
-    fn parse_unknown_key_fails() {
-        assert!(parse_key_combo("meta+banana").is_err());
-    }
-
-    #[test]
-    fn parse_cmd_alias() {
-        let combo = parse_key_combo("cmd+j").unwrap();
-        assert_eq!(combo.modifiers[0], enigo::Key::Meta);
-    }
-
-    #[test]
-    fn parse_option_alias() {
-        let combo = parse_key_combo("option+a").unwrap();
-        assert_eq!(combo.modifiers[0], enigo::Key::Alt);
     }
 }

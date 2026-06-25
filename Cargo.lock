@@ -2636,6 +2636,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "keystroke_io"
+version = "0.1.0"
+dependencies = [
+ "enigo",
+]
+
+[[package]]
 name = "lab"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3830,7 +3837,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "coreaudio-sys",
- "enigo",
+ "keystroke_io",
  "libc",
  "serde_json",
  "write_engine",

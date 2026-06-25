@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 write_engine = { path = "../../capability/write_engine" }
+keystroke_io = { path = "../../capability/keystroke_io" }
 coreaudio-sys = { workspace = true }
-enigo = { workspace = true }
 serde_json = { workspace = true }
 libc = { workspace = true }
 clap = { workspace = true }
