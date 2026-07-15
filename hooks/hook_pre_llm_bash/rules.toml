@@ -118,6 +118,27 @@ description = "Reverting all modified files at once"
 pattern = "git\\s+clean\\s+.*-[fdxn]*f"
 description = "Clean -f permanently deletes untracked files"
 
+# ─── Recursive / forced filesystem removal (per-rule ask: user decides) ─
+#
+# rm -r mass-deletes and cannot be undone — and "regenerable" output is
+# not costless to delete (mtimes are serving state). Prefer trash; a
+# recursive delete runs only if the user approves it.
+
+[[destruction]]
+pattern = "\\brm\\s+([^\\s;|&]+\\s+)*-[a-zA-Z]*[rR]"
+description = "Recursive or forced rm permanently deletes files"
+severity = "ask"
+
+[[destruction]]
+pattern = "\\brm\\s+([^\\s;|&]+\\s+)*--recursive"
+description = "Recursive rm permanently deletes directory trees"
+severity = "ask"
+
+[[destruction]]
+pattern = "\\bfind\\s+[^;|&]*-delete"
+description = "find -delete mass-removes matching files"
+severity = "ask"
+
 # ─── Revert: file-specific git reverts (user decides) ─────────────────
 #
 # These MIGHT be legitimate but are the primary vector for panicky LLM

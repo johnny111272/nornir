@@ -959,6 +959,102 @@ mod tests {
         assert!(result_eva.is_none(), "git diff must not match evasion");
     }
 
+    // -- Deletion detections (recursive/forced rm — per-rule ask) --
+
+    #[test]
+    fn deletion_rm_recursive_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm -rf public",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "rm -rf must be detected");
+    }
+
+    #[test]
+    fn deletion_rm_flags_after_operand_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm public -rf",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "rm with trailing -rf must be detected");
+    }
+
+    #[test]
+    fn deletion_rm_long_recursive_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm --recursive build",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "rm --recursive must be detected");
+    }
+
+    #[test]
+    fn deletion_find_delete_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "find . -name '*.tmp' -delete",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_some(), "find -delete must be detected");
+    }
+
+    #[test]
+    fn deletion_rm_plain_file_not_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm notes.md",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_none(), "plain rm of a file must pass");
+    }
+
+    #[test]
+    fn deletion_rm_hyphenated_filename_not_detected() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm my-router.ts",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        assert!(result.is_none(), "hyphenated filenames must not false-positive");
+    }
+
+    #[test]
+    fn deletion_rm_recursive_asks_despite_block_category() {
+        let rules = make_rules_from_toml();
+        let result = check_category(
+            "rm -rf public",
+            &rules.destruction,
+            Severity::Block,
+            "destruction",
+            &[],
+        );
+        match result {
+            Some(HookDecision::Ask { .. }) => {} // per-rule severity override
+            _ => panic!("recursive rm must ASK, overriding the category's block"),
+        }
+    }
+
     // -- Severity mapping --
 
     #[test]
