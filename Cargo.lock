@@ -2072,6 +2072,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hook_session_end_handoff"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "workspace_registry",
+]
+
+[[package]]
 name = "hook_session_start_inject"
 version = "0.1.0"
 dependencies = [

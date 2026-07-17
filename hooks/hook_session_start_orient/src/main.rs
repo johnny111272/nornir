@@ -36,6 +36,8 @@ struct SessionEvent {
     session_id: String,
     #[serde(default)]
     cwd: String,
+    #[serde(default)]
+    source: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +89,26 @@ fn main() -> ExitCode {
     // cc_launch writes this ephemeral file at launch; we relocate it so
     // hook_session_start_inject can re-inject from a stable, session-keyed path.
     if !event.session_id.is_empty() {
+        let session_dir = control_dir.join(&event.session_id);
+        let dst = session_dir.join("SYSTEM_PROMPT.xml");
+
         let src = std::path::Path::new(&project_dir).join(".SYSTEM_PROMPT.xml");
         if src.exists() {
-            let session_dir = control_dir.join(&event.session_id);
             let _ = std::fs::create_dir_all(&session_dir);
-            let _ = std::fs::rename(&src, session_dir.join("SYSTEM_PROMPT.xml"));
+            let _ = std::fs::rename(&src, &dst);
+        }
+
+        // /clear mints a new session_id, so no launch-time file exists for it.
+        // hook_session_end_handoff (SessionEnd, reason "clear") left the old
+        // session's prompt in the workspace-level slot; move it into place so
+        // this session's later compactions re-inject from the session-keyed
+        // path like any other session.
+        if event.source == "clear" && !dst.exists() {
+            let slot = workspace_registry::clear_handoff_path(&workspace);
+            if workspace_registry::clear_handoff_is_fresh(&slot) {
+                let _ = std::fs::create_dir_all(&session_dir);
+                let _ = std::fs::rename(&slot, &dst);
+            }
         }
     }
 

@@ -46,11 +46,14 @@ verb axis needed.
 | `hook_pre_subagent_tool` | PreToolUse | Subagent | Read/Write/Edit/Grep/Glob |
 | `hook_pre_subagent_bash` | PreToolUse | Subagent | Bash |
 | `hook_post_llm_tool` | PostToolUse | LLM | Write/Edit |
+| `hook_post_llm_read` | PostToolUse | LLM | Read |
 | `hook_stop_llm_tts` | Stop | LLM | TTS playback |
 | `hush` | UserPromptSubmit | Session | Kill workspace announce playback |
 | `hook_notify_llm_tts` | Notification | Session | TTS for permission/idle alerts |
 | `hook_compact_session_log` | PostCompact | Session | Log compact_summary + TTS announce |
-| `hook_start_session_orient` | SessionStart | Session | Register workspace + session in registry |
+| `hook_session_start_orient` | SessionStart | Session | Register workspace + session in registry; place SYSTEM_PROMPT.xml (launch move, /clear handoff consume) |
+| `hook_session_start_inject` | SessionStart | Session | Re-inject SYSTEM_PROMPT.xml on compact/resume/clear |
+| `hook_session_end_handoff` | SessionEnd | Session | On /clear, copy the ending session's SYSTEM_PROMPT.xml to the workspace CLEAR_HANDOFF.xml slot |
 
 ### Planned hooks
 

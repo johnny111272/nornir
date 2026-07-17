@@ -79,6 +79,7 @@ members = [
     "hooks/hook_compact_session_log",
     "hooks/hook_session_start_orient",
     "hooks/hook_session_start_inject",
+    "hooks/hook_session_end_handoff",
     "core/gleipnir_core",
     "core/dep_resolve_core",
     "cli/dep_resolve",

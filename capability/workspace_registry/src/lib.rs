@@ -155,6 +155,31 @@ pub fn workspace_control_dir(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Workspace-level handoff slot carrying SYSTEM_PROMPT.xml across a /clear.
+///
+/// /clear ends the old session and mints a new session_id, and the new
+/// session's SessionStart event has no reference to the old one — so the
+/// prompt is handed over through this workspace-scoped slot instead:
+/// hook_session_end_handoff (SessionEnd, reason "clear") copies the dying
+/// session's prompt here; hook_session_start_orient moves it into the new
+/// session's directory and hook_session_start_inject falls back to it.
+pub fn clear_handoff_path(workspace: &str) -> PathBuf {
+    workspace_control_dir(workspace).join("CLEAR_HANDOFF.xml")
+}
+
+/// A handoff slot is honoured only while fresh. The SessionEnd → SessionStart
+/// gap on /clear is sub-second; anything older is a leftover from a consume
+/// that never happened and must not leak into an unrelated later session.
+pub fn clear_handoff_is_fresh(path: &std::path::Path) -> bool {
+    const FRESH_SECS: u64 = 120;
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age.as_secs() <= FRESH_SECS)
+        .unwrap_or(false)
+}
+
 /// Get the registered path for a workspace name.
 pub fn workspace_path(name: &str) -> Result<Option<String>, String> {
     let conn = open()?;

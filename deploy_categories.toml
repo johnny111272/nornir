@@ -23,6 +23,7 @@ crates = [
     "hook_compact_session_log",
     "hook_session_start_orient",
     "hook_session_start_inject",
+    "hook_session_end_handoff",
 ]
 verify = "stdin"
 verify_input = '{"tool_name":"Test","tool_input":{}}'

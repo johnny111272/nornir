@@ -70,10 +70,25 @@ fn run() -> Option<(String, String, String)> {
         .join(&event.session_id)
         .join("SYSTEM_PROMPT.xml");
 
-    let content = std::fs::read_to_string(&prompt_path).ok()?;
-    if content.is_empty() {
-        return None;
-    }
+    let read = |p: &Path| std::fs::read_to_string(p).ok().filter(|c| !c.is_empty());
+
+    // /clear mints a new session_id with no session-keyed prompt yet; the old
+    // session's prompt sits in the workspace-level handoff slot (written by
+    // hook_session_end_handoff). orient moves the slot into the session dir
+    // concurrently with us — same-event hooks are unordered — so try the
+    // session path, then the slot, then the session path once more (the slot
+    // vanishes atomically when orient's rename wins the race).
+    let content = read(&prompt_path).or_else(|| {
+        if event.source != "clear" {
+            return None;
+        }
+        let slot = workspace_registry::clear_handoff_path(&workspace);
+        if workspace_registry::clear_handoff_is_fresh(&slot) {
+            read(&slot).or_else(|| read(&prompt_path))
+        } else {
+            read(&prompt_path)
+        }
+    })?;
 
     Some((content, event.source, event.cwd))
 }

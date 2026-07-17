@@ -1,0 +1,13 @@
+[package]
+name = "hook_session_end_handoff"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hook_session_end_handoff"
+path = "src/main.rs"
+
+[dependencies]
+workspace_registry = { path = "../../capability/workspace_registry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
