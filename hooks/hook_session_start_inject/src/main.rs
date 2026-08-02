@@ -4,6 +4,12 @@
 //! reads it back from the session-specific path where hook_session_start_orient
 //! placed it and emits it as additionalContext.
 //!
+//! Claude Code persists oversized hook output to a file and inlines only a ~2KB
+//! preview — leaving the session running on a fraction of its instructions while
+//! feeling oriented. For any payload big enough to risk that, the injection leads
+//! with an integrity banner that survives inside the preview and orders the full
+//! read; when the payload inlines whole, the banner's condition self-neutralizes.
+//!
 //! Path: ~/.ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.xml
 
 use std::io::{self, Read};
@@ -49,6 +55,27 @@ fn workspace_name(workspace_path: &str) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Payloads above this risk Claude Code's persisted-output truncation (observed
+/// inlining limit is well above 2KB but unpublished; conservative by design).
+const PREVIEW_RISK_BYTES: usize = 8 * 1024;
+
+fn integrity_banner(payload_bytes: usize, prompt_path: &Path) -> String {
+    format!(
+        "<injection-integrity bytes=\"{payload_bytes}\">\n\
+         THIS SYSTEM-PROMPT INJECTION IS {kb} KB. If the visible text ends within \
+         about 2 KB, Claude Code has persisted the full output to a file and you are \
+         reading a PREVIEW — a fraction of your instructions. Operating on the preview \
+         is the known failure mode: confident, oriented-feeling, and wrong. Before ANY \
+         other action, Read the persisted additionalContext file (its path is printed \
+         immediately above this preview) end to end. Fallback copy: {path}. Then honor \
+         the bootloader in MEMORY.md: prove the read with one non-obvious constraint, \
+         or state plainly that you could not read it.\n\
+         </injection-integrity>\n\n",
+        kb = payload_bytes / 1024,
+        path = prompt_path.display(),
+    )
+}
+
 fn run() -> Option<(String, String, String)> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).ok()?;
@@ -89,6 +116,12 @@ fn run() -> Option<(String, String, String)> {
             read(&prompt_path)
         }
     })?;
+
+    let content = if content.len() > PREVIEW_RISK_BYTES {
+        format!("{}{content}", integrity_banner(content.len(), &prompt_path))
+    } else {
+        content
+    };
 
     Some((content, event.source, event.cwd))
 }
