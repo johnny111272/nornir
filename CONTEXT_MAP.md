@@ -5,6 +5,22 @@
 
 ---
 
+---
+
+## 0. Start here — the pipeline orientation set
+
+Before this map, read the orientation documents at
+`~/.ai/smidja/galdr/context/`. They carry the reasoning behind the whole
+Verdandi → Draupnir → Nornir → Regin → Galdr pipeline — **why it exists, what each stage
+buys, and which parts are not built** — which is the one thing that cannot be recovered by
+reading a tree. Every previous session that skipped them inferred a purpose from the
+structure and got it wrong.
+
+- `context/AGENT_BUILD_SYSTEM.md` — the map. Read first.
+- `context/NORNIR_GATES_ELEMENT.md` — this project's part. Read second.
+
+They are wikilinked to each other; follow them as needed.
+
 ## Primary References
 
 | Document | When to read | Freshness |
