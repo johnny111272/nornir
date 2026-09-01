@@ -1,3 +1,17 @@
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- DO NOT EDIT THE PRELUDE. Before editing ANY part of this file, read     -->
+<!-- /Users/johnny/.ai/CONTEXT_MANAGEMENT_SYSTEM.md — the KFM section        -->
+<!-- defines what this file is for and why it is not linked from anywhere.   -->
+<!--                                                                          -->
+<!-- DO NOT LINK THIS FILE. Not from the CONTEXT_MAP, not from CLAUDE.md,    -->
+<!-- not from the README. Its name is uninformative on purpose.              -->
+<!--                                                                          -->
+<!-- Entries are FAILURE SHAPE with concrete facts routed out. An entry that -->
+<!-- names files and functions is a clock: it will outlive them and then     -->
+<!-- assert something false to a reader who arrived here because something   -->
+<!-- had already gone wrong.                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
 # KFM — Nornir
 
 Known failure modes. Each entry records something that actually went wrong here, badly
