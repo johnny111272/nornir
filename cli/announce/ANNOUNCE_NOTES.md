@@ -4,7 +4,7 @@
 > nornir's docs, so this fills the gap — but it's salvaged, not freshly verified, so check
 > specifics (paths, URLs, voice IDs, clamp values) against the code before relying on them.
 
-`announce` (`cli/announce`, core: `announce_core`; deployed to `~/.ai/tools/bin/announce` via
+`announce` (`cli/announce`, core: `announce_core`; deployed to `~/ai/tools/bin/announce` via
 `nornir_deploy`) is nornir's TTS tool.
 
 ## Backends
@@ -13,16 +13,16 @@
 - **elevenlabs** — cloud; needs `ELEVENLABS_API_KEY`; uses hit-count cache gating.
 
 ## Config split
-- Voice config: `~/.ai/control/voice/announce.toml`
-- Secrets: `~/.ai/voice/.env` (kept OUT of `control/`)
-- Audio cache: `~/.ai/audio/{voice_id}/{lang_code}/{slug}_{hash4}.mp3`
+- Voice config: `~/ai/control/voice/announce.toml`
+- Secrets: `~/ai/voice/.env` (kept OUT of `control/`)
+- Audio cache: `~/ai/audio/{voice_id}/{lang_code}/{slug}_{hash4}.mp3`
 
-## Control directory `~/.ai/control/`
+## Control directory `~/ai/control/`
 - `voice/` — `announce.toml`, `hits.toml`, `lookups/`, global `SILENT.lock`/`QUIET.lock`
 - `workspaces/` — `registry.db` plus per-workspace dirs holding `VOICE.lock`/`SILENT.lock`/`QUIET.lock`
 
 ## Workspace registry (`workspace_registry` crate)
-SQLite + WAL at `~/.ai/control/workspaces/registry.db`. Functions: `register_workspace(name,path)`,
+SQLite + WAL at `~/ai/control/workspaces/registry.db`. Functions: `register_workspace(name,path)`,
 `register_session(session_id,workspace)`, `resolve_workspace_from_path` (longest-prefix),
 `workspace_from_session`, `workspace_control_dir(name)`. Populated by `hook_start_session_orient`
 on every SessionStart.

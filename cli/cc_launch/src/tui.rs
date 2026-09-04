@@ -14,7 +14,6 @@ use ratatui::Terminal;
 
 use crate::assembly::estimate_tokens;
 use crate::model::{AppState, Section, TuiOutcome};
-use crate::permissions::KNOWN_PERMISSIONS;
 
 // --- Color palette ---
 const ACCENT: Color = Color::Rgb(110, 180, 255);   // soft blue — active borders, keys
@@ -160,12 +159,6 @@ fn handle_space(state: &mut AppState) {
                 *selected = !*selected;
             }
         }
-        Section::Permissions => {
-            if state.update_mode { return; } // can't set env flags on running session
-            if let Some(selected) = state.selected_permissions.get_mut(state.section_cursor) {
-                *selected = !*selected;
-            }
-        }
     }
 }
 
@@ -233,15 +226,13 @@ fn draw_content_column(frame: &mut ratatui::Frame, area: Rect, state: &AppState)
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(55),
+            Constraint::Min(0), // Descriptors fill remaining
             Constraint::Length(coding_height),
-            Constraint::Min(0), // Permissions fills remaining
         ])
         .split(area);
 
     draw_descriptor_section(frame, sections[0], state);
     draw_coding_section(frame, sections[1], state);
-    draw_permissions_section(frame, sections[2], state);
 }
 
 fn section_block(title: &str, active: bool) -> Block<'_> {
@@ -468,33 +459,6 @@ fn draw_expertise_section(frame: &mut ratatui::Frame, area: Rect, state: &AppSta
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn draw_permissions_section(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
-    let active = state.active_section == Section::Permissions;
-    let block = if state.update_mode {
-        section_block("Permissions (read-only)", false)
-    } else {
-        section_block("Permissions", active)
-    };
-
-    let mut lines = Vec::new();
-    for (index, permission) in KNOWN_PERMISSIONS.iter().enumerate() {
-        let selected = state.selected_permissions.get(index).copied().unwrap_or(false);
-        if state.update_mode {
-            lines.push(check_line_dim(permission.name, selected));
-        } else {
-            lines.push(check_line(
-                permission.name,
-                selected,
-                active,
-                state.section_cursor == index,
-                None,
-            ));
-        }
-    }
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
 fn draw_summary_panel(frame: &mut ratatui::Frame, area: Rect, state: &AppState) {
     let block = Block::default()
         .title(" Session Summary ")
@@ -633,24 +597,28 @@ fn summary_expertise<'a>(lines: &mut Vec<Line<'a>>, state: &'a AppState) {
 }
 
 fn summary_permissions(lines: &mut Vec<Line<'_>>, state: &AppState) {
-    let selected: Vec<&str> = KNOWN_PERMISSIONS
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| state.selected_permissions.get(*index).copied().unwrap_or(false))
-        .map(|(_, permission)| permission.name)
-        .collect();
+    // Permissions are persona-bound, never selected. Show what the chosen
+    // persona will carry so the grant is always visible before launch.
+    let granted = state
+        .selected_persona
+        .and_then(|index| state.library.personas.get(index))
+        .and_then(|persona| crate::permissions::permission_for_persona(&persona.id));
 
-    if selected.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("  Permissions ", Style::default().fg(LABEL)),
-            Span::styled("none", Style::default().fg(DIM)),
-        ]));
-    } else {
-        lines.push(Line::from(Span::styled("  Permissions", Style::default().fg(LABEL))));
-        for name in &selected {
+    match granted {
+        None => {
+            lines.push(Line::from(vec![
+                Span::styled("  Permissions ", Style::default().fg(LABEL)),
+                Span::styled("none", Style::default().fg(DIM)),
+            ]));
+        }
+        Some(permission) => {
+            lines.push(Line::from(vec![
+                Span::styled("  Permissions ", Style::default().fg(LABEL)),
+                Span::styled("(persona-bound)", Style::default().fg(DIM)),
+            ]));
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled(format!("▹ {name}"), Style::default().fg(Color::Red)),
+                Span::styled(format!("▹ {}", permission.name), Style::default().fg(Color::Red)),
             ]));
         }
     }

@@ -1,6 +1,6 @@
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- DO NOT EDIT THE PRELUDE. Before editing ANY part of this file, read     -->
-<!-- /Users/johnny/.ai/CONTEXT_MANAGEMENT_SYSTEM.md — the KFM section        -->
+<!-- /Users/johnny/ai/CONTEXT_MANAGEMENT_SYSTEM.md — the KFM section        -->
 <!-- defines what this file is for and why it is not linked from anywhere.   -->
 <!--                                                                          -->
 <!-- DO NOT LINK THIS FILE. Not from the CONTEXT_MAP, not from CLAUDE.md,    -->

@@ -1,6 +1,6 @@
 //! Workspace registry — SQLite-backed workspace and session tracking.
 //!
-//! DB location: `~/.ai/control/workspaces/registry.db`
+//! DB location: `~/ai/control/workspaces/registry.db`
 //!
 //! Provides:
 //! - `register_workspace(name, path)` — upsert workspace mapping
@@ -148,7 +148,7 @@ pub fn latest_session_for_workspace(workspace: &str) -> Result<Option<String>, S
     }
 }
 
-/// Get the control directory for a workspace: `~/.ai/control/workspaces/{name}/`
+/// Get the control directory for a workspace: `~/ai/control/workspaces/{name}/`
 pub fn workspace_control_dir(name: &str) -> PathBuf {
     write_engine::ai_home()
         .join("control/workspaces")

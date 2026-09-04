@@ -535,7 +535,7 @@ cargo test -p gleipnir_core
 Then rebuild and re-scan:
 ```
 nornir_deploy --build gates
-syn ~/.ai/smidja/nornir
+syn ~/ai/smidja/nornir
 ```
 
 The violation count should drop from 29 to ~13, with zero new regressions (no previously-clean code becoming flagged).

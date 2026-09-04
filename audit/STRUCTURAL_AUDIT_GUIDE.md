@@ -124,7 +124,7 @@ If you see logic in a binary that overlaps with any of these crates, that's a vi
 1. Known-malicious inputs ARE detected (no false negatives)
 2. Known-benign inputs are NOT flagged (no false positives)
 
-**Why it matters:** A security hook with only positive tests ("it catches bad things") is a ticking time bomb. You don't know what it falsely blocks. A developer running `cargo build` shouldn't trigger the same hook that catches `rm -rf ~/.ai/`. Both sides must be tested.
+**Why it matters:** A security hook with only positive tests ("it catches bad things") is a ticking time bomb. You don't know what it falsely blocks. A developer running `cargo build` shouldn't trigger the same hook that catches `rm -rf ~/ai/`. Both sides must be tested.
 
 **Hooks to pay special attention to:** The `hook_pre_llm_bash` and `hook_pre_subagent_bash` hooks enforce security policy on shell commands. Their detection rules involve regex patterns for subversion, truncation, and evasion of workspace configuration. These are the most security-critical code in the workspace.
 

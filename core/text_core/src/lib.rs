@@ -46,7 +46,7 @@ pub fn strip_markdown(text: &str) -> String {
 
 /// Transform paths into speakable TTS text.
 ///
-/// `~/.ai/control/voice/` → `path: home '.' ai '.' control '.' voice`
+/// `~/ai/control/voice/` → `path: home '.' ai '.' control '.' voice`
 /// `./src/main.rs`         → `path: relative '.' src '.' main.rs`
 /// `@workspace/file`       → `path: workspace '.' file`
 pub fn tts_clean(text: &str) -> String {
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn tts_clean_home_path() {
-        let result = tts_clean("Check ~/.ai/control/voice/");
+        let result = tts_clean("Check ~/ai/control/voice/");
         assert_eq!(result, "Check path: home '.' ai '.' control '.' voice");
     }
 

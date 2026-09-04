@@ -10,7 +10,7 @@
 //! with an integrity banner that survives inside the preview and orders the full
 //! read; when the payload inlines whole, the banner's condition self-neutralizes.
 //!
-//! Path: ~/.ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.xml
+//! Path: ~/ai/control/workspaces/{workspace}/{session_id}/SYSTEM_PROMPT.xml
 
 use std::io::{self, Read};
 use std::path::Path;

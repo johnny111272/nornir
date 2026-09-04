@@ -174,13 +174,13 @@ Before writing logic, check if it already exists:
 | File-arg diagnostic CLI contract | `io_check` |
 | Directory walking with skip logic | `saga_runner::walk_files` |
 | Path traversal / filename validation | `path_core::validate_path_segment` |
-| Runtime $HOME/.ai resolution | `write_engine::ai_home` |
+| Runtime $HOME/ai resolution | `write_engine::ai_home` |
 
 ---
 
 ## Deploying
 
-Do NOT use bare `cargo build --release` — it skips symlinks, verification, and dependency coherence. Use `nornir_deploy` (available in `$PATH` via `~/.ai/tools/scripts/`). See `MUST_READ_BEFORE_BUILDING.md` for rationale.
+Do NOT use bare `cargo build --release` — it skips symlinks, verification, and dependency coherence. Use `nornir_deploy` (available in `$PATH` via `~/ai/tools/scripts/`). See `MUST_READ_BEFORE_BUILDING.md` for rationale.
 
 ```bash
 nornir_deploy --all                  # rebuild + deploy everything

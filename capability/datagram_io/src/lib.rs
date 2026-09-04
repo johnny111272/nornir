@@ -251,10 +251,10 @@ pub fn workspace_name() -> String {
 
 /// Derive workspace identity from a filesystem path.
 ///
-/// Paths under `~/.ai/` become `@{relative}` with `:` separators
+/// Paths under `~/ai/` become `@{relative}` with `:` separators
 /// (e.g. `@smidja:nornir`). Colon separators avoid `/` which breaks
 /// Svelte 5's reactive proxy in template rendering.
-/// Paths outside `~/.ai/` or when no path is meaningful: `@`.
+/// Paths outside `~/ai/` or when no path is meaningful: `@`.
 pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
     let ai_base = ai_base_dir();
 
@@ -275,10 +275,10 @@ pub fn workspace_from_path(scan_dir: &std::path::Path) -> String {
 
 /// Compact an absolute path for display.
 ///
-/// Paths under `~/.ai/` become `@{relative}` with `/` separators preserved
-/// (e.g. `/Users/johnny/.ai/intercept/traffic/odinn/file.jsonl`
+/// Paths under `~/ai/` become `@{relative}` with `/` separators preserved
+/// (e.g. `/Users/johnny/ai/intercept/traffic/odinn/file.jsonl`
 ///    → `@intercept/traffic/odinn/file.jsonl`).
-/// Paths outside `~/.ai/` are returned unchanged.
+/// Paths outside `~/ai/` are returned unchanged.
 pub fn compact_path(path: &str) -> String {
     let ai_base = ai_base_dir();
     if let Some(relative) = path.strip_prefix(&ai_base) {
@@ -290,7 +290,7 @@ pub fn compact_path(path: &str) -> String {
 
 fn ai_base_dir() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    format!("{home}/.ai/")
+    format!("{home}/ai/")
 }
 
 #[cfg(test)]
@@ -301,21 +301,21 @@ mod tests {
     #[test]
     fn workspace_from_path_under_ai() {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.ai/smidja/nornir");
+        let path = format!("{home}/ai/smidja/nornir");
         assert_eq!(workspace_from_path(Path::new(&path)), "@smidja:nornir");
     }
 
     #[test]
     fn workspace_from_path_nested() {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.ai/spaces/bragi");
+        let path = format!("{home}/ai/spaces/bragi");
         assert_eq!(workspace_from_path(Path::new(&path)), "@spaces:bragi");
     }
 
     #[test]
     fn workspace_from_path_ai_root() {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.ai/");
+        let path = format!("{home}/ai/");
         assert_eq!(workspace_from_path(Path::new(&path)), "@");
     }
 
@@ -327,14 +327,14 @@ mod tests {
     #[test]
     fn workspace_from_path_trailing_slash() {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.ai/smidja/nornir/");
+        let path = format!("{home}/ai/smidja/nornir/");
         assert_eq!(workspace_from_path(Path::new(&path)), "@smidja:nornir");
     }
 
     #[test]
     fn compact_path_under_ai() {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.ai/intercept/traffic/odinn/mainexch_abc.jsonl");
+        let path = format!("{home}/ai/intercept/traffic/odinn/mainexch_abc.jsonl");
         assert_eq!(compact_path(&path), "@intercept/traffic/odinn/mainexch_abc.jsonl");
     }
 

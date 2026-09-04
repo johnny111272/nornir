@@ -83,7 +83,7 @@ A session working on the datagram subsystem would need to read all four crates t
 
 Three crates form the announce pipeline: `announce_core`, `announce` (cli binary), and voice alert integration in `hook_io` (the `speak_alert` function). No document explains:
 - What `announce_core` provides vs what `announce` does
-- The voice directory convention (`~/.ai/voice/`, `SILENT.lock`)
+- The voice directory convention (`~/ai/voice/`, `SILENT.lock`)
 - How `hook_io::speak_alert` spawns announce as a subprocess
 - The `--severity` and `--source` CLI flags of announce
 

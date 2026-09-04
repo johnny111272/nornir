@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_base_redeclaration() {
-        let source = "\n[paths]  # target=path, base=~/.ai/\ncli = \"cli/\"  # path=base\n\n[logging]  # target=path, base=/var/log/\napp = \"app.log\"  # path=base\n";
+        let source = "\n[paths]  # target=path, base=~/ai/\ncli = \"cli/\"  # path=base\n\n[logging]  # target=path, base=/var/log/\napp = \"app.log\"  # path=base\n";
         let result = validate_tomlx(source, None);
         assert!(result.issues.has_issues());
         assert_eq!(result.issues.base_redeclarations.len(), 1);
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_subsequent_path_inherits() {
-        let source = "\n[paths]  # target=path, base=~/.ai/\ncli = \"cli/\"  # path=base\n\n[logging]  # target=path\napp = \"app.log\"  # path=base\n";
+        let source = "\n[paths]  # target=path, base=~/ai/\ncli = \"cli/\"  # path=base\n\n[logging]  # target=path\napp = \"app.log\"  # path=base\n";
         let result = validate_tomlx(source, None);
         assert!(!result.issues.has_issues());
     }

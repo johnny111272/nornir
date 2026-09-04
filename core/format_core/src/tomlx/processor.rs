@@ -461,11 +461,11 @@ mod tests {
 
     #[test]
     fn test_parse_path_expansion() {
-        let source = "\n[paths]  # target=path, base=~/.ai/phoenix/, expand=user\ncli = \"cli/\"    # path=base\n";
+        let source = "\n[paths]  # target=path, base=~/ai/phoenix/, expand=user\ncli = \"cli/\"    # path=base\n";
         let result = parse_tomlx(source, None, None, &test_env).unwrap();
 
         let paths = result.data.get("paths").unwrap();
-        assert_eq!(paths.get("cli").unwrap().as_str().unwrap(), "/Users/test/.ai/phoenix/cli");
+        assert_eq!(paths.get("cli").unwrap().as_str().unwrap(), "/Users/test/ai/phoenix/cli");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- DO NOT EDIT THIS BLOCK. Before editing ANY part of this file, you MUST  -->
-<!-- first read /Users/johnny/.ai/CONTEXT_MANAGEMENT_SYSTEM.md — it defines  -->
+<!-- first read /Users/johnny/ai/CONTEXT_MANAGEMENT_SYSTEM.md — it defines  -->
 <!-- what this file is for and what may NOT go in it.                        -->
 <!--                                                                          -->
 <!-- This file is a MAP (a router), not a source. Its only job is to tell    -->
@@ -39,8 +39,8 @@ A Rust monorepo of compiled validators, tools and hooks for the `.ai` ecosystem 
 > The next two apply if your work touches the agent pipeline's gates or writers. Skip them
 > if you are here for something else in the monorepo.
 
-3. `~/.ai/smidja/galdr/context/AGENT_BUILD_SYSTEM.md` — why the pipeline exists, and the double gate that makes an LLM-written transform safe.
-4. `~/.ai/smidja/galdr/context/NORNIR_GATES_ELEMENT.md` — what a gate is concretely, the four call patterns, entry-point gates versus stage-boundary pairs, the three kinds of checking a gate does, and the output tool builder.
+3. `~/ai/smidja/galdr/context/AGENT_BUILD_SYSTEM.md` — why the pipeline exists, and the double gate that makes an LLM-written transform safe.
+4. `~/ai/smidja/galdr/context/NORNIR_GATES_ELEMENT.md` — what a gate is concretely, the four call patterns, entry-point gates versus stage-boundary pairs, the three kinds of checking a gate does, and the output tool builder.
 
 **Proof:** before writing anything, state (a) why the wall is a separate language and what that argument does *not* claim, (b) what happens to a changed schema before the gate is rebuilt, and (c) one thing you would have done that the build rules forbid.
 
@@ -55,7 +55,7 @@ A Rust monorepo of compiled validators, tools and hooks for the `.ai` ecosystem 
 | what a gate is / the call patterns / what it checks | `context/NORNIR_GATES_ELEMENT.md` |
 | the output tool builder — registry, generator, write engine | `context/NORNIR_GATES_ELEMENT.md` § The output tool builder, then `tool_registry.toml` and `generate_writer.py` |
 | which schema a gate embeds | the gate's `src/lib.rs` — one `include_str!` through a symlink into Verdandi's output |
-| what a schema allows | `~/.ai/smidja/verdandi/{project}/output/*.schema.json` |
+| what a schema allows | `~/ai/smidja/verdandi/{project}/output/*.schema.json` |
 | what calls the gates | `context/REGIN_ELEMENT.md`, `context/GALDR_ELEMENT.md` |
 | what crates exist right now | read live — `ls gates/ writers/ capability/ core/`. Inventories are not stored here; a stored one is wrong by the next commit |
 | the full forward cascade after a schema change | `context/AGENT_BUILD_SYSTEM.md` § The forward cascade |

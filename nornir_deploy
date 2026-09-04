@@ -22,7 +22,7 @@ Usage:
     nornir_deploy --build gates          # single category
     nornir_deploy --build hooks,writers  # multiple categories
     nornir_deploy --list                 # show categories and crate counts
-    nornir_deploy --bootstrap            # create symlink in ~/.ai/tools/scripts/
+    nornir_deploy --bootstrap            # create symlink in ~/ai/tools/scripts/
 """
 
 import argparse
@@ -35,9 +35,9 @@ from loguru import logger
 
 NORNIR_DIR = Path(__file__).resolve().parent
 CATEGORIES_FILE = NORNIR_DIR / "deploy_categories.toml"
-TOOLS_BIN = Path.home() / ".ai" / "tools" / "bin"
-TOOLS_SCRIPTS = Path.home() / ".ai" / "tools" / "scripts"
-TOOLS_LIB = Path.home() / ".ai" / "tools" / "lib"
+TOOLS_BIN = Path.home() / "ai" / "tools" / "bin"
+TOOLS_SCRIPTS = Path.home() / "ai" / "tools" / "scripts"
+TOOLS_LIB = Path.home() / "ai" / "tools" / "lib"
 
 
 # --- TOML loading (stdlib, Python 3.11+) ---
@@ -348,7 +348,7 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--non-pyo3", action="store_true", help="deploy all cargo crates, skip maturin PyO3 modules")
     group.add_argument("--build", type=str, help="deploy specific categories (comma-separated)")
     group.add_argument("--list", action="store_true", help="list categories and crate counts")
-    group.add_argument("--bootstrap", action="store_true", help="create symlink in ~/.ai/tools/scripts/")
+    group.add_argument("--bootstrap", action="store_true", help="create symlink in ~/ai/tools/scripts/")
     return parser.parse_args()
 
 

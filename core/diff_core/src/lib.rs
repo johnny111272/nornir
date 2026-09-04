@@ -1055,7 +1055,7 @@ mod tests {
     #[test]
     fn workspace_from_traffic_path() {
         assert_eq!(
-            workspace_from_parent_dir("/home/user/.ai/intercept/traffic/odinn/session.jsonl"),
+            workspace_from_parent_dir("/home/user/ai/intercept/traffic/odinn/session.jsonl"),
             "odinn"
         );
     }

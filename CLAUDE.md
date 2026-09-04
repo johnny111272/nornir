@@ -43,7 +43,7 @@ Functions belong together by WHAT they do, never by WHO consumes them. Grouping 
 
 ### Workspace identity derivation
 
-`datagram::workspace_from_path(path)` derives a `@{relative}` workspace name from the `~/.ai/` base — e.g. `/Users/johnny/.ai/smidja/nornir` → `@smidja/nornir`. Paths outside `~/.ai/`, or no path, resolve to `@`. This is the universal convention for any tool that operates on directories (syn, kvasir, etc.).
+`datagram::workspace_from_path(path)` derives a `@{relative}` workspace name from the `~/ai/` base — e.g. `/Users/johnny/ai/smidja/nornir` → `@smidja/nornir`. Paths outside `~/ai/`, or no path, resolve to `@`. This is the universal convention for any tool that operates on directories (syn, kvasir, etc.).
 
 ### Why specialist tools carry the `_cli` package suffix
 

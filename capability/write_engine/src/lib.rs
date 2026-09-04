@@ -159,10 +159,10 @@ impl WriteError {
 // Base path resolution
 // =============================================================================
 
-/// Resolve ~/.ai as an absolute path from $HOME.
+/// Resolve ~/ai as an absolute path from $HOME.
 pub fn ai_home() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".ai")
+    PathBuf::from(home).join("ai")
 }
 
 // =============================================================================

@@ -78,7 +78,6 @@ pub struct AppState {
     pub selected_languages: Vec<bool>,
     pub selected_expertise: Vec<bool>,
     pub selected_descriptors: Vec<bool>,
-    pub selected_permissions: Vec<bool>,
     pub active_section: Section,
     pub section_cursor: usize,
     pub passthrough_flags: Vec<String>,
@@ -90,7 +89,6 @@ pub enum Section {
     Workspace,
     Persona,
     Coding,
-    Permissions,
     Descriptors,
     Expertise,
 }
@@ -103,27 +101,25 @@ pub enum TuiOutcome {
 impl Section {
     /// Next section following column-aware order:
     /// C1: Workspace → Persona → Expertise
-    /// C2: Descriptors → Coding → Permissions
-    /// Tab wraps: Permissions → Workspace
+    /// C2: Descriptors → Coding
+    /// Tab wraps: Coding → Workspace
     pub fn next(self) -> Self {
         match self {
             Section::Workspace => Section::Persona,
             Section::Persona => Section::Expertise,
             Section::Expertise => Section::Descriptors,
             Section::Descriptors => Section::Coding,
-            Section::Coding => Section::Permissions,
-            Section::Permissions => Section::Workspace,
+            Section::Coding => Section::Workspace,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Section::Workspace => Section::Permissions,
+            Section::Workspace => Section::Coding,
             Section::Persona => Section::Workspace,
             Section::Expertise => Section::Persona,
             Section::Descriptors => Section::Expertise,
             Section::Coding => Section::Descriptors,
-            Section::Permissions => Section::Coding,
         }
     }
 }
@@ -164,7 +160,6 @@ impl AppState {
     ) -> Self {
         let expertise_count = library.expertise.len();
         let descriptor_count = library.descriptors.len();
-        let perm_count = crate::permissions::KNOWN_PERMISSIONS.len();
 
         // Coding on by default, python always selected (index 0)
         let mut selected_languages = vec![false; library.languages.len()];
@@ -183,7 +178,6 @@ impl AppState {
             selected_languages,
             selected_expertise: vec![false; expertise_count],
             selected_descriptors: vec![false; descriptor_count],
-            selected_permissions: vec![false; perm_count],
             active_section: Section::Workspace,
             section_cursor: 0,
             passthrough_flags,
@@ -344,9 +338,7 @@ impl AppState {
             self.selected_expertise[index] = profile.expertise.contains(&fragment.id);
         }
 
-        // Permissions are NEVER auto-selected — user must explicitly enable
-
-        // Permissions: never auto-selected. User toggles manually in TUI.
+        // Permissions are persona-bound (see permissions.rs) — nothing to set here.
 
         // Set system descriptors based on primary_descriptor + smart family logic
         self.apply_descriptor_defaults(&profile);
@@ -428,9 +420,6 @@ impl AppState {
         for selected in &mut self.selected_descriptors {
             *selected = false;
         }
-        for selected in &mut self.selected_permissions {
-            *selected = false;
-        }
     }
 
     pub fn toggle_coding(&mut self) {
@@ -462,7 +451,6 @@ impl AppState {
             Section::Descriptors => self.system_count(),
             Section::Coding => 1 + self.library.languages.len(),
             Section::Expertise => self.library.expertise.len(),
-            Section::Permissions => crate::permissions::KNOWN_PERMISSIONS.len(),
         }
     }
 }

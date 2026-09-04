@@ -347,13 +347,13 @@ mod tests {
     #[test]
     fn test_parse_section_with_path_and_bases() {
         let result = parse_section_header(
-            "[paths]  # target=path, base=~/.ai/phoenix/, logs=/var/log/",
+            "[paths]  # target=path, base=~/ai/phoenix/, logs=/var/log/",
             5,
         ).unwrap();
 
         if let SectionHeaderParse::Annotated(ann) = result {
             assert!(matches!(ann.target, Some(TargetFamily::Path)));
-            assert_eq!(ann.path_bases.get("base"), Some(&"~/.ai/phoenix/".to_string()));
+            assert_eq!(ann.path_bases.get("base"), Some(&"~/ai/phoenix/".to_string()));
             assert_eq!(ann.path_bases.get("logs"), Some(&"/var/log/".to_string()));
         } else {
             panic!("Expected Annotated");

@@ -67,7 +67,7 @@ struct Args {
     #[arg(long, default_value = "all")]
     kind: Kind,
 
-    /// Override gleipnir version routing (ignore v2_projects.toml)
+    /// Override gleipnir version routing (ignore the v1 legacy whitelist)
     #[arg(long)]
     test: Option<TestVersion>,
 }

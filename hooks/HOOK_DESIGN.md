@@ -240,7 +240,7 @@ All hooks are workspace members in `nornir/Cargo.toml`:
 
 ### Deploy
 
-`nornir_deploy --build hooks` builds release binaries and symlinks into `~/.ai/tools/bin/`.
+`nornir_deploy --build hooks` builds release binaries and symlinks into `~/ai/tools/bin/`.
 Binary names match crate bin names exactly — no renaming at deploy.
 Categories and crate lists are defined in `deploy_categories.toml`.
 

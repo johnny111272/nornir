@@ -325,7 +325,7 @@ fn load_api_key(voice_dir: &Path) -> Result<String, String> {
         let _ = dotenvy::from_path(&env_path);
     }
     std::env::var("ELEVENLABS_API_KEY")
-        .map_err(|_| "ELEVENLABS_API_KEY not set (check ~/.ai/voice/.env)".into())
+        .map_err(|_| "ELEVENLABS_API_KEY not set (check ~/ai/voice/.env)".into())
 }
 
 fn load_hits(path: &Path) -> HitsTable {

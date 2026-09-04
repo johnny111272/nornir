@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!     record_datagrams
-//!     record_datagrams --socket-path /tmp/ai_logger.sock --log-dir ~/.ai/intercept/datagrams
+//!     record_datagrams --socket-path /tmp/ai_logger.sock --log-dir ~/ai/intercept/datagrams
 //!
 //! Protocol: one JSON line per connection (connect, write line, disconnect).
 //! Same protocol as datagram's try_emit().

@@ -1,43 +1,105 @@
 /// A permission is a set of paths exempt from hook probing/gaming checks.
-/// These are superpowers — only for sessions that work ON the security system.
-/// Most sessions need zero permissions.
+/// These are superpowers — granted by PERSONA, never by manual selection.
 ///
-/// The actual mechanism is HOOK_LLM_ALLOW_PATHS (colon-separated paths).
+/// The persona→permission mapping is compiled into this binary deliberately:
+/// the grant mechanism gets the same protection level as the paths it grants
+/// access to. Changing a grant requires editing nornir source and rebuilding
+/// via nornir_deploy — there is no config file and no TUI control.
+///
+/// The actual mechanism is HOOK_LLM_ALLOW_PATHS (colon-separated paths),
+/// set once at launch before exec'ing claude. It cannot be added to a
+/// running session.
 pub struct Permission {
     pub name: &'static str,
+    /// Path PREFIXES exempt from probing/gaming (HOOK_LLM_ALLOW_PATHS).
     pub paths: &'static [&'static str],
+    /// Path SUBSTRINGS exempt from probing/gaming wherever they appear
+    /// (HOOK_LLM_ALLOW_PATTERNS) — e.g. /.gleipnir/ across all projects.
+    pub patterns: &'static [&'static str],
 }
 
-pub static KNOWN_PERMISSIONS: &[Permission] = &[Permission {
+/// Security-system access: enforcement source, deployed tools, hook config,
+/// plus .gleipnir constraint directories in every project. Tyr operates the
+/// security system, so every Tyr launch carries this.
+static SECURITY_INFRASTRUCTURE: Permission = Permission {
     name: "Security Infrastructure",
     paths: &[
-        "/Users/johnny/.ai/smidja/nornir/",
-        "/Users/johnny/.ai/tools/",
+        "/Users/johnny/ai/smidja/nornir/",
+        "/Users/johnny/ai/tools/",
         "/Users/johnny/.claude/",
     ],
-}];
+    patterns: &["/.gleipnir/"],
+};
 
-/// Build HOOK_LLM_ALLOW_PATHS from selected permissions.
-/// Returns None if no permissions selected.
-pub fn build_allow_paths(selected: &[bool]) -> Option<String> {
-    let mut paths: Vec<&str> = Vec::new();
+/// The permission a persona carries at every launch, if any.
+///
+/// Tyr always — launching Tyr means working on the security system, so the
+/// power and the role arrive together. No other persona has any grant, and
+/// there is no manual path to one.
+pub fn permission_for_persona(persona_id: &str) -> Option<&'static Permission> {
+    match persona_id {
+        "tyr" => Some(&SECURITY_INFRASTRUCTURE),
+        _ => None,
+    }
+}
 
-    for (index, is_selected) in selected.iter().enumerate() {
-        if !*is_selected {
-            continue;
-        }
-        if let Some(permission) = KNOWN_PERMISSIONS.get(index) {
-            for path in permission.paths {
-                if !paths.contains(path) {
-                    paths.push(path);
-                }
-            }
+/// Build the HOOK_LLM_ALLOW_PATHS value for a persona.
+/// Returns None for personas that carry no permission.
+pub fn allow_paths_for_persona(persona_id: &str) -> Option<String> {
+    permission_for_persona(persona_id).map(|permission| permission.paths.join(":"))
+}
+
+/// Build the HOOK_LLM_ALLOW_PATTERNS value for a persona.
+/// Returns None when the persona carries no permission or no patterns.
+pub fn allow_patterns_for_persona(persona_id: &str) -> Option<String> {
+    permission_for_persona(persona_id)
+        .filter(|permission| !permission.patterns.is_empty())
+        .map(|permission| permission.patterns.join(":"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tyr_always_has_security_infrastructure() {
+        let permission = permission_for_persona("tyr");
+        assert!(permission.is_some(), "Tyr must always carry the grant");
+        assert_eq!(permission.unwrap().name, "Security Infrastructure");
+    }
+
+    #[test]
+    fn no_other_persona_has_any_grant() {
+        for persona in ["mimir", "bragi", "odinn", "freyja", "loki", ""] {
+            assert!(
+                permission_for_persona(persona).is_none(),
+                "{persona} must not carry any grant"
+            );
         }
     }
 
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths.join(":"))
+    #[test]
+    fn tyr_allow_paths_are_colon_joined() {
+        let paths = allow_paths_for_persona("tyr").unwrap();
+        assert!(paths.contains("/Users/johnny/ai/smidja/nornir/"));
+        assert!(paths.contains(':'));
+    }
+
+    #[test]
+    fn non_tyr_allow_paths_are_none() {
+        assert!(allow_paths_for_persona("kvasir").is_none());
+    }
+
+    #[test]
+    fn tyr_carries_gleipnir_pattern() {
+        let patterns = allow_patterns_for_persona("tyr").unwrap();
+        assert!(patterns.contains("/.gleipnir/"));
+    }
+
+    #[test]
+    fn non_tyr_patterns_are_none() {
+        for persona in ["mimir", "bragi", "odinn", ""] {
+            assert!(allow_patterns_for_persona(persona).is_none());
+        }
     }
 }

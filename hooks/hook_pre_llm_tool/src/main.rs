@@ -7,8 +7,12 @@
 //! Usage (in ~/.claude/settings.json):
 //!     hook_pre_llm_tool --gaming warn --probing block
 //!
-//! Env var:
-//!     HOOK_LLM_ALLOW_PATHS=/path1:/path2  — exempt paths from probing/gaming checks
+//! Env vars (set by cc_launch at launch, persona-bound; setting them
+//! in-session is itself detected as subversion by hook_pre_llm_bash):
+//!     HOOK_LLM_ALLOW_PATHS=/path1:/path2  — exempt path PREFIXES from probing/gaming
+//!     HOOK_LLM_ALLOW_PATTERNS=/pat1/:/pat2/ — exempt path SUBSTRINGS from probing/gaming
+//!                                              (e.g. /.gleipnir/ anywhere, for Tyr)
+//! Neither exempts the floor layer.
 
 use std::process::ExitCode;
 
@@ -45,6 +49,7 @@ struct Config {
     probing: Option<Severity>,
     gaming: Option<Severity>,
     allow_paths: Vec<String>,
+    allow_patterns: Vec<String>,
 }
 
 fn parse_config() -> Config {
@@ -67,18 +72,24 @@ fn parse_config() -> Config {
         }
     }
 
-    let allow_paths = std::env::var("HOOK_LLM_ALLOW_PATHS")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
+    let allow_paths = split_env_list("HOOK_LLM_ALLOW_PATHS");
+    let allow_patterns = split_env_list("HOOK_LLM_ALLOW_PATTERNS");
 
     Config {
         probing,
         gaming,
         allow_paths,
+        allow_patterns,
     }
+}
+
+fn split_env_list(name: &str) -> Vec<String> {
+    std::env::var(name)
+        .unwrap_or_default()
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 // ── Decision logic ─────────────────────────────────────────────────
@@ -119,8 +130,12 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
         }
     }
 
-    // Check env var exemptions before probing/gaming
-    if is_allowed_path(target, &config.allow_paths) {
+    // Check env var exemptions before probing/gaming (never before floor).
+    // Paths are prefixes (a territory); patterns are substrings (a file class
+    // wherever it appears — e.g. /.gleipnir/ across all projects, for Tyr).
+    if is_allowed_path(target, &config.allow_paths)
+        || is_allowed_pattern(target, &config.allow_patterns)
+    {
         return HookDecision::Allow;
     }
 
@@ -164,6 +179,10 @@ fn decide_inner(input: &HookInput, config: &Config, rules: &Rules) -> HookDecisi
 
 fn is_allowed_path(target: &str, allow_paths: &[String]) -> bool {
     allow_paths.iter().any(|prefix| target.starts_with(prefix))
+}
+
+fn is_allowed_pattern(target: &str, allow_patterns: &[String]) -> bool {
+    allow_patterns.iter().any(|pattern| target.contains(pattern))
 }
 
 #[cfg(test)]
@@ -293,15 +312,25 @@ mod tests {
     }
 
     fn config_all_block() -> Config {
-        Config { probing: Some(Severity::Block), gaming: Some(Severity::Block), allow_paths: vec![] }
+        Config { probing: Some(Severity::Block), gaming: Some(Severity::Block), allow_paths: vec![], allow_patterns: vec![] }
     }
 
     fn config_all_warn() -> Config {
-        Config { probing: Some(Severity::Warn), gaming: Some(Severity::Warn), allow_paths: vec![] }
+        Config { probing: Some(Severity::Warn), gaming: Some(Severity::Warn), allow_paths: vec![], allow_patterns: vec![] }
     }
 
     fn config_disabled() -> Config {
-        Config { probing: None, gaming: None, allow_paths: vec![] }
+        Config { probing: None, gaming: None, allow_paths: vec![], allow_patterns: vec![] }
+    }
+
+    /// Tyr-shaped config: probing/gaming active, gleipnir pattern exempted.
+    fn config_tyr_patterns() -> Config {
+        Config {
+            probing: Some(Severity::Block),
+            gaming: Some(Severity::Block),
+            allow_paths: vec![],
+            allow_patterns: vec!["/.gleipnir/".to_string()],
+        }
     }
 
     fn make_input(path: &str) -> HookInput {
@@ -359,6 +388,64 @@ mod tests {
         assert!(matches!(d, HookDecision::Deny { .. }));
     }
 
+    // Pattern exemptions (HOOK_LLM_ALLOW_PATTERNS) — the Tyr grant
+
+    #[test]
+    fn pattern_exemption_allows_gleipnir_anywhere() {
+        // .gleipnir outside any allow-path prefix — pattern must exempt it
+        let d = decide_inner(
+            &make_input("/Users/johnny/ai/smidja/draupnir/.gleipnir/rules.toml"),
+            &config_tyr_patterns(),
+            &default_rules(),
+        );
+        assert!(
+            matches!(d, HookDecision::Allow),
+            "Tyr pattern grant must exempt .gleipnir dirs in any project"
+        );
+    }
+
+    #[test]
+    fn pattern_exemption_does_not_leak_to_other_probing() {
+        // Same config, non-gleipnir probing target — must still trigger
+        let d = decide_inner(
+            &make_input("/some/other/place/hook_pre_llm_tool/src/main.rs"),
+            &config_tyr_patterns(),
+            &default_rules(),
+        );
+        assert!(
+            !matches!(d, HookDecision::Allow),
+            "Pattern grant must exempt ONLY its own pattern"
+        );
+    }
+
+    #[test]
+    fn pattern_exemption_never_overrides_floor() {
+        let config = Config {
+            probing: Some(Severity::Block),
+            gaming: Some(Severity::Block),
+            allow_paths: vec![],
+            allow_patterns: vec!["/.ssh/".to_string()], // hostile pattern
+        };
+        let d = decide_inner(&make_input("/home/user/.ssh/id_rsa"), &config, &default_rules());
+        assert!(
+            matches!(d, HookDecision::Deny { .. }),
+            "Floor must deny even when a pattern claims the path"
+        );
+    }
+
+    #[test]
+    fn no_patterns_means_gleipnir_still_probed() {
+        let d = decide_inner(
+            &make_input("/Users/johnny/ai/annie/.gleipnir/rules.toml"),
+            &config_all_block(),
+            &default_rules(),
+        );
+        assert!(
+            matches!(d, HookDecision::Deny { .. }),
+            "Without the grant, .gleipnir access must still trigger probing"
+        );
+    }
+
     #[test]
     fn decide_floor_overrides_allow_paths() {
         // allow_paths cannot exempt floor rules
@@ -366,6 +453,7 @@ mod tests {
             probing: Some(Severity::Block),
             gaming: Some(Severity::Block),
             allow_paths: vec!["/home/user/.ssh/".to_string()],
+            allow_patterns: vec![],
         };
         let d = decide_inner(&make_input("/home/user/.ssh/id_rsa"), &config, &default_rules());
         match d {
@@ -382,6 +470,7 @@ mod tests {
             probing: Some(Severity::Block),
             gaming: None,
             allow_paths: vec!["/home/user/.claude/hooks/".to_string()],
+            allow_patterns: vec![],
         };
         let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
         assert!(matches!(d, HookDecision::Allow));
@@ -391,7 +480,7 @@ mod tests {
 
     #[test]
     fn decide_probing_block_denies() {
-        let config = Config { probing: Some(Severity::Block), gaming: None, allow_paths: vec![] };
+        let config = Config { probing: Some(Severity::Block), gaming: None, allow_paths: vec![], allow_patterns: vec![] };
         let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
         match d {
             HookDecision::Deny { category, .. } => assert_eq!(category, "probing"),
@@ -401,7 +490,7 @@ mod tests {
 
     #[test]
     fn decide_probing_warn_warns() {
-        let config = Config { probing: Some(Severity::Warn), gaming: None, allow_paths: vec![] };
+        let config = Config { probing: Some(Severity::Warn), gaming: None, allow_paths: vec![], allow_patterns: vec![] };
         let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
         match d {
             HookDecision::Warn { category, .. } => assert_eq!(category, "probing"),
@@ -411,7 +500,7 @@ mod tests {
 
     #[test]
     fn decide_probing_disabled_allows() {
-        let config = Config { probing: None, gaming: None, allow_paths: vec![] };
+        let config = Config { probing: None, gaming: None, allow_paths: vec![], allow_patterns: vec![] };
         let d = decide_inner(&make_input("/home/user/.claude/hooks/pre_tool"), &config, &default_rules());
         assert!(matches!(d, HookDecision::Allow));
     }
@@ -446,7 +535,7 @@ mod tests {
             return;
         }
         let target = format!("/some/path/{}", rules.gaming[0].pattern);
-        let config = Config { probing: None, gaming: Some(Severity::Block), allow_paths: vec![] };
+        let config = Config { probing: None, gaming: Some(Severity::Block), allow_paths: vec![], allow_patterns: vec![] };
         let d = decide_inner(&make_input(&target), &config, &rules);
         match d {
             HookDecision::Deny { category, .. } => assert_eq!(category, "gaming"),
@@ -461,7 +550,7 @@ mod tests {
             return;
         }
         let target = format!("/some/path/{}", rules.gaming[0].pattern);
-        let config = Config { probing: None, gaming: Some(Severity::Warn), allow_paths: vec![] };
+        let config = Config { probing: None, gaming: Some(Severity::Warn), allow_paths: vec![], allow_patterns: vec![] };
         let d = decide_inner(&make_input(&target), &config, &rules);
         match d {
             HookDecision::Warn { category, .. } => assert_eq!(category, "gaming"),

@@ -31,10 +31,30 @@ struct Cli {
     #[arg(long, requires = "update")]
     workspace: Option<PathBuf>,
 
+    /// Phase 1 of the shell-integrated launch: run the TUI, assemble the
+    /// prompt, write the launch spec — but do NOT launch. Exit 0 means a spec
+    /// is ready; the shell function then cds to the workspace and runs --go.
+    #[arg(long, conflicts_with_all = ["go", "spec_workspace"])]
+    pick: bool,
+
+    /// Phase 2: consume the launch spec and exec claude in the current
+    /// directory (the shell has already cd'd to the workspace).
+    #[arg(long, conflicts_with_all = ["pick", "spec_workspace"])]
+    go: bool,
+
+    /// Print the workspace path from the pending launch spec (for the shell
+    /// function's cd step). Prints nothing if the spec has no workspace.
+    #[arg(long, conflicts_with_all = ["pick", "go"])]
+    spec_workspace: bool,
+
     /// Flags passed through to claude (e.g., --continue, --resume)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     claude_args: Vec<String>,
 }
+
+/// Exit code from --pick meaning "nothing to launch" (quit, or update
+/// completed). The shell function stops silently on any nonzero exit.
+const EXIT_NO_LAUNCH: i32 = 3;
 
 fn main() {
     let arguments = Cli::parse();
@@ -45,6 +65,14 @@ fn main() {
 }
 
 fn run(arguments: Cli) -> Result<(), String> {
+    // Spec-only modes need no library scan and no TUI.
+    if arguments.spec_workspace {
+        return print_spec_workspace();
+    }
+    if arguments.go {
+        return exec_from_spec();
+    }
+
     let ai_home = write_engine::ai_home();
     let library_path = ai_home.join("control/library");
     let profiles_path = ai_home.join("control/cc_launch_profiles.toml");
@@ -52,6 +80,7 @@ fn run(arguments: Cli) -> Result<(), String> {
     let update_mode = arguments.update;
     let update_session = arguments.session;
     let update_workspace = arguments.workspace;
+    let pick_mode = arguments.pick;
 
     let library = library::scan_library(&library_path)?;
     let workspace_profiles = profiles::load_profiles(&profiles_path)?;
@@ -60,14 +89,74 @@ fn run(arguments: Cli) -> Result<(), String> {
     match tui::run_tui(&mut state)? {
         TuiOutcome::Launch => {
             if update_mode {
-                run_update(&state, &update_session, &update_workspace)
+                run_update(&state, &update_session, &update_workspace)?;
+                if pick_mode {
+                    process::exit(EXIT_NO_LAUNCH); // update done, nothing to launch
+                }
+                Ok(())
             } else {
                 let prompt_path = assembly::write_prompt_file(&state)?;
-                exec_claude(&prompt_path, &state)
+                if pick_mode {
+                    assembly::write_launch_spec(&state, &prompt_path)?;
+                    Ok(()) // exit 0: spec ready — shell cds, then runs --go
+                } else {
+                    exec_claude(&prompt_path, &state)
+                }
             }
         }
-        TuiOutcome::Quit => Ok(()),
+        TuiOutcome::Quit => {
+            if pick_mode {
+                assembly::discard_launch_spec();
+                process::exit(EXIT_NO_LAUNCH);
+            }
+            Ok(())
+        }
     }
+}
+
+/// Print the workspace path from the pending spec (shell cd step).
+/// Prints nothing (still exit 0) when no workspace was selected.
+fn print_spec_workspace() -> Result<(), String> {
+    let spec_path = assembly::launch_spec_path();
+    let raw = std::fs::read_to_string(&spec_path)
+        .map_err(|_| "no launch spec found — run `cc_launch --pick` first".to_string())?;
+    let table: toml::Table = raw.parse().map_err(|e| format!("parse launch spec: {e}"))?;
+    if let Some(workspace) = table.get("workspace_path").and_then(|value| value.as_str()) {
+        println!("{workspace}");
+    }
+    Ok(())
+}
+
+/// Consume the launch spec and exec claude in the current directory.
+fn exec_from_spec() -> Result<(), String> {
+    let spec = assembly::consume_launch_spec()?;
+
+    // Persona-bound permission grant (see permissions.rs).
+    if let Some(persona_id) = &spec.persona_id {
+        if let Some(allow_paths) = permissions::allow_paths_for_persona(persona_id) {
+            std::env::set_var("HOOK_LLM_ALLOW_PATHS", allow_paths);
+        }
+        if let Some(patterns) = permissions::allow_patterns_for_persona(persona_id) {
+            std::env::set_var("HOOK_LLM_ALLOW_PATTERNS", patterns);
+        }
+    }
+
+    let mut command = std::process::Command::new("claude");
+    command
+        .arg("--system-prompt-file")
+        .arg(&spec.prompt_path)
+        .args(&spec.claude_args);
+
+    // The shell has already cd'd; set current_dir anyway so a bare `--go`
+    // (run without the shell function) still lands in the right place.
+    if let Some(workspace_path) = &spec.workspace_path {
+        if workspace_path.is_dir() {
+            command.current_dir(workspace_path);
+        }
+    }
+
+    let error = command.exec();
+    Err(format!("exec claude: {error}"))
 }
 
 fn run_update(
@@ -121,9 +210,15 @@ fn resolve_update_target(
 }
 
 fn exec_claude(prompt_path: &Path, state: &AppState) -> Result<(), String> {
-    // Set HOOK_LLM_ALLOW_PATHS if any permissions selected
+    // Set hook exemption env vars if the selected persona carries a permission
+    // (persona-bound: Tyr always, everyone else never — see permissions.rs)
     if let Some(allow_paths) = assembly::build_allow_paths(state) {
         std::env::set_var("HOOK_LLM_ALLOW_PATHS", allow_paths);
+    }
+    if let Some(persona_id) = assembly::selected_persona_id(state) {
+        if let Some(patterns) = permissions::allow_patterns_for_persona(persona_id) {
+            std::env::set_var("HOOK_LLM_ALLOW_PATTERNS", patterns);
+        }
     }
 
     let mut command = std::process::Command::new("claude");

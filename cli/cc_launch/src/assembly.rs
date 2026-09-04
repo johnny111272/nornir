@@ -204,6 +204,122 @@ pub fn write_update_file(state: &AppState, session_id: &str, workspace_name: &st
     Ok(target)
 }
 
+/// Allow-paths for the launching session, derived from the selected persona.
+/// Persona-bound: Tyr always carries security-infrastructure access, no other
+/// persona carries anything. See permissions.rs for the compiled mapping.
 pub fn build_allow_paths(state: &AppState) -> Option<String> {
-    crate::permissions::build_allow_paths(&state.selected_permissions)
+    let persona_id = selected_persona_id(state)?;
+    crate::permissions::allow_paths_for_persona(persona_id)
+}
+
+/// The id of the currently selected persona, if any.
+pub fn selected_persona_id(state: &AppState) -> Option<&str> {
+    state
+        .selected_persona
+        .and_then(|index| state.library.personas.get(index))
+        .map(|persona| persona.id.as_str())
+}
+
+// ---------------------------------------------------------------------------
+// Launch spec — the handoff between `--pick` and `--go`.
+//
+// The pick phase runs the TUI and assembles everything, then records what the
+// go phase needs into a spec file. Between the two, the user's SHELL changes
+// directory to the workspace (via the cc_launch shell function) — the one
+// thing no child process can do for it. The go phase consumes the spec and
+// execs claude. The spec is ephemeral by construction: read once, deleted.
+// ---------------------------------------------------------------------------
+
+/// Everything `--go` needs to launch the session.
+pub struct LaunchSpec {
+    pub prompt_path: PathBuf,
+    pub workspace_path: Option<PathBuf>,
+    pub persona_id: Option<String>,
+    pub claude_args: Vec<String>,
+}
+
+/// Location of the launch spec file (alongside the assembled prompt).
+pub fn launch_spec_path() -> PathBuf {
+    std::env::temp_dir().join("cc_launch_spec.toml")
+}
+
+/// Write the launch spec for a pick→cd→go launch sequence.
+pub fn write_launch_spec(state: &AppState, prompt_path: &Path) -> Result<(), String> {
+    let mut table = toml::Table::new();
+    table.insert(
+        "prompt_path".to_string(),
+        toml::Value::String(prompt_path.to_string_lossy().to_string()),
+    );
+    if let Some(workspace) = state.workspace_path() {
+        table.insert(
+            "workspace_path".to_string(),
+            toml::Value::String(workspace.to_string_lossy().to_string()),
+        );
+    }
+    if let Some(persona_id) = selected_persona_id(state) {
+        table.insert(
+            "persona_id".to_string(),
+            toml::Value::String(persona_id.to_string()),
+        );
+    }
+    table.insert(
+        "claude_args".to_string(),
+        toml::Value::Array(
+            state
+                .passthrough_flags
+                .iter()
+                .map(|flag| toml::Value::String(flag.clone()))
+                .collect(),
+        ),
+    );
+
+    let serialized = toml::to_string(&table).map_err(|e| format!("serialize launch spec: {e}"))?;
+    fs::write(launch_spec_path(), serialized).map_err(|e| format!("write launch spec: {e}"))
+}
+
+/// Read AND DELETE the launch spec. One-shot by design — a stale spec must
+/// never launch a second, unintended session.
+pub fn consume_launch_spec() -> Result<LaunchSpec, String> {
+    let spec_path = launch_spec_path();
+    let raw = fs::read_to_string(&spec_path)
+        .map_err(|_| "no launch spec found — run `cc_launch --pick` first".to_string())?;
+    let _ = fs::remove_file(&spec_path);
+
+    let table: toml::Table = raw
+        .parse()
+        .map_err(|e| format!("parse launch spec: {e}"))?;
+
+    let prompt_path = table
+        .get("prompt_path")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| "launch spec missing prompt_path".to_string())?;
+
+    let workspace_path = table
+        .get("workspace_path")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from);
+
+    let persona_id = table
+        .get("persona_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    let claude_args = table
+        .get("claude_args")
+        .and_then(|value| value.as_array())
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(LaunchSpec { prompt_path, workspace_path, persona_id, claude_args })
+}
+
+/// Remove any stale launch spec (e.g. after a TUI quit).
+pub fn discard_launch_spec() {
+    let _ = fs::remove_file(launch_spec_path());
 }

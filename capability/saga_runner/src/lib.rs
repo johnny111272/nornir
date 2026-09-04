@@ -17,34 +17,54 @@ use std::time::Instant;
 
 static RUFF_TOML: &str = include_str!("../ruff.toml");
 static PYRIGHTCONFIG_JSON: &str = include_str!("../pyrightconfig.json");
-static V2_PROJECTS_TOML: &str = include_str!("../v2_projects.toml");
+static V1_LEGACY_PROJECTS_TOML: &str = include_str!("../v1_legacy_projects.toml");
 
-/// Parsed list of project root paths that have opted in to v2 zone checks.
-static V2_PROJECT_PATHS: LazyLock<Vec<String>> = LazyLock::new(|| {
+/// Parsed list of project roots still checked under V1 rules, each relative
+/// to the AI root (e.g. `smidja/bifrost/`). V2 zone checks are the default;
+/// this whitelist is the only exception and trends toward empty as projects
+/// migrate.
+static V1_LEGACY_PATHS: LazyLock<Vec<String>> = LazyLock::new(|| {
     #[derive(serde::Deserialize)]
     struct ProjectEntry {
         path: String,
     }
     #[derive(serde::Deserialize)]
-    struct V2Projects {
+    struct V1LegacyProjects {
         #[serde(default)]
         projects: Vec<ProjectEntry>,
     }
-    let parsed: V2Projects =
-        toml::from_str(V2_PROJECTS_TOML).expect("v2_projects.toml parse error");
+    let parsed: V1LegacyProjects =
+        toml::from_str(V1_LEGACY_PROJECTS_TOML).expect("v1_legacy_projects.toml parse error");
     parsed.projects.into_iter().map(|entry| entry.path).collect()
 });
 
-/// Check if a file belongs to a project that has opted in to v2 zone checks.
-fn is_v2_project(file_path: &Path) -> bool {
+/// Strip the AI root prefix, yielding the portion of the path relative to it.
+///
+/// Recognises both `~/ai/` and `~/.ai/` so that a single table stays correct
+/// across a root rename, and while the tree is split with some sections
+/// migrated and others not.
+fn strip_ai_root(path: &str) -> Option<&str> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let roots = [format!("{home}/ai/"), format!("{home}/.ai/")];
+    roots.iter().find_map(|root| path.strip_prefix(root.as_str()))
+}
+
+/// Check if a file belongs to a project on the V1 legacy whitelist.
+///
+/// Whitelist entries are relative to the AI root, so the root is stripped
+/// from the file path before matching. Files outside the AI root are never
+/// legacy.
+fn is_v1_legacy(file_path: &Path) -> bool {
     let path_str = file_path.to_string_lossy();
-    V2_PROJECT_PATHS.iter().any(|prefix| path_str.starts_with(prefix.as_str()))
+    strip_ai_root(&path_str).is_some_and(|relative| {
+        V1_LEGACY_PATHS.iter().any(|prefix| relative.starts_with(prefix.as_str()))
+    })
 }
 
 /// Version override for `--test v1` / `--test v2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionOverride {
-    /// Use v2_projects.toml routing (default)
+    /// Default routing: v2 unless the project is on the v1 legacy whitelist
     Auto,
     /// Force v1 checks regardless of project
     ForceV1,
@@ -66,7 +86,7 @@ pub fn set_version_override(version: VersionOverride) {
 
 fn use_v2(file_path: &Path) -> bool {
     VERSION_OVERRIDE.with(|cell| match cell.get() {
-        VersionOverride::Auto => is_v2_project(file_path),
+        VersionOverride::Auto => !is_v1_legacy(file_path),
         VersionOverride::ForceV1 => false,
         VersionOverride::ForceV2 => true,
     })
@@ -119,8 +139,8 @@ fn violation_to_issue(violation: gleipnir_core::Violation) -> Issue {
 
 /// Run gleipnir guardrail checks on a Python file.
 ///
-/// Routes to v2 zone checks for projects listed in v2_projects.toml,
-/// otherwise uses v1 rules.
+/// Routes to v2 zone checks by default; projects on the v1 legacy
+/// whitelist (v1_legacy_projects.toml) use v1 rules instead.
 pub fn run_gleipnir(file_path: &Path) -> Vec<Issue> {
     let source = match std::fs::read(file_path) {
         Ok(bytes) => bytes,

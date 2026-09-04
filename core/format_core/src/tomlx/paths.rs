@@ -275,10 +275,10 @@ mod tests {
     #[test]
     fn test_expand_path_full() {
         let mut registry = PathRegistry::new();
-        registry.user_defined.insert("base".to_string(), "~/.ai/phoenix/".to_string());
+        registry.user_defined.insert("base".to_string(), "~/ai/phoenix/".to_string());
         registry.expand_mode = ExpandMode::User;
 
         let result = expand_path("cli/", "base", &registry, None, &test_env).unwrap();
-        assert_eq!(result, "/Users/test/.ai/phoenix/cli");
+        assert_eq!(result, "/Users/test/ai/phoenix/cli");
     }
 }

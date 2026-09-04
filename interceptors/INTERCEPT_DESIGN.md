@@ -56,7 +56,7 @@ in-memory JSON values and used in contexts that don't need I/O.
 ## Directory Layout
 
 ```
-~/.ai/intercept/
+~/ai/intercept/
   sessions/
     {session_id}/
       raw_session_log.jsonl         # verbatim request bytes (live only)
@@ -229,7 +229,7 @@ nornir_deploy --build interceptors
 ```
 
 This builds `intercept_replay` (cargo) and `traffic_interceptor_rewriter` (maturin).
-The maturin build extracts the `.so` to `~/.ai/tools/lib/` and re-signs it with
+The maturin build extracts the `.so` to `~/ai/tools/lib/` and re-signs it with
 `codesign -f -s -` (required on macOS — unsigned `.so` triggers SIGKILL).
 
 After deploying `traffic_interceptor_rewriter`, restart mitmproxy to pick up the

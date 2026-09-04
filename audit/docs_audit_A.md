@@ -164,7 +164,7 @@ While not all crates need lookup entries (some are niche), `session_io` and `int
 
 ### S4. intercept_replay cc_wire_schema.json: symlink confirmed
 
-INTERCEPT_DESIGN.md says the replay schema is a symlink. Verified: `/Users/johnny/.ai/smidja/nornir/interceptors/intercept_replay/cc_wire_schema.json` is a symlink pointing to `../traffic_interceptor_rewriter/cc_wire_schema.json`. No disagreement -- this is confirmed correct.
+INTERCEPT_DESIGN.md says the replay schema is a symlink. Verified: `/Users/johnny/ai/smidja/nornir/interceptors/intercept_replay/cc_wire_schema.json` is a symlink pointing to `../traffic_interceptor_rewriter/cc_wire_schema.json`. No disagreement -- this is confirmed correct.
 
 ---
 

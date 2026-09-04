@@ -201,11 +201,11 @@ input path, looking for a `.syn/` directory. This is the same pattern
 gleipnir uses to find `.gleipnir/`.
 
 ```
-given input: /Users/johnny/.ai/bragi/src/bragi/structures.py
+given input: /Users/johnny/ai/bragi/src/bragi/structures.py
 walks up:
-  /Users/johnny/.ai/bragi/src/bragi/.syn/  — no
-  /Users/johnny/.ai/bragi/src/.syn/         — no
-  /Users/johnny/.ai/bragi/.syn/             — YES → load config from here
+  /Users/johnny/ai/bragi/src/bragi/.syn/  — no
+  /Users/johnny/ai/bragi/src/.syn/         — no
+  /Users/johnny/ai/bragi/.syn/             — YES → load config from here
 ```
 
 The walk starts from:
@@ -331,7 +331,7 @@ On session initialization or other trigger events:
 ### Current State (Phase 1 DONE)
 - Report mode: working (filter, format, broadcast)
 - Gate mode: filtering works, decision logic works, **ratchet comparison NOT YET IMPLEMENTED**
-- Deployed to `~/.ai/tools/bin/syn`
+- Deployed to `~/ai/tools/bin/syn`
 - Pure rendering logic in `core/report_render_core/` — shared with svalinn
 - Pure filter engine in `core/syn_core/` — extracted from syn_cli
 - syn_cli is thin orchestration (~457 lines); syn_core owns filter compilation + policy logic

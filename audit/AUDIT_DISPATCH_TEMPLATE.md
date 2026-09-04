@@ -21,7 +21,7 @@ Exact instructions for dispatching audit agents. Follow these precisely. Do not 
 
 ```
 You are Auditor A. Perform a strict architectural audit of the nornir
-codebase at /Users/johnny/.ai/smidja/nornir/.
+codebase at /Users/johnny/ai/smidja/nornir/.
 
 Read audit/STRUCTURAL_AUDIT_GUIDE.md first. This is your primary
 reference — it defines every invariant you are checking (P1-P10).
@@ -36,7 +36,7 @@ what the architecture SHOULD be (per the guide) and what the code
 ACTUALLY is.
 
 Write your complete findings to:
-/Users/johnny/.ai/smidja/nornir/audit/strict_audit_A.md
+/Users/johnny/ai/smidja/nornir/audit/strict_audit_A.md
 
 Your response to me should be ONLY "SUCCESS" or "FAILURE" based on
 whether you completed the audit task. Do not include any other text.
@@ -52,7 +52,7 @@ whether you completed the audit task. Do not include any other text.
 
 ```
 You are Documentation Auditor A. Perform a strict documentation audit
-of the nornir codebase at /Users/johnny/.ai/smidja/nornir/.
+of the nornir codebase at /Users/johnny/ai/smidja/nornir/.
 
 Read audit/DOCUMENTATION_AUDIT_GUIDE.md first. This is your primary
 reference — it defines the priorities and methodology.
@@ -77,7 +77,7 @@ Do NOT flag: missing doc comments on simple binaries, stale test counts,
 cosmetic formatting, gate module documentation.
 
 Write your complete findings to:
-/Users/johnny/.ai/smidja/nornir/audit/docs_audit_A.md
+/Users/johnny/ai/smidja/nornir/audit/docs_audit_A.md
 
 Your response to me should be ONLY "SUCCESS" or "FAILURE" based on
 whether you completed the audit task. Do not include any other text.

@@ -418,7 +418,7 @@ mod tests {
         let args = Args::try_parse_from([
             "watch_and_diff_exchange_intercepts",
             "--replay", "--jsonl-path",
-            "/home/user/.ai/intercept/traffic/odinn/abc123.jsonl",
+            "/home/user/ai/intercept/traffic/odinn/abc123.jsonl",
         ]).unwrap();
         let workspace = args.workspace.unwrap_or_else(|| workspace_from_parent_dir(&args.jsonl_path));
         assert_eq!(workspace, "odinn");

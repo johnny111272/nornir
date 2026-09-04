@@ -106,7 +106,7 @@ Languages are derived from descriptors, never manually configured in profiles. W
 
 Permissions are superpowers — rare, deliberate path exemptions for sessions that work ON the security system.
 
-The actual mechanism is `HOOK_LLM_ALLOW_PATHS` — a colon-separated list of paths exempt from probing/gaming hook checks. See `~/.ai/tools/scripts/start_tyr` for the real example.
+The actual mechanism is `HOOK_LLM_ALLOW_PATHS` — a colon-separated list of paths exempt from probing/gaming hook checks. See `~/ai/tools/scripts/start_tyr` for the real example.
 
 **Permissions are NEVER auto-selected.** They must be manually toggled in the TUI. Most sessions need zero permissions.
 
@@ -116,13 +116,13 @@ The actual mechanism is `HOOK_LLM_ALLOW_PATHS` — a colon-separated list of pat
 
 ## Workspace Profiles
 
-Config file: `~/.ai/control/cc_launch_profiles.toml`
+Config file: `~/ai/control/cc_launch_profiles.toml`
 
 Each profile defines defaults that cascade when the workspace is selected:
 
 ```toml
 [nornir]
-path = "/Users/johnny/.ai/smidja/nornir"
+path = "/Users/johnny/ai/smidja/nornir"
 persona = "eitri"
 primary_descriptor = "nornir"
 coding = true
@@ -268,7 +268,7 @@ Column 3 (Summary): Ordered context, token estimate
 ### Integration
 - [ ] SessionStart hook timing investigation
 - [ ] Verify --system-prompt-file fully replaces default prompt
-- [ ] ~/.ai/control/ lockdown — exemption mechanism needed
+- [ ] ~/ai/control/ lockdown — exemption mechanism needed
 
 ---
 
@@ -276,14 +276,14 @@ Column 3 (Summary): Ordered context, token estimate
 
 | File | Purpose |
 |------|---------|
-| `~/.ai/control/library/` | Fragment library root |
-| `~/.ai/control/library/PROMPT_DESIGN.md` | Design philosophy document |
-| `~/.ai/control/library/systems/README.md` | System descriptor format spec |
-| `~/.ai/control/library/spaces/README.md` | Space descriptor format spec |
-| `~/.ai/control/library/systems/DISPATCH_PROTOCOL.md` | Agent dispatch template for writing new descriptors |
-| `~/.ai/control/cc_launch_profiles.toml` | Workspace profile definitions |
-| `~/.ai/smidja/nornir/cli/cc_launch/` | Launcher crate |
-| `~/.ai/tools/scripts/start_tyr` | Real permissions example (HOOK_LLM_ALLOW_PATHS) |
+| `~/ai/control/library/` | Fragment library root |
+| `~/ai/control/library/PROMPT_DESIGN.md` | Design philosophy document |
+| `~/ai/control/library/systems/README.md` | System descriptor format spec |
+| `~/ai/control/library/spaces/README.md` | Space descriptor format spec |
+| `~/ai/control/library/systems/DISPATCH_PROTOCOL.md` | Agent dispatch template for writing new descriptors |
+| `~/ai/control/cc_launch_profiles.toml` | Workspace profile definitions |
+| `~/ai/smidja/nornir/cli/cc_launch/` | Launcher crate |
+| `~/ai/tools/scripts/start_tyr` | Real permissions example (HOOK_LLM_ALLOW_PATHS) |
 | `/tmp/cc_launch_prompt.xml` | Assembled prompt output (overwritten each launch) |
 
 ## Usage
